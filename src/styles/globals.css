@@ -1,0 +1,273 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --sl-blue: #0066cc;
+  --sl-dark: #1e1e1e;
+  --sl-gray: #252526;
+  --sl-light-gray: #3c3c3c;
+  --sl-border: #3c3c3c;
+  --sl-text: #cccccc;
+  --sl-text-dim: #858585;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  background-color: var(--sl-dark);
+  color: var(--sl-text);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* Scrollbar styling - light mode */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
+}
+
+/* Dark mode scrollbar */
+html.dark ::-webkit-scrollbar-track {
+  background: #2d2d2d;
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background: #4a4a4a;
+}
+
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: #5a5a5a;
+}
+
+/* VS Code-like editor styles */
+.monaco-editor {
+  font-family: 'Consolas', 'Courier New', monospace !important;
+}
+
+/* Tree view styles */
+.tree-item {
+  @apply flex items-center py-0.5 px-2 cursor-pointer rounded text-slate-700 dark:text-slate-200;
+}
+
+.tree-item:hover {
+  @apply bg-slate-200 dark:bg-slate-700;
+}
+
+.tree-item.selected {
+  @apply bg-slate-200 dark:bg-slate-600;
+}
+
+/* Tab styles */
+.editor-tab {
+  @apply flex items-center px-3 py-1.5 bg-slate-200 dark:bg-slate-800 border-r border-slate-300 dark:border-slate-700 cursor-pointer text-slate-700 dark:text-slate-200;
+}
+
+.editor-tab.active {
+  @apply bg-slate-300 dark:bg-slate-700;
+}
+
+.editor-tab:hover:not(.active) {
+  @apply bg-slate-200 dark:bg-slate-800;
+}
+
+/* Status bar */
+.status-bar {
+  @apply flex items-center justify-between px-2 py-0.5 bg-slate-200 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300;
+}
+
+/* Button styles */
+.btn {
+  @apply px-3 py-1.5 rounded text-sm font-medium transition-colors;
+}
+
+.btn-primary {
+  @apply bg-blue-600 text-white hover:bg-blue-700 dark:hover:bg-blue-500;
+}
+
+.btn-secondary {
+  @apply bg-slate-600 text-white hover:bg-slate-500 dark:hover:bg-slate-400;
+}
+
+.btn-danger {
+  @apply bg-red-600 text-white hover:bg-red-700 dark:hover:bg-red-500;
+}
+
+/* Input styles */
+.input {
+  @apply w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded text-slate-700 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500;
+}
+
+/* Panel styles */
+.panel {
+  @apply bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded;
+}
+
+.panel-header {
+  @apply flex items-center justify-between px-3 py-2 bg-slate-200 dark:bg-slate-800 border-b border-slate-300 dark:border-slate-700 font-medium text-slate-700 dark:text-slate-200;
+}
+
+/* Sidebar */
+.sidebar {
+  @apply flex flex-col bg-slate-200 dark:bg-slate-800 border-r border-slate-300 dark:border-slate-700;
+}
+
+/* Split pane */
+.split-horizontal {
+  @apply flex h-full;
+}
+
+.split-vertical {
+  @apply flex flex-col h-full;
+}
+
+/* Resizable handle */
+.resize-handle {
+  @apply bg-slate-300 dark:bg-slate-600 hover:bg-blue-500 dark:hover:bg-blue-500 transition-colors;
+}
+
+.resize-handle.horizontal {
+  @apply w-1 cursor-col-resize;
+}
+
+.resize-handle.vertical {
+  @apply h-1 cursor-row-resize;
+}
+
+/* AI Chat Markdown Styles */
+.code-block {
+  @apply bg-slate-800 text-slate-100 rounded-lg p-3 my-2 overflow-x-auto text-sm font-mono;
+  border: 1px solid #3c3c3c;
+}
+
+.code-block code {
+  @apply text-slate-100;
+}
+
+.inline-code {
+  @apply bg-slate-700 text-cyan-300 px-1.5 py-0.5 rounded text-sm font-mono;
+}
+
+/* AI message content styling */
+.ai-message-content {
+  @apply text-sm leading-relaxed;
+}
+
+.ai-message-content pre {
+  @apply bg-slate-800 text-slate-100 rounded-lg p-3 my-2 overflow-x-auto text-sm font-mono border border-slate-600;
+}
+
+.ai-message-content code {
+  @apply text-cyan-300 font-mono;
+}
+
+.ai-message-content strong {
+  @apply text-white font-semibold;
+}
+
+.ai-message-content em {
+  @apply text-slate-300;
+}
+
+/* Diff preview styles for code insertion */
+.diff-insert {
+  background-color: rgba(72, 199, 116, 0.2) !important;
+  border-left: 3px solid #48c774 !important;
+}
+
+.diff-insert-glyph {
+  background-color: #48c774 !important;
+  width: 4px !important;
+  margin-left: 3px;
+}
+
+.diff-insert-line {
+  background-color: rgba(72, 199, 116, 0.1) !important;
+}
+
+/* Dark mode diff */
+.dark .diff-insert {
+  background-color: rgba(72, 199, 116, 0.15) !important;
+}
+
+/* Diff highlight region styles */
+.diff-highlight-region {
+  background-color: rgba(255, 255, 0, 0.2) !important;
+  border: 2px dashed #ffcc00 !important;
+}
+
+.diff-inline-highlight {
+  background-color: rgba(255, 200, 0, 0.3) !important;
+}
+
+/* Dark mode diff highlight */
+.dark .diff-highlight-region {
+  background-color: rgba(255, 200, 0, 0.15) !important;
+  border-color: #ffcc00 !important;
+}
+
+/* Editor diff line styles - for line-by-line diff display */
+.diff-line-removed {
+  background-color: rgba(220, 80, 80, 0.25) !important;
+  border-left: 3px solid #dc5050 !important;
+}
+
+.diff-line-added {
+  background-color: rgba(72, 199, 116, 0.25) !important;
+  border-left: 3px solid #48c774 !important;
+}
+
+.diff-glyph-removed {
+  background-color: #dc5050 !important;
+  width: 4px !important;
+  margin-left: 3px;
+}
+
+.diff-glyph-added {
+  background-color: #48c774 !important;
+  width: 4px !important;
+  margin-left: 3px;
+}
+
+.diff-decorator-removed {
+  background-color: #dc5050 !important;
+  width: 3px !important;
+}
+
+.diff-decorator-added {
+  background-color: #48c774 !important;
+  width: 3px !important;
+}
+
+/* Dark mode editor diff */
+.dark .diff-line-removed {
+  background-color: rgba(220, 80, 80, 0.3) !important;
+}
+
+.dark .diff-line-added {
+  background-color: rgba(72, 199, 116, 0.3) !important;
+}

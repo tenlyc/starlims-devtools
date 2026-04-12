@@ -1,0 +1,10 @@
+Package Name: SCM_API
+Package Date: 2026-04-12
+
+Description: STARLIMS Source Control Manager API Server Scripts
+
+Server Script Category: SCM_API
+	Server Scripts:
+		- GetCheckedOutItems
+		- GetPendingCheckins
+		- GetCheckedInItems

@@ -1,0 +1,32 @@
+/*******************************************************************************
+Description..:        Get all checked in items from LIMSSOURCECONTROL table
+*******************************************************************************/
+:DECLARE oResponse, aResult, sUser, sDateFrom, sDateTo;
+
+oResponse := CreateUDObject({
+    {"success", .T.},
+    {"data", NIL}
+});
+
+sUser := "";
+sDateFrom := "";
+sDateTo := "";
+
+:IF Request:QueryString:IsProperty("user");
+    sUser := Request:QueryString:Item("user");
+:ENDIF;
+
+:IF Request:QueryString:IsProperty("dateFrom");
+    sDateFrom := Request:QueryString:Item("dateFrom");
+:ENDIF;
+
+:IF Request:QueryString:IsProperty("dateTo");
+    sDateTo := Request:QueryString:Item("dateTo");
+:ENDIF;
+
+aResult := DoProc("Enterprise_Data_Providers.CheckInProvider.GetPendingCheckins", {.F., sUser, sDateFrom, sDateTo});
+
+Response:StatusCode := 200;
+oResponse:success := .T.;
+oResponse:data := aResult;
+:RETURN oResponse;
