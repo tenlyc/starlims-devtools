@@ -13,9 +13,9 @@ Cross-platform STARLIMS Development Tools - A desktop application providing adva
 
 ## 简介 | Overview
 
-STARLIMS DevTools 是一款基于 Electron 开发的跨平台桌面应用程序，提供增强的 STARLIMS 开发能力。本工具基于 [starlimsvscode](https://github.com/mariuspopovici/starlimsvscode) 开发，并扩展为独立的桌面应用体验。
+STARLIMS DevTools 是一款基于 Electron 开发的跨平台桌面应用程序，提供增强的 STARLIMS 开发能力。本工具基于 [MrDoe/starlimsvscode](https://github.com/MrDoe/starlimsvscode) 进行二次开发，并扩展为独立的桌面应用体验。
 
-STARLIMS DevTools is a cross-platform desktop application built on Electron that provides enhanced STARLIMS development capabilities. It is developed based on [starlimsvscode](https://github.com/mariuspopovici/starlimsvscode) and extends the functionality with a dedicated desktop application experience.
+STARLIMS DevTools is a cross-platform desktop application built on Electron that provides enhanced STARLIMS development capabilities. It is a fork of [MrDoe/starlimsvscode](https://github.com/MrDoe/starlimsvscode) and extends the functionality with a dedicated desktop application experience.
 
 ## 功能 | Features
 
