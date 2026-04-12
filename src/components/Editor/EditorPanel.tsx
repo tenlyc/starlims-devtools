@@ -1545,7 +1545,6 @@ export function EditorPanel() {
               // Bracket matching
               bracketPairColorization: { enabled: true },
               matchBrackets: 'always',
-              bracketPairGuide: true,
               // Hover and parameter hints
               hover: { enabled: true },
               parameterHints: { enabled: true },
@@ -1565,7 +1564,7 @@ export function EditorPanel() {
               suggestOnTriggerCharacters: true,
               acceptSuggestionOnEnter: 'on',
               tabCompletion: 'on',
-              wordBasedSuggestions: true,
+              wordBasedSuggestions: 'currentDocument',
               // Error/warning markers
               renderValidationDecorations: 'on',
               // Scrollbar

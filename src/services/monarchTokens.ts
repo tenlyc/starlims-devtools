@@ -442,9 +442,7 @@ export function registerLanguages(editorMonaco?: typeof monaco) {
       markers: {
         start: /^\s*(\/\*\s?region).*$/,
         end: /^\s*(\/\*endregion;).*$/
-      },
-      // Support for STARLIMS SSL block folding
-      limitZone: 5000,
+      }
     }
   });
 
