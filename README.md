@@ -9,7 +9,10 @@ Cross-platform STARLIMS Development Tools - A desktop application providing adva
 > **警告 | Warning**: 这是一款非官方、不受支持的 STARLIMS 开发工具。使用风险自负。
 > This is an unofficial, unsupported tool for STARLIMS development. Use at your own risk.
 
-![STARLIMS DevTools Preview](resources/preview.png)
+<img width="3822" height="2079" alt="image" src="https://github.com/user-attachments/assets/554a7c5c-64f2-42fe-ad77-91962f7085a4" />
+<img width="3818" height="2003" alt="image" src="https://github.com/user-attachments/assets/59c7ef0c-3c72-4852-aa2e-6d5a7191310d" />
+
+
 
 ## 简介 | Overview
 
