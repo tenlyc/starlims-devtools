@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, ExternalMcpServers, GenericAgentConfig } from '../src/types/agent';
+import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceChange, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, AgentWorkspaceSyncResult, ExternalMcpServers, GenericAgentConfig } from '../src/types/agent';
 import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
 
 // Type definitions for exposed API
@@ -82,7 +82,9 @@ export interface ElectronAPI {
   agentGetExternalMcpServers: () => Promise<ExternalMcpServers>;
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => Promise<boolean>;
   agentWorkspaceConfigure: (context: AgentWorkspaceContext) => Promise<AgentWorkspaceInfo>;
-  agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => Promise<{ path: string; files: number }>;
+  agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => Promise<AgentWorkspaceSyncResult>;
+  agentWorkspaceGetChanges: () => Promise<AgentWorkspaceChange[]>;
+  agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'>>) => Promise<number>;
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
   agentNewSession: (provider: AgentProvider) => Promise<void>;
@@ -200,6 +202,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => ipcRenderer.invoke('agent:setExternalMcpServers', servers),
   agentWorkspaceConfigure: (context: AgentWorkspaceContext) => ipcRenderer.invoke('agent:workspaceConfigure', context),
   agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => ipcRenderer.invoke('agent:workspaceSyncFiles', files),
+  agentWorkspaceGetChanges: () => ipcRenderer.invoke('agent:workspaceGetChanges'),
+  agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'>>) => ipcRenderer.invoke('agent:workspaceAcceptChanges', files),
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => ipcRenderer.invoke('agent:start', provider, prompt, model, toolPermissionPolicy),
   agentInterrupt: (provider: AgentProvider) => ipcRenderer.invoke('agent:interrupt', provider),
   agentNewSession: (provider: AgentProvider) => ipcRenderer.invoke('agent:newSession', provider),

@@ -804,7 +804,19 @@ ipcMain.handle('agent:workspaceSyncFiles', async (_, files: AgentWorkspaceFile[]
   if (!Array.isArray(files)) throw new Error('Workspace files must be an array.');
   return agentWorkspace.syncFiles(files.map((file) => ({
     uri: String(file.uri || ''), name: String(file.name || 'script'), type: String(file.type || 'text'),
-    language: file.language ? String(file.language) : undefined, content: String(file.content || '')
+    language: file.language ? String(file.language) : undefined,
+    checkedOutBy: file.checkedOutBy ? String(file.checkedOutBy) : undefined,
+    checkedOutDate: file.checkedOutDate ? String(file.checkedOutDate) : undefined,
+    content: String(file.content || '')
+  })));
+});
+
+ipcMain.handle('agent:workspaceGetChanges', async () => agentWorkspace.getChanges());
+
+ipcMain.handle('agent:workspaceAcceptChanges', async (_, files: Array<{ uri: string; language?: string }>) => {
+  if (!Array.isArray(files)) throw new Error('Accepted workspace files must be an array.');
+  return agentWorkspace.acceptChanges(files.map((file) => ({
+    uri: String(file.uri || ''), language: file.language ? String(file.language) : undefined
   })));
 });
 

@@ -14,6 +14,7 @@ import { useThemeStore } from '../stores/themeStore';
 import { editorStore } from '../stores/editorStore';
 import { getEnterpriseService } from '../services/enterpriseService';
 import { useDiagnosticStore } from '../services/diagnosticStore';
+import { syncCheckedOutWorkspace } from '../services/agentWorkspaceService';
 import { useI18n } from '../i18n';
 
 type WorkbenchLayout = {
@@ -64,7 +65,6 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(initialLayout.sidebarWidth);
   const [mcpPanelWidth, setMcpPanelWidth] = useState(initialLayout.agentWidth);
   const [outputHeight, setOutputHeight] = useState(initialLayout.outputHeight);
-  const [agentWorkspacePath, setAgentWorkspacePath] = useState('');
   const [agentWorkspaceRoot, setAgentWorkspaceRoot] = useState<string | null>(null);
 
   const { currentServer, isConnected, connect, disconnect } = useServerStore();
@@ -111,20 +111,12 @@ export default function App() {
       rootPath: agentWorkspaceRoot || undefined
     }).then((workspace) => {
       localStorage.setItem('gitWorkspacePath', workspace.path);
-      setAgentWorkspacePath(workspace.path);
       window.dispatchEvent(new CustomEvent('agent-workspace:configured', { detail: workspace }));
+      return syncCheckedOutWorkspace();
+    }).then((result) => {
+      if (result?.preservedChanges) console.info(`Preserved ${result.preservedChanges} local Agent workspace change(s).`);
     }).catch((error) => console.error('Failed to configure Agent workspace:', error));
   }, [agentWorkspaceRoot, isConnected, currentServer]);
-
-  useEffect(() => {
-    if (!isConnected || !agentWorkspacePath || !window.electronAPI) return;
-    const timer = window.setTimeout(() => {
-      void window.electronAPI.agentWorkspaceSyncFiles(openEditorFiles.map((file) => ({
-        uri: file.uri, name: file.name, type: file.type, language: file.language, content: file.content
-      }))).catch((error) => console.error('Failed to sync Agent workspace:', error));
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [agentWorkspacePath, isConnected, openEditorFiles]);
 
   useEffect(() => {
     const fitLayoutToWindow = () => {

@@ -10,6 +10,7 @@ import { editorStore } from '../../stores/editorStore';
 import type { AgentApprovalDecision, AgentEvent, AgentItemKind, AgentModelOption, AgentProvider, AgentRuntimeStatus, GenericAgentConfig } from '../../types/agent';
 import type { EnterpriseItem } from '../../services/iEnterpriseService';
 import { useI18n } from '../../i18n';
+import { syncCheckedOutWorkspace } from '../../services/agentWorkspaceService';
 
 type MessageEntry = {
   entryType: 'message';
@@ -566,6 +567,12 @@ export function MCPPanel() {
     updateConversation(selectedProvider, (current) => ({ ...current, entries: [...current.entries, userMessage], running: true, sequence: current.sequence + 1 }));
     setInput('');
     try {
+      await syncCheckedOutWorkspace().catch((error) => {
+        useOutputLogStore.getState().addEntry({
+          channel: 'ai-runtime', level: 'warning', source: 'Agent Workspace',
+          message: `Could not refresh checked-out files before this turn; using the existing workspace. ${error instanceof Error ? error.message : String(error)}`
+        });
+      });
       if (selectedProvider === 'generic') {
         await window.electronAPI.genericAgentStart({ ...genericConfig, toolPermissionPolicy: permissionPolicyForMode(conversationMode) }, prompt);
       } else if (selectedProvider === 'opencode') {

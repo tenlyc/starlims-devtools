@@ -1,12 +1,13 @@
 import { createHash } from 'crypto';
 import { execFile } from 'child_process';
-import { mkdir, stat, writeFile } from 'fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'fs/promises';
 import { basename, dirname, join } from 'path';
 
 export type AgentWorkspaceContext = {
   serverName: string;
   serverUrl: string;
   user: string;
+  rootPath?: string;
 };
 
 export type AgentWorkspaceFile = {
@@ -14,8 +15,25 @@ export type AgentWorkspaceFile = {
   name: string;
   type: string;
   language?: string;
+  checkedOutBy?: string;
+  checkedOutDate?: string;
   content: string;
 };
+
+export type AgentWorkspaceChange = Omit<AgentWorkspaceFile, 'content'> & {
+  relativePath: string;
+  kind: 'modified' | 'deleted';
+  before: string;
+  after: string;
+};
+
+type ManifestFile = Omit<AgentWorkspaceFile, 'content'> & {
+  relativePath: string;
+  baselinePath: string;
+  baselineHash: string;
+};
+
+type WorkspaceManifest = { updatedAt: string; files: ManifestFile[] };
 
 export type AgentWorkspaceInfo = {
   path: string;
@@ -29,6 +47,11 @@ const TYPE_EXTENSIONS: Record<string, string> = {
   DS: '.sql', APPDS: '.sql', DATASOURCESCRIPT: '.sql',
   HTMLFORMXML: '.xml', HTMLFORMRESOURCES: '.xml', HTMLFORMGUIDE: '.json'
 };
+
+const LOCALIZED_TYPES = new Set([
+  'HTMLFORMXML', 'HTMLFORMCODE', 'HTMLFORMGUIDE', 'HTMLFORMRESOURCES',
+  'XFDFORMXML', 'XFDFORMCODE', 'XFDFORMRESOURCES'
+]);
 
 function safePart(value: string): string {
   const normalized = value.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/^\.+$/, '_');
@@ -45,11 +68,28 @@ function relativePathFor(file: AgentWorkspaceFile): string {
   const uriParts = file.uri.split('/').filter(Boolean).map(safePart);
   const leaf = safePart(file.name || uriParts.pop() || 'script');
   const parentParts = uriParts.length && uriParts[uriParts.length - 1] === leaf ? uriParts.slice(0, -1) : uriParts;
-  return join('items', ...parentParts, `${leaf}${extensionFor(file)}`);
+  const languageSuffix = file.language && LOCALIZED_TYPES.has(file.type.toUpperCase()) ? `.${safePart(file.language)}` : '';
+  return join('items', ...parentParts, `${leaf}${languageSuffix}${extensionFor(file)}`);
 }
 
 async function pathExists(path: string): Promise<boolean> {
   try { await stat(path); return true; } catch { return false; }
+}
+
+async function readText(path: string): Promise<string | undefined> {
+  try { return await readFile(path, 'utf8'); } catch { return undefined; }
+}
+
+function contentHash(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+function fileIdentity(file: Pick<AgentWorkspaceFile, 'uri' | 'language'>): string {
+  return `${file.uri}\n${file.language || ''}`;
+}
+
+function baselineRelativePath(file: Pick<AgentWorkspaceFile, 'uri' | 'language'>): string {
+  return join('baselines', `${contentHash(fileIdentity(file))}.txt`);
 }
 
 async function initializeGit(path: string): Promise<void> {
@@ -60,12 +100,16 @@ async function initializeGit(path: string): Promise<void> {
 }
 
 export class AgentWorkspaceManager {
-  private active?: AgentWorkspaceInfo;
+  private active?: AgentWorkspaceInfo & { statePath: string };
 
   constructor(private readonly root: string) {}
 
   currentPath(): string {
     return this.active?.path || join(this.root, 'default');
+  }
+
+  private currentStatePath(): string {
+    return this.active?.statePath || join(this.root, '.state', 'default');
   }
 
   async configure(context: AgentWorkspaceContext): Promise<AgentWorkspaceInfo> {
@@ -74,34 +118,138 @@ export class AgentWorkspaceManager {
     const directory = `${safePart(context.serverName)}-${safePart(context.user || 'anonymous')}-${suffix}`;
     const workspaceRoot = context.rootPath?.trim() || this.root;
     const path = join(workspaceRoot, directory);
+    const statePath = join(this.root, '.state', directory);
     await mkdir(join(path, '.starlims'), { recursive: true });
     await mkdir(join(path, 'items'), { recursive: true });
+    await mkdir(join(statePath, 'baselines'), { recursive: true });
     const info = { path, serverName: context.serverName, user: context.user };
     await writeFile(join(path, '.starlims', 'workspace.json'), JSON.stringify({ ...context, rootPath: workspaceRoot, updatedAt: new Date().toISOString() }, null, 2));
     await writeFile(join(path, 'STARLIMS_WORKSPACE.md'), [
       '# STARLIMS Agent Workspace', '',
       `Server: ${context.serverName} (${context.serverUrl})`,
       `User: ${context.user || 'unknown'}`, '',
-      'Files under `items/` are local mirrors of scripts opened in STARLIMS DevTools.',
-      'Use the configured STARLIMS MCP tools for authoritative remote reads and all remote changes.'
+      'Files under `items/` are working copies of the current user’s checked-out STARLIMS scripts.',
+      'Local edits are reviewed in STARLIMS DevTools before they are written back to STARLIMS.',
+      'User-configured AI rules are managed separately; this workspace never creates or replaces AGENTS.md/agent.md.',
+      'Use `.starlims/manifest.json` as an informational URI/language index; STARLIMS DevTools keeps the authoritative baseline separately.'
     ].join('\n'));
     await initializeGit(path);
-    this.active = info;
+    this.active = { ...info, statePath };
     return info;
   }
 
-  async syncFiles(files: AgentWorkspaceFile[]): Promise<{ path: string; files: number }> {
+  private async readManifest(): Promise<WorkspaceManifest> {
+    const source = await readText(join(this.currentStatePath(), 'manifest.json'));
+    if (!source) return { updatedAt: '', files: [] };
+    try {
+      const parsed = JSON.parse(source) as WorkspaceManifest;
+      return { updatedAt: String(parsed.updatedAt || ''), files: Array.isArray(parsed.files) ? parsed.files : [] };
+    } catch {
+      return { updatedAt: '', files: [] };
+    }
+  }
+
+  private async writeManifest(manifest: WorkspaceManifest): Promise<void> {
     const root = this.currentPath();
+    const statePath = this.currentStatePath();
+    await mkdir(statePath, { recursive: true });
+    await writeFile(join(statePath, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    // This mirror is informational only. Authoritative hashes and baseline paths
+    // stay outside the Agent working directory and are never read from here.
+    const publicManifest = {
+      updatedAt: manifest.updatedAt,
+      files: manifest.files.map(({ baselinePath: _baselinePath, baselineHash: _baselineHash, ...file }) => file)
+    };
+    await writeFile(join(root, '.starlims', 'manifest.json'), JSON.stringify(publicManifest, null, 2));
+  }
+
+  async syncFiles(files: AgentWorkspaceFile[]): Promise<{ path: string; files: number; preservedChanges: number }> {
+    const root = this.currentPath();
+    const statePath = this.currentStatePath();
     await mkdir(join(root, '.starlims'), { recursive: true });
-    const manifest: Array<AgentWorkspaceFile & { relativePath: string }> = [];
+    await mkdir(join(statePath, 'baselines'), { recursive: true });
+    const previous = await this.readManifest();
+    const previousByIdentity = new Map(previous.files.map((file) => [fileIdentity(file), file]));
+    const manifest: ManifestFile[] = [];
+    let preservedChanges = 0;
     for (const file of files) {
-      const relativePath = relativePathFor(file);
+      const { content, ...metadata } = file;
+      const desiredRelativePath = relativePathFor(file);
+      const baselinePath = baselineRelativePath(file);
+      const baselineTarget = join(statePath, baselinePath);
+      const old = previousByIdentity.get(fileIdentity(file));
+      const currentContent = await readText(join(root, old?.relativePath || desiredRelativePath));
+      const oldBaseline = old ? await readText(join(statePath, old.baselinePath)) : undefined;
+      const hasTrackedLocalChanges = Boolean(old && currentContent !== undefined && oldBaseline !== undefined && contentHash(currentContent) !== old.baselineHash);
+      const hasUntrackedLocalChanges = Boolean(!old && currentContent !== undefined && contentHash(currentContent) !== contentHash(content));
+      const hasRecoveredLocalChanges = Boolean(old && currentContent !== undefined && oldBaseline === undefined && contentHash(currentContent) !== contentHash(content));
+      const hasLocalChanges = hasTrackedLocalChanges || hasUntrackedLocalChanges || hasRecoveredLocalChanges;
+      const relativePath = hasLocalChanges && old ? old.relativePath : desiredRelativePath;
       const target = join(root, relativePath);
       await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, file.content, 'utf8');
-      manifest.push({ ...file, content: '', relativePath });
+      await mkdir(dirname(baselineTarget), { recursive: true });
+      if (hasLocalChanges) {
+        preservedChanges++;
+        const baseline = old && oldBaseline !== undefined ? oldBaseline : content;
+        await writeFile(baselineTarget, baseline, 'utf8');
+        manifest.push({ ...metadata, relativePath, baselinePath, baselineHash: old && oldBaseline !== undefined ? old.baselineHash : contentHash(content) });
+      } else {
+        await writeFile(target, content, 'utf8');
+        await writeFile(baselineTarget, content, 'utf8');
+        manifest.push({ ...metadata, relativePath, baselinePath, baselineHash: contentHash(content) });
+      }
     }
-    await writeFile(join(root, '.starlims', 'manifest.json'), JSON.stringify({ updatedAt: new Date().toISOString(), files: manifest }, null, 2));
-    return { path: root, files: files.length };
+    const currentIdentities = new Set(files.map(fileIdentity));
+    // A checkout can disappear while an Agent still has unreviewed work. Keep
+    // that manifest entry so the UI can surface the change and reject write-back
+    // as a checkout conflict instead of silently losing the local edit.
+    for (const old of previous.files) {
+      if (currentIdentities.has(fileIdentity(old))) continue;
+      const baseline = await readText(join(statePath, old.baselinePath));
+      const current = await readText(join(root, old.relativePath));
+      if (baseline === undefined) continue;
+      if (current === undefined || contentHash(current) !== old.baselineHash) {
+        manifest.push(old);
+        preservedChanges++;
+      }
+    }
+    await this.writeManifest({ updatedAt: new Date().toISOString(), files: manifest });
+    return { path: root, files: files.length, preservedChanges };
+  }
+
+  async getChanges(): Promise<AgentWorkspaceChange[]> {
+    const root = this.currentPath();
+    const statePath = this.currentStatePath();
+    const manifest = await this.readManifest();
+    const changes: AgentWorkspaceChange[] = [];
+    for (const file of manifest.files) {
+      const before = await readText(join(statePath, file.baselinePath));
+      if (before === undefined) continue;
+      const after = await readText(join(root, file.relativePath));
+      if (after === undefined) {
+        changes.push({ ...file, kind: 'deleted', before, after: '' });
+      } else if (contentHash(after) !== file.baselineHash) {
+        changes.push({ ...file, kind: 'modified', before, after });
+      }
+    }
+    return changes;
+  }
+
+  async acceptChanges(identities: Array<{ uri: string; language?: string }>): Promise<number> {
+    const root = this.currentPath();
+    const statePath = this.currentStatePath();
+    const manifest = await this.readManifest();
+    const accepted = new Set(identities.map(fileIdentity));
+    let count = 0;
+    for (const file of manifest.files) {
+      if (!accepted.has(fileIdentity(file))) continue;
+      const content = await readText(join(root, file.relativePath));
+      if (content === undefined) continue;
+      await writeFile(join(statePath, file.baselinePath), content, 'utf8');
+      file.baselineHash = contentHash(content);
+      count++;
+    }
+    await this.writeManifest({ ...manifest, updatedAt: new Date().toISOString() });
+    return count;
   }
 }

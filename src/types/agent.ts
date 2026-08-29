@@ -59,6 +59,8 @@ export type AgentWorkspaceFile = {
   name: string;
   type: string;
   language?: string;
+  checkedOutBy?: string;
+  checkedOutDate?: string;
   content: string;
 };
 
@@ -66,6 +68,19 @@ export type AgentWorkspaceInfo = {
   path: string;
   serverName: string;
   user: string;
+};
+
+export type AgentWorkspaceSyncResult = {
+  path: string;
+  files: number;
+  preservedChanges: number;
+};
+
+export type AgentWorkspaceChange = Omit<AgentWorkspaceFile, 'content'> & {
+  relativePath: string;
+  kind: 'modified' | 'deleted';
+  before: string;
+  after: string;
 };
 
 export type GenericAgentConfig = {

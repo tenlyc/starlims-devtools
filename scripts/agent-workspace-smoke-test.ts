@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { AgentWorkspaceManager } from '../electron/agentWorkspace';
@@ -20,6 +20,39 @@ async function main() {
     const manifest = JSON.parse(await readFile(join(info.path, '.starlims', 'manifest.json'), 'utf8'));
     assert.equal(manifest.files[0].language, 'CHS');
     assert.match(await readFile(join(info.path, manifest.files[0].relativePath), 'utf8'), /:RETURN \.T\.;/);
+    const workingCopy = join(info.path, manifest.files[0].relativePath);
+    await writeFile(workingCopy, ':RETURN .F.;', 'utf8');
+    const preserved = await manager.syncFiles([{
+      uri: '/Applications/QualityManager/Test/Server Scripts/Validate',
+      name: 'Validate', type: 'APPSS', language: 'CHS', content: ':RETURN .T.;'
+    }]);
+    assert.equal(preserved.preservedChanges, 1);
+    assert.equal(await readFile(workingCopy, 'utf8'), ':RETURN .F.;');
+    const changes = await manager.getChanges();
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0].before, ':RETURN .T.;');
+    assert.equal(changes[0].after, ':RETURN .F.;');
+    assert.equal(await manager.acceptChanges([{ uri: changes[0].uri, language: changes[0].language }]), 1);
+    assert.equal((await manager.getChanges()).length, 0);
+    const refreshed = await manager.syncFiles([{
+      uri: '/Applications/QualityManager/Test/Server Scripts/Validate',
+      name: 'Validate', type: 'APPSS', language: 'CHS', content: ':RETURN NIL;'
+    }]);
+    assert.equal(refreshed.preservedChanges, 0);
+    assert.equal(await readFile(workingCopy, 'utf8'), ':RETURN NIL;');
+    await manager.syncFiles([
+      { uri: '/Applications/QM/App/HTMLForms/XML/Main', name: 'Main [XML]', type: 'HTMLFORMXML', language: 'CHS', content: '<chs />' },
+      { uri: '/Applications/QM/App/HTMLForms/XML/Main', name: 'Main [XML]', type: 'HTMLFORMXML', language: 'ENG', content: '<eng />' }
+    ]);
+    const localizedManifest = JSON.parse(await readFile(join(info.path, '.starlims', 'manifest.json'), 'utf8'));
+    assert.equal(localizedManifest.files.length, 2);
+    assert.notEqual(localizedManifest.files[0].relativePath, localizedManifest.files[1].relativePath);
+    await writeFile(join(info.path, localizedManifest.files[0].relativePath), '<local-change />', 'utf8');
+    const stalePreserved = await manager.syncFiles([{
+      uri: '/Applications/QM/App/HTMLForms/XML/Main', name: 'Main [XML]', type: 'HTMLFORMXML', language: 'ENG', content: '<eng />'
+    }]);
+    assert.equal(stalePreserved.preservedChanges, 1);
+    assert.equal((await manager.getChanges()).length, 1);
     assert.equal(isReadOnlyAgentToolBlocked('Write'), true);
     assert.equal(isReadOnlyAgentToolBlocked('mcp__starlims__save_item'), true);
     assert.equal(isReadOnlyAgentToolBlocked('mcp__starlims__get_item_code'), false);

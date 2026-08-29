@@ -1,7 +1,7 @@
 /**
  * Type declarations for Electron API exposed via preload
  */
-import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, ExternalMcpServers, GenericAgentConfig } from './agent';
+import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceChange, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, AgentWorkspaceSyncResult, ExternalMcpServers, GenericAgentConfig } from './agent';
 import type { DiagnosticLogEvent } from './diagnosticLog';
 
 export interface ElectronAPI {
@@ -81,7 +81,9 @@ export interface ElectronAPI {
   agentGetExternalMcpServers: () => Promise<ExternalMcpServers>;
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => Promise<boolean>;
   agentWorkspaceConfigure: (context: AgentWorkspaceContext) => Promise<AgentWorkspaceInfo>;
-  agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => Promise<{ path: string; files: number }>;
+  agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => Promise<AgentWorkspaceSyncResult>;
+  agentWorkspaceGetChanges: () => Promise<AgentWorkspaceChange[]>;
+  agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'>>) => Promise<number>;
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
   agentNewSession: (provider: AgentProvider) => Promise<void>;
