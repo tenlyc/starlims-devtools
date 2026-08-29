@@ -627,7 +627,7 @@ export function EditorPanel() {
           // Save and close
           try {
             const enterpriseService = getEnterpriseService();
-            const saved = await enterpriseService.saveItemCode(file.uri, file.content, file.type);
+            const saved = await enterpriseService.saveItemCode(file.uri, file.content, file.language);
             if (saved) {
               editorStore.getState().markFileAsSaved(file.uri);
               console.log('File saved on close:', file.name);
@@ -655,7 +655,7 @@ export function EditorPanel() {
       // Skip prompt mode - auto save (for programmatic closes)
       try {
         const enterpriseService = getEnterpriseService();
-        const saved = await enterpriseService.saveItemCode(file.uri, file.content, file.type);
+        const saved = await enterpriseService.saveItemCode(file.uri, file.content, file.language);
         if (saved) {
           editorStore.getState().markFileAsSaved(file.uri);
           console.log('File auto-saved on close:', file.name);
@@ -881,7 +881,7 @@ export function EditorPanel() {
 
     try {
       const enterpriseService = getEnterpriseService();
-      const result = await enterpriseService.checkOut(activeFile.uri);
+      const result = await enterpriseService.checkOut(activeFile.uri, activeFile.language);
 
       if (result.success) {
         addEntry({
@@ -920,7 +920,7 @@ export function EditorPanel() {
 
     try {
       const enterpriseService = getEnterpriseService();
-      const result = await enterpriseService.checkIn(activeFile.uri);
+      const result = await enterpriseService.checkIn(activeFile.uri, undefined, activeFile.language);
 
       if (result.success) {
         addEntry({
@@ -1167,7 +1167,7 @@ export function EditorPanel() {
     if (activeFile.isDirty) {
       try {
         const enterpriseService = getEnterpriseService();
-        const saved = await enterpriseService.saveItemCode(activeFile.uri, activeFile.content, activeFile.type);
+        const saved = await enterpriseService.saveItemCode(activeFile.uri, activeFile.content, activeFile.language);
         if (saved) {
           editorStore.getState().markFileAsSaved(activeFile.uri);
         }

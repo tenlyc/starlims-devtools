@@ -9,7 +9,7 @@ import { AgentRuntimeManager } from './agentRuntime';
 import { withLocalMcpNoProxy } from './localMcpEnv';
 import { GenericAgentRuntime } from './genericAgentRuntime';
 import { ExternalMcpManager } from './externalMcpManager';
-import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentProvider, AgentRuntimeStatus, ExternalMcpServers } from '../src/types/agent';
+import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentProvider, AgentRuntimeStatus, AgentToolPermissionPolicy, ExternalMcpServers } from '../src/types/agent';
 import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
 
 // Configure logging
@@ -42,7 +42,11 @@ const getMcpPort = (): number => Number(store.get('mcpPort') || DEFAULT_MCP_PORT
 let mainWindow: BrowserWindow | null = null;
 let agentRuntime: AgentRuntimeManager | undefined;
 let genericAgentRuntime: GenericAgentRuntime | undefined;
+let activeToolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes';
 const EXTERNAL_MCP_STORE_KEY = 'externalMcpServers.v1';
+const MCP_TOOL_PERMISSION_STORE_KEY = 'mcpToolPermissionPolicy.v1';
+const normalizeToolPermissionPolicy = (value: unknown): AgentToolPermissionPolicy =>
+  value === 'read-only' || value === 'full-access' ? value : 'ask-writes';
 const getExternalMcpServers = (): ExternalMcpServers => (store.get(EXTERNAL_MCP_STORE_KEY) || {}) as ExternalMcpServers;
 const externalMcpManager = new ExternalMcpManager();
 externalMcpManager.setConfigs(getExternalMcpServers());
@@ -572,7 +576,7 @@ const getAgentRuntime = (): AgentRuntimeManager => {
     agentRuntime = new AgentRuntimeManager({
       codexCommand: resolveCodexCommand,
       mcpUrl: () => mcpServer.getStatus().url,
-      externalMcpServers: getExternalMcpServers,
+      externalMcpServers: () => activeToolPermissionPolicy === 'read-only' ? {} : getExternalMcpServers(),
       cwd: () => process.cwd(),
       getVersion: () => app.getVersion(),
       emit: (event: AgentEvent) => {
@@ -586,6 +590,23 @@ const getAgentRuntime = (): AgentRuntimeManager => {
 const getGenericAgentRuntime = (): GenericAgentRuntime => {
   genericAgentRuntime ||= new GenericAgentRuntime(callRenderer, externalMcpManager, (event) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent:event', event);
+  }, async (name, args) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    const safeArgs = Object.fromEntries(Object.entries(args).map(([key, value]) =>
+      /password|pass|token|cookie|secret|key/i.test(key) ? [key, '[hidden]'] : [key, value]
+    ));
+    const detail = JSON.stringify(safeArgs, null, 2).slice(0, 3000);
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'Allow external MCP tool?',
+      message: `允许通用 Agent 调用外部 MCP 工具“${name}”吗？`,
+      detail,
+      buttons: ['拒绝', '允许一次'],
+      cancelId: 0,
+      defaultId: 1,
+      noLink: true
+    });
+    return result.response === 1;
   });
   return genericAgentRuntime;
 };
@@ -737,13 +758,20 @@ ipcMain.handle('agent:selectFiles', async (): Promise<AgentFileAttachment[]> => 
   });
 });
 
-ipcMain.handle('agent:start', async (_, provider: AgentProvider, prompt: string, model?: string) => {
+ipcMain.handle('agent:start', async (_, provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => {
   if (!['codex', 'claude'].includes(provider)) throw new Error('This provider does not support rich agent sessions yet.');
   if (!prompt.trim()) throw new Error('Prompt is required.');
   await mcpServer.start();
   const status = mcpServer.getStatus();
   if (!status.running) throw new Error(`STARLIMS MCP is not running: ${status.error || status.url}`);
-  return getAgentRuntime().send(provider, prompt, model);
+  const normalizedPolicy = normalizeToolPermissionPolicy(toolPermissionPolicy);
+  store.set(MCP_TOOL_PERMISSION_STORE_KEY, normalizedPolicy);
+  if (activeToolPermissionPolicy !== normalizedPolicy) {
+    agentRuntime?.dispose();
+    agentRuntime = undefined;
+    activeToolPermissionPolicy = normalizedPolicy;
+  }
+  return getAgentRuntime().send(provider, prompt, model, normalizedPolicy);
 });
 
 ipcMain.handle('agent:interrupt', async (_, provider: AgentProvider) => getAgentRuntime().interrupt(provider));
@@ -756,6 +784,7 @@ ipcMain.handle('agent:respondApproval', async (_, provider: AgentProvider, reque
 ipcMain.handle('generic-agent:listModels', async (_, config) => getGenericAgentRuntime().listModels(config));
 ipcMain.handle('generic-agent:start', async (_, config, prompt: string) => {
   if (!config?.baseUrl || !config?.apiKey || !config?.model) throw new Error('Base URL, API Key, and model are required.');
+  store.set(MCP_TOOL_PERMISSION_STORE_KEY, normalizeToolPermissionPolicy(config.toolPermissionPolicy));
   return getGenericAgentRuntime().send(config, prompt);
 });
 ipcMain.handle('generic-agent:interrupt', async () => getGenericAgentRuntime().interrupt());

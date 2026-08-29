@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { buildCliPrompt, useAiContextStore } from '../../services/aiContextStore';
 import { useOutputLogStore } from '../../services/outputLogStore';
 import { getEnterpriseService } from '../../services/enterpriseService';
+import { permissionPolicyForMode, type ConversationMode } from '../../services/agentPermissions';
 import { editorStore } from '../../stores/editorStore';
 import type { AgentApprovalDecision, AgentEvent, AgentItemKind, AgentModelOption, AgentProvider, AgentRuntimeStatus, GenericAgentConfig } from '../../types/agent';
 import type { EnterpriseItem } from '../../services/iEnterpriseService';
@@ -65,7 +66,6 @@ type LocalAgentRules = {
   content: string;
   updatedAt: number;
 };
-type ConversationMode = 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
 type GenericAgentProfile = GenericAgentConfig & { id: string; name: string };
 
 const HISTORY_STORE_KEY = 'agentConversationHistory.v1';
@@ -567,13 +567,13 @@ export function MCPPanel() {
     setInput('');
     try {
       if (selectedProvider === 'generic') {
-        await window.electronAPI.genericAgentStart(genericConfig, prompt);
+        await window.electronAPI.genericAgentStart({ ...genericConfig, toolPermissionPolicy: permissionPolicyForMode(conversationMode) }, prompt);
       } else if (selectedProvider === 'opencode') {
         const output = await window.electronAPI.cliExecute(selectedProvider, prompt);
         const message: MessageEntry = { entryType: 'message', id: crypto.randomUUID(), role: 'assistant', provider: selectedProvider, content: stripAnsi(output) };
         updateConversation(selectedProvider, (current) => ({ ...current, running: false, entries: [...current.entries, message] }));
       } else {
-        await window.electronAPI.agentStart(selectedProvider, prompt, selectedProvider === 'codex' ? selectedModel : undefined);
+        await window.electronAPI.agentStart(selectedProvider, prompt, selectedProvider === 'codex' ? selectedModel : undefined, permissionPolicyForMode(conversationMode));
       }
       setReplayHistory(false);
     } catch (error) {

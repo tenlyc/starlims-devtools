@@ -111,7 +111,7 @@ export default function App() {
     if (activeFile && activeFile.isDirty) {
       try {
         const enterpriseService = getEnterpriseService();
-        const success = await enterpriseService.saveItemCode(activeFile.uri, activeFile.content, activeFile.type);
+        const success = await enterpriseService.saveItemCode(activeFile.uri, activeFile.content, activeFile.language);
         if (success) {
           editorStore.getState().markFileAsSaved(activeFile.uri);
           console.log('File saved successfully');

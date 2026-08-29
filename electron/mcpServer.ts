@@ -165,7 +165,7 @@ export class StarlimsMcpHttpServer {
     this.register(server, 'save_item', 'Save code to a checked-out STARLIMS item.',
       z.object({ uri: z.string().min(1), code: z.string(), language: z.string().optional() }), false);
     this.register(server, 'checkin_item', 'Check in a STARLIMS item after edits are complete.',
-      z.object({ uri: z.string().min(1), reason: z.string().min(1) }), false);
+      z.object({ uri: z.string().min(1), reason: z.string().min(1), language: z.string().optional() }), false);
     this.register(server, 'undo_checkout', 'Undo checkout for a STARLIMS item.', uriSchema, false);
     this.register(server, 'execute_server_script', 'Execute a STARLIMS server script.',
       z.object({ uri: z.string().min(1), parameters: z.array(z.unknown()).optional() }), false);
@@ -183,7 +183,16 @@ export class StarlimsMcpHttpServer {
   ): void {
     server.registerTool(
       name,
-      { description, inputSchema, annotations: { readOnlyHint: readOnly } },
+      {
+        description,
+        inputSchema,
+        annotations: {
+          readOnlyHint: readOnly,
+          destructiveHint: name === 'undo_checkout',
+          idempotentHint: readOnly || name === 'save_item',
+          openWorldHint: name === 'execute_server_script' || name === 'execute_data_source'
+        }
+      },
       async (arguments_: Record<string, unknown>) => {
         try {
           const data = await this.callRenderer(name, arguments_);

@@ -1,7 +1,7 @@
 /**
  * Type declarations for Electron API exposed via preload
  */
-import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, ExternalMcpServers, GenericAgentConfig } from './agent';
+import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, ExternalMcpServers, GenericAgentConfig } from './agent';
 import type { DiagnosticLogEvent } from './diagnosticLog';
 
 export interface ElectronAPI {
@@ -80,7 +80,7 @@ export interface ElectronAPI {
   agentSelectFiles: () => Promise<AgentFileAttachment[]>;
   agentGetExternalMcpServers: () => Promise<ExternalMcpServers>;
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => Promise<boolean>;
-  agentStart: (provider: AgentProvider, prompt: string, model?: string) => Promise<AgentStartResult>;
+  agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
   agentNewSession: (provider: AgentProvider) => Promise<void>;
   agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => Promise<boolean>;

@@ -1,8 +1,12 @@
 import { useEffect } from 'react';
 import { getEnterpriseService } from '../../services/enterpriseService';
 import { useOutputLogStore } from '../../services/outputLogStore';
+import { isStateChangingMcpTool } from '../../services/agentPermissions';
 
 type McpRequest = { id: string; tool: string; arguments: Record<string, unknown> };
+type McpToolPermissionPolicy = 'read-only' | 'ask-writes' | 'full-access';
+
+const MCP_TOOL_PERMISSION_STORE_KEY = 'mcpToolPermissionPolicy.v1';
 
 function summarizeArguments(args: Record<string, unknown>): string {
   const safe = Object.fromEntries(Object.entries(args).map(([key, value]) => {
@@ -22,6 +26,25 @@ const truncate = (text: string, requested?: unknown): { value: string; totalChar
   const max = typeof requested === 'number' ? requested : 50_000;
   return { value: text.slice(0, max), totalCharacters: text.length, truncated: text.length > max };
 };
+
+async function ensureMcpToolAllowed(request: McpRequest): Promise<void> {
+  if (!isStateChangingMcpTool(request.tool)) return;
+  const saved = await window.electronAPI?.storeGet(MCP_TOOL_PERMISSION_STORE_KEY).catch(() => null);
+  const policy: McpToolPermissionPolicy = saved === 'read-only' || saved === 'full-access' ? saved : 'ask-writes';
+  if (policy === 'read-only') throw new Error(`MCP tool '${request.tool}' is blocked by the current read-only conversation mode.`);
+  if (policy === 'full-access') return;
+  const result = await window.electronAPI?.showMessageBox({
+    type: 'warning',
+    title: 'STARLIMS MCP 操作确认',
+    message: `允许 AI 执行“${request.tool}”吗？`,
+    detail: summarizeArguments(request.arguments),
+    buttons: ['拒绝', '允许一次'],
+    cancelId: 0,
+    defaultId: 1,
+    noLink: true
+  });
+  if (!result || result.response !== 1) throw new Error(`MCP tool '${request.tool}' was declined by the user.`);
+}
 
 async function executeMcpTool(request: McpRequest): Promise<unknown> {
   const service = getEnterpriseService();
@@ -72,7 +95,7 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
       return { filter, items, totalItems: items.length };
     }
     case 'checkout_item': {
-      const result = await service.checkOut(uri());
+      const result = await service.checkOut(uri(), args.language ? String(args.language) : undefined);
       if (!result.success) throw new Error(result.message || 'Checkout failed.');
       return { uri: uri(), ...result };
     }
@@ -82,7 +105,7 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
       return { uri: uri(), saved: true };
     }
     case 'checkin_item': {
-      const result = await service.checkIn(uri(), String(args.reason));
+      const result = await service.checkIn(uri(), String(args.reason), args.language ? String(args.language) : undefined);
       if (!result.success) throw new Error(result.message || 'Check-in failed.');
       return { uri: uri(), ...result };
     }
@@ -136,6 +159,7 @@ export function McpRequestBridge() {
         message: `${request.tool} started · ${summarizeArguments(request.arguments)}`
       });
       try {
+        await ensureMcpToolAllowed(request);
         const result = await executeMcpTool(request);
         useOutputLogStore.getState().addEntry({
           channel: 'mcp-tools', level: 'success', source: 'MCP Tool',

@@ -155,8 +155,8 @@ export interface IEnterpriseService {
   saveItemCode(uri: string, code: string, language?: string): Promise<boolean>;
 
   // Check out/in
-  checkOut(uri: string): Promise<CheckOutResult>;
-  checkIn(uri: string, reason?: string): Promise<CheckInResult>;
+  checkOut(uri: string, language?: string): Promise<CheckOutResult>;
+  checkIn(uri: string, reason?: string, language?: string): Promise<CheckInResult>;
   undoCheckOut(uri: string): Promise<boolean>;
   isCheckedOut(uri: string): Promise<boolean>;
   getCheckedOutItems(): Promise<EnterpriseItem[]>;

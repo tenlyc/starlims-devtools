@@ -30,6 +30,7 @@ export type AgentEvent = {
 
 export type AgentStartResult = { sessionId?: string; turnId?: string };
 export type AgentApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel';
+export type AgentToolPermissionPolicy = 'read-only' | 'ask-writes' | 'full-access';
 
 export type AgentModelOption = {
   id: string;
@@ -52,6 +53,7 @@ export type GenericAgentConfig = {
   model: string;
   models?: string[];
   maxToolRounds?: number;
+  toolPermissionPolicy?: AgentToolPermissionPolicy;
 };
 
 export type ExternalMcpServerConfig = {

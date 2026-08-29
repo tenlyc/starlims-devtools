@@ -54,6 +54,22 @@ export interface AIState {
   saveCurrentConfig: () => void;
 }
 
+const legacyAiSecretKey = (provider: ModelProvider) => `legacy-ai-api-key:${provider}`;
+const sanitizeConfig = (config: AIConfig): AIConfig => ({ ...config, apiKey: '' });
+const sanitizeConfigs = (configs: Record<string, AIConfig>): Record<string, AIConfig> =>
+  Object.fromEntries(Object.entries(configs).map(([provider, config]) => [provider, sanitizeConfig(config)]));
+
+function persistConfigs(configs: Record<string, AIConfig>): void {
+  void window.electronAPI?.storeSet('aiSavedConfigs', sanitizeConfigs(configs));
+}
+
+function persistApiKey(config: AIConfig): void {
+  const operation = config.apiKey
+    ? window.electronAPI?.secretsSet(legacyAiSecretKey(config.provider), config.apiKey)
+    : window.electronAPI?.secretsDelete(legacyAiSecretKey(config.provider));
+  void operation;
+}
+
 export const useAIStore = create<AIState>((set, get) => ({
   config: null,
   savedConfigs: {},
@@ -69,8 +85,9 @@ export const useAIStore = create<AIState>((set, get) => ({
     const newSavedConfigs = { ...savedConfigs, [config.provider]: config };
     set({ savedConfigs: newSavedConfigs });
     // Persist all saved configs
-    window.electronAPI?.storeSet('aiSavedConfigs', newSavedConfigs);
-    window.electronAPI?.storeSet('aiProvider', config.provider);
+    persistConfigs(newSavedConfigs);
+    persistApiKey(config);
+    void window.electronAPI?.storeSet('aiProvider', config.provider);
   },
 
   updateConfig: (updates) => {
@@ -79,14 +96,21 @@ export const useAIStore = create<AIState>((set, get) => ({
       const newConfig = { ...config, ...updates };
       const newSavedConfigs = { ...savedConfigs, [config.provider]: newConfig };
       set({ config: newConfig, savedConfigs: newSavedConfigs });
-      window.electronAPI?.storeSet('aiSavedConfigs', newSavedConfigs);
+      persistConfigs(newSavedConfigs);
+      persistApiKey(newConfig);
     }
   },
 
   clearConfig: () => {
-    set({ config: null, isConfigured: false, error: null });
-    window.electronAPI?.storeDelete('aiConfig');
-    window.electronAPI?.storeDelete('aiProvider');
+    const { config, savedConfigs } = get();
+    const nextSavedConfigs = config
+      ? Object.fromEntries(Object.entries(savedConfigs).filter(([provider]) => provider !== config.provider))
+      : savedConfigs;
+    if (config) void window.electronAPI?.secretsDelete(legacyAiSecretKey(config.provider));
+    persistConfigs(nextSavedConfigs);
+    set({ config: null, savedConfigs: nextSavedConfigs, isConfigured: false, error: null });
+    void window.electronAPI?.storeDelete('aiConfig');
+    void window.electronAPI?.storeDelete('aiProvider');
   },
 
   // Load config for a specific provider from saved configs
@@ -95,11 +119,11 @@ export const useAIStore = create<AIState>((set, get) => ({
     const providerConfig = savedConfigs[provider];
     if (providerConfig) {
       set({ config: providerConfig, isConfigured: true, error: null });
-      window.electronAPI?.storeSet('aiProvider', provider);
+      void window.electronAPI?.storeSet('aiProvider', provider);
     } else {
       // No saved config for this provider, create empty config
       set({ config: { provider, apiKey: '', baseUrl: '', model: '' }, isConfigured: false, error: null });
-      window.electronAPI?.storeSet('aiProvider', provider);
+      void window.electronAPI?.storeSet('aiProvider', provider);
     }
   },
 
@@ -109,8 +133,9 @@ export const useAIStore = create<AIState>((set, get) => ({
     if (config) {
       const newSavedConfigs = { ...savedConfigs, [config.provider]: config };
       set({ savedConfigs: newSavedConfigs, isConfigured: true });
-      window.electronAPI?.storeSet('aiSavedConfigs', newSavedConfigs);
-      window.electronAPI?.storeSet('aiProvider', config.provider);
+      persistConfigs(newSavedConfigs);
+      persistApiKey(config);
+      void window.electronAPI?.storeSet('aiProvider', config.provider);
     }
   },
 
@@ -135,16 +160,30 @@ export const useAIStore = create<AIState>((set, get) => ({
 
 // Initialize AI store from electron store
 export async function initializeAIStore() {
-  if (window.electronAPI) {
-    const savedConfigs = await window.electronAPI.storeGet('aiSavedConfigs');
-    const selectedProvider = await window.electronAPI.storeGet('aiProvider');
+  const api = window.electronAPI;
+  if (api) {
+    const savedConfigs = await api.storeGet('aiSavedConfigs') as Record<string, AIConfig> | null;
+    const selectedProvider = await api.storeGet('aiProvider');
 
     if (savedConfigs) {
-      useAIStore.setState({ savedConfigs });
-    }
+      const migratedEntries = await Promise.all(Object.entries(savedConfigs).map(async ([provider, saved]) => {
+        const typedProvider = provider as ModelProvider;
+        const legacyKey = typeof saved.apiKey === 'string' ? saved.apiKey : '';
+        if (legacyKey) await api.secretsSet(legacyAiSecretKey(typedProvider), legacyKey);
+        const apiKey = legacyKey || await api.secretsGet(legacyAiSecretKey(typedProvider)) || '';
+        return [provider, { ...saved, provider: typedProvider, apiKey }] as const;
+      }));
+      const hydratedConfigs = Object.fromEntries(migratedEntries) as Record<string, AIConfig>;
+      useAIStore.setState({ savedConfigs: hydratedConfigs });
+      await api.storeSet('aiSavedConfigs', sanitizeConfigs(hydratedConfigs));
 
-    if (selectedProvider && savedConfigs && savedConfigs[selectedProvider]) {
-      useAIStore.getState().loadProviderConfig(selectedProvider);
+      if (selectedProvider && hydratedConfigs[selectedProvider]) {
+        useAIStore.setState({
+          config: hydratedConfigs[selectedProvider],
+          isConfigured: Boolean(hydratedConfigs[selectedProvider].apiKey),
+          error: null
+        });
+      }
     }
   }
 }

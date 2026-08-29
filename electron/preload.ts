@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, ExternalMcpServers, GenericAgentConfig } from '../src/types/agent';
+import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, ExternalMcpServers, GenericAgentConfig } from '../src/types/agent';
 import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
 
 // Type definitions for exposed API
@@ -81,7 +81,7 @@ export interface ElectronAPI {
   agentSelectFiles: () => Promise<AgentFileAttachment[]>;
   agentGetExternalMcpServers: () => Promise<ExternalMcpServers>;
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => Promise<boolean>;
-  agentStart: (provider: AgentProvider, prompt: string, model?: string) => Promise<AgentStartResult>;
+  agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
   agentNewSession: (provider: AgentProvider) => Promise<void>;
   agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => Promise<boolean>;
@@ -195,7 +195,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   agentSelectFiles: () => ipcRenderer.invoke('agent:selectFiles'),
   agentGetExternalMcpServers: () => ipcRenderer.invoke('agent:getExternalMcpServers'),
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => ipcRenderer.invoke('agent:setExternalMcpServers', servers),
-  agentStart: (provider: AgentProvider, prompt: string, model?: string) => ipcRenderer.invoke('agent:start', provider, prompt, model),
+  agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => ipcRenderer.invoke('agent:start', provider, prompt, model, toolPermissionPolicy),
   agentInterrupt: (provider: AgentProvider) => ipcRenderer.invoke('agent:interrupt', provider),
   agentNewSession: (provider: AgentProvider) => ipcRenderer.invoke('agent:newSession', provider),
   agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => ipcRenderer.invoke('agent:respondApproval', provider, requestId, decision),

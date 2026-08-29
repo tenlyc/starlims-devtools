@@ -528,9 +528,9 @@ export class EnterpriseService implements IEnterpriseService {
   /**
    * Check out an item
    */
-  async checkOut(uri: string): Promise<CheckOutResult> {
+  async checkOut(uri: string, language?: string): Promise<CheckOutResult> {
     try {
-      const lang = this.sessionInfo?.langid || 'ENG';
+      const lang = language || this.sessionInfo?.langid || 'ENG';
       const data = await this.apiRequest<any>(`CheckOut?URI=${encodeURIComponent(uri)}&UserLang=${lang}`, {
         method: 'GET'
       });
@@ -550,9 +550,9 @@ export class EnterpriseService implements IEnterpriseService {
   /**
    * Check in an item
    */
-  async checkIn(uri: string, reason?: string): Promise<CheckInResult> {
+  async checkIn(uri: string, reason?: string, language?: string): Promise<CheckInResult> {
     try {
-      const lang = this.sessionInfo?.langid || 'ENG';
+      const lang = language || this.sessionInfo?.langid || 'ENG';
       const data = await this.apiRequest<any>(`CheckIn?URI=${encodeURIComponent(uri)}&UserLang=${lang}&Reason=${encodeURIComponent(reason || '')}`, {
         method: 'GET'
       });

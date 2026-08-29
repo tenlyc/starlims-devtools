@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { isStateChangingMcpTool, permissionPolicyForMode } from '../src/services/agentPermissions';
 import { buildCliPrompt } from '../src/services/aiContextStore';
 
 const prompt = buildCliPrompt(
@@ -30,3 +31,10 @@ assert.match(filePrompt, /Local file: \/tmp\/example.sql/);
 assert.match(filePrompt, /select 1/);
 
 console.log('AI context smoke test passed.');
+
+assert.equal(permissionPolicyForMode('plan'), 'read-only');
+assert.equal(permissionPolicyForMode('ask'), 'read-only');
+assert.equal(permissionPolicyForMode('agent'), 'ask-writes');
+assert.equal(permissionPolicyForMode('debug'), 'ask-writes');
+assert.equal(isStateChangingMcpTool('save_item'), true);
+assert.equal(isStateChangingMcpTool('get_item_code'), false);

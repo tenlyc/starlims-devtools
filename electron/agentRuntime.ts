@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
-import type { AgentApprovalDecision, AgentEvent, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, ExternalMcpServers } from '../src/types/agent';
+import type { AgentApprovalDecision, AgentEvent, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, ExternalMcpServers } from '../src/types/agent';
 import { withLocalMcpNoProxy } from './localMcpEnv';
 
 type JsonRpcId = number | string;
@@ -56,6 +56,7 @@ export class CodexAppServerRuntime {
   private nextId = 1;
   private threadId?: string;
   private threadModel?: string;
+  private threadPermissionPolicy?: AgentToolPermissionPolicy;
   private activeTurnId?: string;
   private readonly pending = new Map<JsonRpcId, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   private readonly approvals = new Map<string, { rpcId: JsonRpcId; method: string; params: JsonObject }>();
@@ -100,23 +101,24 @@ export class CodexAppServerRuntime {
       }));
   }
 
-  async send(prompt: string, model?: string): Promise<AgentStartResult> {
+  async send(prompt: string, model?: string, toolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes'): Promise<AgentStartResult> {
     await this.ensureStarted();
     const requestedModel = model?.trim() || undefined;
-    if (this.threadId && this.threadModel !== requestedModel) {
+    if (this.threadId && (this.threadModel !== requestedModel || this.threadPermissionPolicy !== toolPermissionPolicy)) {
       await this.newSession();
     }
     if (!this.threadId) {
       const result = await this.request('thread/start', {
         cwd: this.cwd(),
         approvalPolicy: 'on-request',
-        sandbox: 'workspace-write',
+        sandbox: toolPermissionPolicy === 'read-only' ? 'read-only' : 'workspace-write',
         serviceName: 'starlims-devtools',
         developerInstructions: 'You are the coding agent inside STARLIMS DevTools. Use the required starlims MCP server for remote STARLIMS data and changes. Never claim a remote operation succeeded unless the MCP tool confirms it.',
         ...(requestedModel ? { model: requestedModel } : {})
       });
       this.threadId = result.thread.id;
       this.threadModel = requestedModel;
+      this.threadPermissionPolicy = toolPermissionPolicy;
       this.emit({ provider: 'codex', type: 'session', sessionId: this.threadId, title: 'Codex App Server connected' });
     }
     const result = await this.request('turn/start', {
@@ -136,6 +138,7 @@ export class CodexAppServerRuntime {
     await this.interrupt().catch(() => undefined);
     this.threadId = undefined;
     this.threadModel = undefined;
+    this.threadPermissionPolicy = undefined;
     this.activeTurnId = undefined;
   }
 
@@ -454,8 +457,8 @@ export class AgentRuntimeManager {
     return Promise.resolve([]);
   }
 
-  send(provider: AgentProvider, prompt: string, model?: string): Promise<AgentStartResult> {
-    if (provider === 'codex') return this.codex.send(prompt, model);
+  send(provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes'): Promise<AgentStartResult> {
+    if (provider === 'codex') return this.codex.send(prompt, model, toolPermissionPolicy);
     if (provider === 'claude') return this.claude.send(prompt);
     throw new Error('OpenCode remains in CLI compatibility mode.');
   }

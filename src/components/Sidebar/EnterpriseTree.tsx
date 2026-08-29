@@ -315,7 +315,7 @@ export function EnterpriseTree() {
 
     try {
       const enterpriseService = getEnterpriseService();
-      const result = await enterpriseService.checkOut(item.uri);
+      const result = await enterpriseService.checkOut(item.uri, item.language);
 
       if (result.success) {
         console.log('Check out successful');
@@ -336,7 +336,7 @@ export function EnterpriseTree() {
     try {
       const enterpriseService = getEnterpriseService();
       const reason = ''; // Could prompt user for reason
-      const result = await enterpriseService.checkIn(item.uri, reason);
+      const result = await enterpriseService.checkIn(item.uri, reason, item.language);
 
       if (result.success) {
         console.log('Check in successful');

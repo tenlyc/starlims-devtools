@@ -6,7 +6,8 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { ExternalMcpServerConfig, ExternalMcpServers } from '../src/types/agent';
 
 type ConnectedServer = { client: Client; transport: Transport };
-type ToolRoute = { server: string; tool: string };
+type ToolRoute = { server: string; tool: string; readOnly: boolean };
+export type ExternalMcpTool = { name: string; description?: string; inputSchema: Record<string, unknown>; readOnly: boolean };
 
 function safeToolPart(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^_+|_+$/g, '') || 'mcp';
@@ -22,9 +23,9 @@ export class ExternalMcpManager {
     void this.close();
   }
 
-  async listTools(): Promise<Array<{ name: string; description?: string; inputSchema: Record<string, unknown> }>> {
+  async listTools(): Promise<ExternalMcpTool[]> {
     this.routes.clear();
-    const result: Array<{ name: string; description?: string; inputSchema: Record<string, unknown> }> = [];
+    const result: ExternalMcpTool[] = [];
     for (const [serverName, config] of Object.entries(this.configs)) {
       if (config.enabled === false) continue;
       try {
@@ -34,8 +35,9 @@ export class ExternalMcpManager {
           let functionName = `mcp_${safeToolPart(serverName)}_${safeToolPart(tool.name)}`.slice(0, 64);
           let suffix = 2;
           while (this.routes.has(functionName)) functionName = `${functionName.slice(0, 60)}_${suffix++}`;
-          this.routes.set(functionName, { server: serverName, tool: tool.name });
-          result.push({ name: functionName, description: `[${serverName}] ${tool.description || tool.name}`, inputSchema: (tool.inputSchema || { type: 'object', properties: {} }) as Record<string, unknown> });
+          const readOnly = tool.annotations?.readOnlyHint === true;
+          this.routes.set(functionName, { server: serverName, tool: tool.name, readOnly });
+          result.push({ name: functionName, description: `[${serverName}] ${tool.description || tool.name}`, inputSchema: (tool.inputSchema || { type: 'object', properties: {} }) as Record<string, unknown>, readOnly });
         }
       } catch {
         // One unavailable optional server must not prevent the other MCP servers from loading.
@@ -45,6 +47,7 @@ export class ExternalMcpManager {
   }
 
   hasTool(name: string): boolean { return this.routes.has(name); }
+  isToolReadOnly(name: string): boolean { return this.routes.get(name)?.readOnly === true; }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
     const route = this.routes.get(name);

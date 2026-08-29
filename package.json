@@ -21,6 +21,8 @@
     "test:i18n": "tsx scripts/i18n-smoke-test.ts",
     "test:scm-export": "tsx scripts/scm-export-smoke-test.ts",
     "test:bottom-panel": "tsx scripts/bottom-panel-smoke-test.ts",
+    "test:smoke": "node scripts/run-smoke-tests.mjs",
+    "check": "npm run lint && npm run test:smoke && npm run build:vite",
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite\" \"electron .\"",
     "lint": "eslint src --ext ts,tsx"

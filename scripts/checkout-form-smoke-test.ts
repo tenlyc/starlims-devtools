@@ -18,6 +18,23 @@ const xml = `
 </DataSet>`;
 
 const service = new EnterpriseService();
+const languageRequests: Array<{ endpoint: string; body?: string }> = [];
+(service as unknown as {
+  apiRequest: (endpoint: string, options?: { body?: string }) => Promise<unknown>;
+}).apiRequest = async (endpoint, options) => {
+  languageRequests.push({ endpoint, body: options?.body });
+  return endpoint === 'SaveCode' ? { success: true } : { success: true, localPath: '/tmp/item' };
+};
+
+const languageVerification = service.checkOut('/Applications/App/Form', 'CHS')
+  .then(() => service.saveItemCode('/Applications/App/Form', '<form />', 'CHS'))
+  .then(() => service.checkIn('/Applications/App/Form', 'AI verified change', 'CHS'))
+  .then(() => {
+    assert.match(languageRequests[0].endpoint, /UserLang=CHS/);
+    assert.equal(JSON.parse(languageRequests[1].body || '{}').UserLang, 'CHS');
+    assert.match(languageRequests[2].endpoint, /UserLang=CHS/);
+  });
+
 const items = (service as unknown as {
   parseCheckedOutItemsXml: (source: string) => Array<{
     id: string;
@@ -76,3 +93,7 @@ assert.deepEqual(level.map(node => node.item?.type), [
 ]);
 
 console.log('Checked-out HTML form expansion smoke test passed.');
+void languageVerification.catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

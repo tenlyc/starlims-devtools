@@ -1,10 +1,11 @@
 import { net } from 'electron';
 import { randomUUID } from 'crypto';
-import type { AgentEvent, AgentStartResult, GenericAgentConfig } from '../src/types/agent';
+import type { AgentEvent, AgentStartResult, AgentToolPermissionPolicy, GenericAgentConfig } from '../src/types/agent';
 import type { RendererToolCall } from './mcpServer';
 import type { ExternalMcpManager } from './externalMcpManager';
 
 type Emit = (event: AgentEvent) => void;
+type ConfirmToolCall = (name: string, args: Record<string, unknown>) => Promise<boolean>;
 type ChatMessage = Record<string, unknown>;
 const DEFAULT_MAX_TOOL_ROUNDS = 16;
 const MAX_TOOL_ROUNDS_LIMIT = 64;
@@ -104,7 +105,7 @@ export class GenericAgentRuntime {
   private controller?: AbortController;
   private sessionId?: string;
 
-  constructor(private readonly callRenderer: RendererToolCall, private readonly externalMcp: ExternalMcpManager, private readonly emit: Emit) {}
+  constructor(private readonly callRenderer: RendererToolCall, private readonly externalMcp: ExternalMcpManager, private readonly emit: Emit, private readonly confirmToolCall: ConfirmToolCall) {}
 
   async listModels(config: Pick<GenericAgentConfig, 'baseUrl' | 'apiKey'>): Promise<string[]> {
     const data = await jsonRequest(endpoint(config.baseUrl, 'models'), config.apiKey);
@@ -123,7 +124,8 @@ export class GenericAgentRuntime {
       { role: 'system', content: 'You are an AI coding agent inside STARLIMS DevTools. Use the available STARLIMS read tools for authoritative remote data. Never claim a remote change succeeded. Answer in the user\'s language.' },
       { role: 'user', content: prompt }
     ];
-    const externalTools = await this.externalMcp.listTools();
+    const policy: AgentToolPermissionPolicy = config.toolPermissionPolicy || 'ask-writes';
+    const externalTools = (await this.externalMcp.listTools()).filter((tool) => policy !== 'read-only' || tool.readOnly);
     const tools = [
       ...READ_TOOLS.map(([name, description, parameters]) => ({ type: 'function', function: { name, description, parameters } })),
       ...externalTools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } }))
@@ -154,9 +156,14 @@ export class GenericAgentRuntime {
             this.emit({ provider: 'generic', type: 'item', sessionId: this.sessionId, turnId, itemId, kind: 'mcp', status: 'running', title: `starlims.${name}`, detail: JSON.stringify(args, null, 2) });
             let output: unknown;
             try {
-              output = this.externalMcp.hasTool(name)
-                ? await this.externalMcp.callTool(name, args)
-                : await this.callRenderer(name, args);
+              if (this.externalMcp.hasTool(name)) {
+                const readOnly = this.externalMcp.isToolReadOnly(name);
+                if (!readOnly && policy === 'read-only') throw new Error(`Tool '${name}' is blocked by read-only mode.`);
+                if (!readOnly && policy === 'ask-writes' && !await this.confirmToolCall(name, args)) throw new Error(`Tool '${name}' was declined by the user.`);
+                output = await this.externalMcp.callTool(name, args);
+              } else {
+                output = await this.callRenderer(name, args);
+              }
               this.emit({ provider: 'generic', type: 'item', sessionId: this.sessionId, turnId, itemId, kind: 'mcp', status: 'completed', title: `starlims.${name}`, output: JSON.stringify(output, null, 2) });
             } catch (error) {
               output = { error: error instanceof Error ? error.message : String(error) };

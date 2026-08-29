@@ -80,11 +80,13 @@ SSL 文件会在输入后约 250ms 自动执行语法解析和风格检查。使
 | 通用 MCP 配置 | External MCP Configuration | 在 Customize 中管理 HTTP、SSE、stdio MCP 服务 | Manage HTTP, SSE and stdio MCP servers from Customize |
 | AI 工具兼容 | AI Client Support | Codex、ChatGPT Desktop、Claude Code、Cursor、VS Code 等 | External clients can reuse the built-in STARLIMS tool service |
 | AI 编程闭环 | Agentic Workflow | 浏览、搜索、读取、签出、保存、检入、撤销签出、执行 | 复用 DevTools 当前登录的 STARLIMS 会话 |
-| 安全提示 | Safety | 写入和执行工具标记为非只读 | 建议客户端将写工具审批模式设为 `writes` |
+| 工具权限 | Tool Permissions | Plan/Ask 强制只读；其他模式的写入、执行及未知外部 MCP 工具逐次确认 | Plan/Ask are enforced read-only; write, execution and unknown external MCP tools require confirmation |
 
 右侧 Agent Console 同时提供 Codex 与通用 Agent。Codex 启动时自动注入当前 STARLIMS MCP endpoint；通用 Agent 可保存多个服务平台及其模型列表，并将 API Key 单独存入本机密钥存储。回复、Reasoning、MCP 调用、命令、文件变更和审批按发生顺序显示在统一时间线中，支持 Markdown/GFM、代码块、脚本附件、模型选择和对话历史。可在签出列表或当前编辑器中右键选择“引用到 AI”，也可直接输入 `@` 搜索脚本并附加完整源码或编辑器选区。
 
 Customize 页面用于集中维护用户规则和外部 MCP。规则可以从本地 Markdown 文件导入或直接粘贴；外部 MCP 支持 HTTP、SSE 与跨平台 stdio 配置，并与内置 STARLIMS MCP 分开管理。
+
+HTML Form 的语言会贯穿读取、签出、保存、检入与 MCP 调用，不再由文件类型代替。通用 Agent 和旧版行内补全配置的 API Key 均与普通设置分离，并通过 Electron 本机密钥存储保存；已有明文配置会在启动时自动迁移。
 
 ### 键盘快捷键 | Keyboard Shortcuts
 
@@ -138,17 +140,12 @@ npm run build
 ### 发布前检查 | Pre-release Checks
 
 ```bash
-npm run lint
-npx tsc --noEmit
-npm run test:ssl
-npm run test:server-config
-npm run test:ai-context
-npm run test:agent-runtime
-npm run test:mcp
-npm run test:editor-languages
-npm audit
+npm run check
+npm audit --registry=https://registry.npmjs.org
 npm run build
 ```
+
+`npm run check` 会统一执行 ESLint、11 组 smoke tests、TypeScript 检查，以及 Renderer/Electron 构建。GitHub Actions 会在 `main` 推送和 Pull Request 时执行相同检查。
 
 ## 前置条件 | Pre-requisites
 

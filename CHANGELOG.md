@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] | 未发布
 
+### Fixed | 修复
+
+- 修复 HTML Form 保存时误将文件类型作为 `UserLang` 的问题
+- 修复 MCP 签出与检入声明了语言参数、但执行阶段丢失参数的问题
+
+### Security | 安全
+
+- Plan 与 Ask 模式现在由运行时强制只读，Codex 同步使用只读 sandbox，并停用外部 MCP
+- Agent、Debug 与 Multitask 模式的 STARLIMS 写入/执行操作需要应用内逐次确认
+- 通用 Agent 对未声明只读的外部 MCP 工具增加确认，默认不再视作安全读操作
+- 将旧 AI 配置中的 API Key 自动迁移到 Electron 本机密钥存储，普通配置仅保留脱敏字段
+
+### Tooling | 工程化
+
+- 增加统一 `npm run check`，串行执行 lint、11 组 smoke tests 和 TypeScript/Vite/Electron 构建
+- 增加 GitHub Actions，在 `main` 推送及 Pull Request 时执行相同检查
+
 ## [1.6.2] - 2026-08-30
 
 ### Added | 新增功能
