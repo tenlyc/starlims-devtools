@@ -5,6 +5,7 @@ import { buildCliPrompt, useAiContextStore } from '../../services/aiContextStore
 import { useOutputLogStore } from '../../services/outputLogStore';
 import { getEnterpriseService } from '../../services/enterpriseService';
 import { permissionPolicyForMode, type ConversationMode } from '../../services/agentPermissions';
+import { GENERIC_PROFILES_STORE_KEY } from '../../services/genericAgentConfig';
 import { editorStore } from '../../stores/editorStore';
 import type { AgentApprovalDecision, AgentEvent, AgentItemKind, AgentModelOption, AgentProvider, AgentRuntimeStatus, GenericAgentConfig } from '../../types/agent';
 import type { EnterpriseItem } from '../../services/iEnterpriseService';
@@ -71,7 +72,6 @@ type GenericAgentProfile = GenericAgentConfig & { id: string; name: string };
 const HISTORY_STORE_KEY = 'agentConversationHistory.v1';
 const MODEL_STORE_KEY = 'agentSelectedModel.v1';
 const GENERIC_CONFIG_STORE_KEY = 'genericAgentConfig.v1';
-const GENERIC_PROFILES_STORE_KEY = 'genericAgentProfiles.v2';
 const GENERIC_API_KEY_SECRET = 'generic-agent-api-key';
 const AGENT_RULES_STORE_KEY = 'agentWorkspaceInstructions.v1';
 const AGENT_MODE_STORE_KEY = 'agentConversationMode.v1';

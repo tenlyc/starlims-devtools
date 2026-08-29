@@ -9,7 +9,8 @@ import { AgentRuntimeManager } from './agentRuntime';
 import { withLocalMcpNoProxy } from './localMcpEnv';
 import { GenericAgentRuntime } from './genericAgentRuntime';
 import { ExternalMcpManager } from './externalMcpManager';
-import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentProvider, AgentRuntimeStatus, AgentToolPermissionPolicy, ExternalMcpServers } from '../src/types/agent';
+import { AgentWorkspaceManager } from './agentWorkspace';
+import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentProvider, AgentRuntimeStatus, AgentToolPermissionPolicy, AgentWorkspaceContext, AgentWorkspaceFile, ExternalMcpServers } from '../src/types/agent';
 import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
 
 // Configure logging
@@ -43,6 +44,7 @@ let mainWindow: BrowserWindow | null = null;
 let agentRuntime: AgentRuntimeManager | undefined;
 let genericAgentRuntime: GenericAgentRuntime | undefined;
 let activeToolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes';
+const agentWorkspace = new AgentWorkspaceManager(join(app.getPath('userData'), 'agent-workspaces'));
 const EXTERNAL_MCP_STORE_KEY = 'externalMcpServers.v1';
 const MCP_TOOL_PERMISSION_STORE_KEY = 'mcpToolPermissionPolicy.v1';
 const normalizeToolPermissionPolicy = (value: unknown): AgentToolPermissionPolicy =>
@@ -280,6 +282,16 @@ ipcMain.handle('store:delete', (_, key: string) => {
 
 // Secret storage. Existing plain-string entries remain readable and migrate on the next save.
 const secretsStore = new Store({ name: 'starlims-secrets' });
+
+// The retired AI panel stored provider metadata (and, in older releases, keys)
+// in the ordinary config store. Generic Agent profiles are now the sole source
+// of model configuration, so remove the obsolete plaintext-bearing entries.
+if (store.has('aiSavedConfigs') || store.has('aiConfig') || store.has('aiProvider')) {
+  store.delete('aiSavedConfigs');
+  store.delete('aiConfig');
+  store.delete('aiProvider');
+  log.info('Removed retired legacy AI configuration entries.');
+}
 
 ipcMain.handle('secrets:get', (_, key: string) => {
   const stored = secretsStore.get(key) as unknown;
@@ -577,7 +589,7 @@ const getAgentRuntime = (): AgentRuntimeManager => {
       codexCommand: resolveCodexCommand,
       mcpUrl: () => mcpServer.getStatus().url,
       externalMcpServers: () => activeToolPermissionPolicy === 'read-only' ? {} : getExternalMcpServers(),
-      cwd: () => process.cwd(),
+      cwd: () => agentWorkspace.currentPath(),
       getVersion: () => app.getVersion(),
       emit: (event: AgentEvent) => {
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent:event', event);
@@ -774,6 +786,27 @@ ipcMain.handle('agent:start', async (_, provider: AgentProvider, prompt: string,
   return getAgentRuntime().send(provider, prompt, model, normalizedPolicy);
 });
 
+ipcMain.handle('agent:workspaceConfigure', async (_, context: AgentWorkspaceContext) => {
+  if (!context?.serverName?.trim() || !context?.serverUrl?.trim()) throw new Error('A STARLIMS server is required for the Agent workspace.');
+  const previousPath = agentWorkspace.currentPath();
+  const info = await agentWorkspace.configure({
+    serverName: String(context.serverName), serverUrl: String(context.serverUrl), user: String(context.user || '')
+  });
+  if (previousPath !== info.path) {
+    agentRuntime?.dispose();
+    agentRuntime = undefined;
+  }
+  return info;
+});
+
+ipcMain.handle('agent:workspaceSyncFiles', async (_, files: AgentWorkspaceFile[]) => {
+  if (!Array.isArray(files)) throw new Error('Workspace files must be an array.');
+  return agentWorkspace.syncFiles(files.map((file) => ({
+    uri: String(file.uri || ''), name: String(file.name || 'script'), type: String(file.type || 'text'),
+    language: file.language ? String(file.language) : undefined, content: String(file.content || '')
+  })));
+});
+
 ipcMain.handle('agent:interrupt', async (_, provider: AgentProvider) => getAgentRuntime().interrupt(provider));
 ipcMain.handle('agent:newSession', async (_, provider: AgentProvider) => getAgentRuntime().newSession(provider));
 ipcMain.handle('agent:respondApproval', async (_, provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => {
@@ -782,6 +815,10 @@ ipcMain.handle('agent:respondApproval', async (_, provider: AgentProvider, reque
 });
 
 ipcMain.handle('generic-agent:listModels', async (_, config) => getGenericAgentRuntime().listModels(config));
+ipcMain.handle('generic-agent:complete', async (_, config, prompt: string) => {
+  if (!config?.baseUrl || !config?.apiKey || !config?.model) throw new Error('Base URL, API Key, and model are required.');
+  return getGenericAgentRuntime().complete(config, String(prompt || ''));
+});
 ipcMain.handle('generic-agent:start', async (_, config, prompt: string) => {
   if (!config?.baseUrl || !config?.apiKey || !config?.model) throw new Error('Base URL, API Key, and model are required.');
   store.set(MCP_TOOL_PERMISSION_STORE_KEY, normalizeToolPermissionPolicy(config.toolPermissionPolicy));

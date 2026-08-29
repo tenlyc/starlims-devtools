@@ -8,6 +8,12 @@ type JsonRpcId = number | string;
 type JsonObject = Record<string, any>;
 type Emit = (event: AgentEvent) => void;
 
+export function isReadOnlyAgentToolBlocked(toolName: string): boolean {
+  const normalizedTool = toolName.split('__').pop() || toolName;
+  return ['Bash', 'Edit', 'Write', 'NotebookEdit'].includes(toolName)
+    || ['checkout_item', 'save_item', 'checkin_item', 'undo_checkout', 'execute_server_script', 'execute_data_source'].includes(normalizedTool);
+}
+
 function safeMcpName(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^_+|_+$/g, '') || 'external';
 }
@@ -321,6 +327,7 @@ type ClaudeQuery = { close: () => void; [Symbol.asyncIterator]: () => AsyncItera
 
 export class ClaudeAgentRuntime {
   private sessionId?: string;
+  private sessionPermissionPolicy?: AgentToolPermissionPolicy;
   private active?: ClaudeQuery;
   private readonly approvals = new Map<string, {
     resolve: (value: any) => void;
@@ -339,8 +346,10 @@ export class ClaudeAgentRuntime {
     }
   }
 
-  async send(prompt: string): Promise<AgentStartResult> {
+  async send(prompt: string, toolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes'): Promise<AgentStartResult> {
     if (this.active) throw new Error('Claude is already processing a turn.');
+    if (this.sessionId && this.sessionPermissionPolicy !== toolPermissionPolicy) this.newSession();
+    this.sessionPermissionPolicy = toolPermissionPolicy;
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     let streamedText = false;
     const active = query({
@@ -350,6 +359,13 @@ export class ClaudeAgentRuntime {
         resume: this.sessionId,
         includePartialMessages: true,
         permissionMode: 'default',
+        ...(toolPermissionPolicy === 'read-only' ? {
+          disallowedTools: [
+            'Bash', 'Edit', 'Write', 'NotebookEdit',
+            'mcp__starlims__checkout_item', 'mcp__starlims__save_item', 'mcp__starlims__checkin_item',
+            'mcp__starlims__undo_checkout', 'mcp__starlims__execute_server_script', 'mcp__starlims__execute_data_source'
+          ]
+        } : {}),
         systemPrompt: {
           type: 'preset', preset: 'claude_code',
           append: 'You are embedded in STARLIMS DevTools. Use the starlims MCP tools for remote STARLIMS objects, source code, logs, tables, check-out state, and remote changes. Never fabricate remote state.'
@@ -361,6 +377,11 @@ export class ClaudeAgentRuntime {
         strictMcpConfig: true,
         env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: `starlims-devtools/${this.getVersion()}` },
         canUseTool: (toolName, input, options) => new Promise((resolve) => {
+          const readOnlyBlocked = toolPermissionPolicy === 'read-only' && isReadOnlyAgentToolBlocked(toolName);
+          if (readOnlyBlocked) {
+            resolve({ behavior: 'deny', message: `Tool '${toolName}' is blocked by the current read-only conversation mode.`, interrupt: false, toolUseID: options.toolUseID });
+            return;
+          }
           const requestId = `claude:${options.requestId}:${randomUUID()}`;
           this.approvals.set(requestId, { resolve, suggestions: options.suggestions, toolUseID: options.toolUseID });
           this.emit({
@@ -424,6 +445,7 @@ export class ClaudeAgentRuntime {
   newSession(): void {
     this.interrupt();
     this.sessionId = undefined;
+    this.sessionPermissionPolicy = undefined;
   }
 
   respond(requestId: string, decision: AgentApprovalDecision): void {
@@ -459,7 +481,7 @@ export class AgentRuntimeManager {
 
   send(provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes'): Promise<AgentStartResult> {
     if (provider === 'codex') return this.codex.send(prompt, model, toolPermissionPolicy);
-    if (provider === 'claude') return this.claude.send(prompt);
+    if (provider === 'claude') return this.claude.send(prompt, toolPermissionPolicy);
     throw new Error('OpenCode remains in CLI compatibility mode.');
   }
 

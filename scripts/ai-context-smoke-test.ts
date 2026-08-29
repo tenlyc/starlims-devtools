@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { isStateChangingMcpTool, permissionPolicyForMode } from '../src/services/agentPermissions';
-import { buildCliPrompt } from '../src/services/aiContextStore';
+import { buildCliPrompt, estimatePromptTokens } from '../src/services/aiContextStore';
 
 const prompt = buildCliPrompt(
   'Explain this procedure.',
@@ -29,6 +29,13 @@ const filePrompt = buildCliPrompt('Review it.', [{
 }], [], 'http://127.0.0.1:3102/mcp');
 assert.match(filePrompt, /Local file: \/tmp\/example.sql/);
 assert.match(filePrompt, /select 1/);
+
+const budgetedPrompt = buildCliPrompt('Review this.', [{
+  id: 'large', name: 'large.ssl', uri: '/large.ssl', type: 'ServerScript',
+  content: 'x'.repeat(100_000), source: 'file'
+}], [{ role: 'user', content: 'y'.repeat(50_000) }], 'http://127.0.0.1:3102/mcp', 'z'.repeat(50_000), '', 4_000);
+assert.ok(estimatePromptTokens(budgetedPrompt) <= 4_000);
+assert.match(budgetedPrompt, /truncated/);
 
 console.log('AI context smoke test passed.');
 

@@ -81,12 +81,14 @@ SSL 文件会在输入后约 250ms 自动执行语法解析和风格检查。使
 | AI 工具兼容 | AI Client Support | Codex、ChatGPT Desktop、Claude Code、Cursor、VS Code 等 | External clients can reuse the built-in STARLIMS tool service |
 | AI 编程闭环 | Agentic Workflow | 浏览、搜索、读取、签出、保存、检入、撤销签出、执行 | 复用 DevTools 当前登录的 STARLIMS 会话 |
 | 工具权限 | Tool Permissions | Plan/Ask 强制只读；其他模式的写入、执行及未知外部 MCP 工具逐次确认 | Plan/Ask are enforced read-only; write, execution and unknown external MCP tools require confirmation |
+| Agent 工作区 | Agent Workspace | 按服务器和用户建立稳定的本地 Git 工作区，自动镜像编辑器中打开的脚本 | Stable per-server/user Git workspace with automatic mirrors of open scripts |
+| Token 预算 | Token Budget | 对规则、历史和脚本引用分配上下文预算并标记截断 | Budget rules, history and references with explicit truncation markers |
 
 右侧 Agent Console 同时提供 Codex 与通用 Agent。Codex 启动时自动注入当前 STARLIMS MCP endpoint；通用 Agent 可保存多个服务平台及其模型列表，并将 API Key 单独存入本机密钥存储。回复、Reasoning、MCP 调用、命令、文件变更和审批按发生顺序显示在统一时间线中，支持 Markdown/GFM、代码块、脚本附件、模型选择和对话历史。可在签出列表或当前编辑器中右键选择“引用到 AI”，也可直接输入 `@` 搜索脚本并附加完整源码或编辑器选区。
 
 Customize 页面用于集中维护用户规则和外部 MCP。规则可以从本地 Markdown 文件导入或直接粘贴；外部 MCP 支持 HTTP、SSE 与跨平台 stdio 配置，并与内置 STARLIMS MCP 分开管理。
 
-HTML Form 的语言会贯穿读取、签出、保存、检入与 MCP 调用，不再由文件类型代替。通用 Agent 和旧版行内补全配置的 API Key 均与普通设置分离，并通过 Electron 本机密钥存储保存；已有明文配置会在启动时自动迁移。
+HTML Form 的语言会贯穿读取、签出、保存、检入与 MCP 调用，不再由文件类型代替。Agent 会在应用数据目录下按服务器和用户维护独立 Git 工作区，并把编辑器中打开的脚本镜像到 `items/`，供文件搜索、批量分析、修改和测试使用；远端 STARLIMS 状态仍以 MCP 为准。行内补全直接复用当前通用 Agent 平台、模型和本机密钥，不再维护旧 AI 面板与第二套模型配置。
 
 ### 键盘快捷键 | Keyboard Shortcuts
 
@@ -171,7 +173,6 @@ starlims-devtools/
 │   │   └── SCM/         # 源码管理器 / Source Control Manager
 │   ├── services/        # API 服务 / API services
 │   ├── stores/          # Zustand 状态管理 / Zustand state stores
-│   ├── ai/              # 旧 AI 提供商代码（不再由主界面加载）
 │   └── types/           # TypeScript 类型定义 / TypeScript type definitions
 ├── resources/           # 应用资源（图标、图片）/ App resources (icons, images)
 ├── dist/                # 构建的前端代码 / Built frontend

@@ -5,6 +5,7 @@ const tests = [
   'server-config-smoke-test.ts',
   'ai-context-smoke-test.ts',
   'agent-runtime-smoke-test.ts',
+  'agent-workspace-smoke-test.ts',
   'mcp-smoke-test.ts',
   'editor-language-smoke-test.ts',
   'checkout-form-smoke-test.ts',

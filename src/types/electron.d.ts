@@ -1,7 +1,7 @@
 /**
  * Type declarations for Electron API exposed via preload
  */
-import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, ExternalMcpServers, GenericAgentConfig } from './agent';
+import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, ExternalMcpServers, GenericAgentConfig } from './agent';
 import type { DiagnosticLogEvent } from './diagnosticLog';
 
 export interface ElectronAPI {
@@ -80,12 +80,15 @@ export interface ElectronAPI {
   agentSelectFiles: () => Promise<AgentFileAttachment[]>;
   agentGetExternalMcpServers: () => Promise<ExternalMcpServers>;
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => Promise<boolean>;
+  agentWorkspaceConfigure: (context: AgentWorkspaceContext) => Promise<AgentWorkspaceInfo>;
+  agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => Promise<{ path: string; files: number }>;
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
   agentNewSession: (provider: AgentProvider) => Promise<void>;
   agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => Promise<boolean>;
   onAgentEvent: (callback: (event: AgentEvent) => void) => () => void;
   genericAgentListModels: (config: Pick<GenericAgentConfig, 'baseUrl' | 'apiKey'>) => Promise<string[]>;
+  genericAgentComplete: (config: GenericAgentConfig, prompt: string) => Promise<string>;
   genericAgentStart: (config: GenericAgentConfig, prompt: string) => Promise<AgentStartResult>;
   genericAgentInterrupt: () => Promise<void>;
   genericAgentNewSession: () => Promise<void>;

@@ -63,6 +63,7 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(initialLayout.sidebarWidth);
   const [mcpPanelWidth, setMcpPanelWidth] = useState(initialLayout.agentWidth);
   const [outputHeight, setOutputHeight] = useState(initialLayout.outputHeight);
+  const [agentWorkspacePath, setAgentWorkspacePath] = useState('');
 
   const { currentServer, isConnected, connect, disconnect } = useServerStore();
   const { initTheme } = useThemeStore();
@@ -85,6 +86,28 @@ export default function App() {
       outputHeight
     } satisfies WorkbenchLayout));
   }, [sidebarVisible, mcpPanelVisible, outputVisible, sidebarWidth, mcpPanelWidth, outputHeight]);
+
+  useEffect(() => {
+    if (!isConnected || !currentServer || !window.electronAPI) return;
+    void window.electronAPI.agentWorkspaceConfigure({
+      serverName: currentServer.name,
+      serverUrl: currentServer.url,
+      user: currentServer.user || ''
+    }).then((workspace) => {
+      localStorage.setItem('gitWorkspacePath', workspace.path);
+      setAgentWorkspacePath(workspace.path);
+    }).catch((error) => console.error('Failed to configure Agent workspace:', error));
+  }, [isConnected, currentServer]);
+
+  useEffect(() => {
+    if (!isConnected || !agentWorkspacePath || !window.electronAPI) return;
+    const timer = window.setTimeout(() => {
+      void window.electronAPI.agentWorkspaceSyncFiles(openEditorFiles.map((file) => ({
+        uri: file.uri, name: file.name, type: file.type, language: file.language, content: file.content
+      }))).catch((error) => console.error('Failed to sync Agent workspace:', error));
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [agentWorkspacePath, isConnected, openEditorFiles]);
 
   useEffect(() => {
     const fitLayoutToWindow = () => {

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, ExternalMcpServers, GenericAgentConfig } from '../src/types/agent';
+import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, ExternalMcpServers, GenericAgentConfig } from '../src/types/agent';
 import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
 
 // Type definitions for exposed API
@@ -81,12 +81,15 @@ export interface ElectronAPI {
   agentSelectFiles: () => Promise<AgentFileAttachment[]>;
   agentGetExternalMcpServers: () => Promise<ExternalMcpServers>;
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => Promise<boolean>;
+  agentWorkspaceConfigure: (context: AgentWorkspaceContext) => Promise<AgentWorkspaceInfo>;
+  agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => Promise<{ path: string; files: number }>;
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
   agentNewSession: (provider: AgentProvider) => Promise<void>;
   agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => Promise<boolean>;
   onAgentEvent: (callback: (event: AgentEvent) => void) => () => void;
   genericAgentListModels: (config: Pick<GenericAgentConfig, 'baseUrl' | 'apiKey'>) => Promise<string[]>;
+  genericAgentComplete: (config: GenericAgentConfig, prompt: string) => Promise<string>;
   genericAgentStart: (config: GenericAgentConfig, prompt: string) => Promise<AgentStartResult>;
   genericAgentInterrupt: () => Promise<void>;
   genericAgentNewSession: () => Promise<void>;
@@ -195,6 +198,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   agentSelectFiles: () => ipcRenderer.invoke('agent:selectFiles'),
   agentGetExternalMcpServers: () => ipcRenderer.invoke('agent:getExternalMcpServers'),
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => ipcRenderer.invoke('agent:setExternalMcpServers', servers),
+  agentWorkspaceConfigure: (context: AgentWorkspaceContext) => ipcRenderer.invoke('agent:workspaceConfigure', context),
+  agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => ipcRenderer.invoke('agent:workspaceSyncFiles', files),
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => ipcRenderer.invoke('agent:start', provider, prompt, model, toolPermissionPolicy),
   agentInterrupt: (provider: AgentProvider) => ipcRenderer.invoke('agent:interrupt', provider),
   agentNewSession: (provider: AgentProvider) => ipcRenderer.invoke('agent:newSession', provider),
@@ -205,6 +210,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('agent:event', listener);
   },
   genericAgentListModels: (config: Pick<GenericAgentConfig, 'baseUrl' | 'apiKey'>) => ipcRenderer.invoke('generic-agent:listModels', config),
+  genericAgentComplete: (config: GenericAgentConfig, prompt: string) => ipcRenderer.invoke('generic-agent:complete', config, prompt),
   genericAgentStart: (config: GenericAgentConfig, prompt: string) => ipcRenderer.invoke('generic-agent:start', config, prompt),
   genericAgentInterrupt: () => ipcRenderer.invoke('generic-agent:interrupt'),
   genericAgentNewSession: () => ipcRenderer.invoke('generic-agent:newSession')

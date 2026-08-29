@@ -13,17 +13,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 修复 HTML Form 保存时误将文件类型作为 `UserLang` 的问题
 - 修复 MCP 签出与检入声明了语言参数、但执行阶段丢失参数的问题
+- 修复 Claude Agent 未执行 Plan/Ask 只读权限策略的问题
+
+### Changed | 变更
+
+- Agent 使用按 STARLIMS 服务器和用户隔离的稳定本地 Git 工作区，并自动镜像编辑器中打开的脚本
+- 对规则、最近对话和脚本引用实施约 32K token 的分区预算，超限内容会明确标记截断
+- 移除旧 AI 面板、旧提供商实现和重复配置；行内补全改为复用当前通用 Agent 平台、模型及密钥
+- 启动时清理旧 AI 面板遗留的普通配置项，避免历史版本的明文密钥继续残留
 
 ### Security | 安全
 
 - Plan 与 Ask 模式现在由运行时强制只读，Codex 同步使用只读 sandbox，并停用外部 MCP
 - Agent、Debug 与 Multitask 模式的 STARLIMS 写入/执行操作需要应用内逐次确认
 - 通用 Agent 对未声明只读的外部 MCP 工具增加确认，默认不再视作安全读操作
-- 将旧 AI 配置中的 API Key 自动迁移到 Electron 本机密钥存储，普通配置仅保留脱敏字段
+- 通用 Agent API Key 继续单独存入 Electron 本机密钥存储，普通配置不保存密钥
 
 ### Tooling | 工程化
 
-- 增加统一 `npm run check`，串行执行 lint、11 组 smoke tests 和 TypeScript/Vite/Electron 构建
+- 增加统一 `npm run check`，串行执行 lint、12 组 smoke tests 和 TypeScript/Vite/Electron 构建
 - 增加 GitHub Actions，在 `main` 推送及 Pull Request 时执行相同检查
 
 ## [1.6.2] - 2026-08-30

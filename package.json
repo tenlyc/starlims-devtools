@@ -15,6 +15,7 @@
     "test:server-config": "tsx scripts/server-config-smoke-test.ts",
     "test:ai-context": "tsx scripts/ai-context-smoke-test.ts",
     "test:agent-runtime": "tsx scripts/agent-runtime-smoke-test.ts",
+    "test:agent-workspace": "tsx scripts/agent-workspace-smoke-test.ts",
     "test:editor-languages": "tsx scripts/editor-language-smoke-test.ts",
     "test:checkout-forms": "tsx scripts/checkout-form-smoke-test.ts",
     "test:enterprise-search-tree": "tsx scripts/enterprise-search-tree-smoke-test.ts",

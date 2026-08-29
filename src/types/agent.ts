@@ -47,6 +47,26 @@ export type AgentFileAttachment = {
   size: number;
 };
 
+export type AgentWorkspaceContext = {
+  serverName: string;
+  serverUrl: string;
+  user: string;
+};
+
+export type AgentWorkspaceFile = {
+  uri: string;
+  name: string;
+  type: string;
+  language?: string;
+  content: string;
+};
+
+export type AgentWorkspaceInfo = {
+  path: string;
+  serverName: string;
+  user: string;
+};
+
 export type GenericAgentConfig = {
   baseUrl: string;
   apiKey: string;

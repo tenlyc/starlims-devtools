@@ -4,9 +4,8 @@
  */
 
 import * as monaco from 'monaco-editor';
-import { createAIModel, AIConfig, ChatMessage } from '../ai/AIModelProvider';
 import { editorStore } from '../stores/editorStore';
-import { useAIStore } from '../stores/aiStore';
+import { loadActiveGenericAgentConfig } from './genericAgentConfig';
 
 export interface InlineCompletionResult {
   insertText: string;
@@ -62,12 +61,6 @@ class InlineCompletionService {
       {
         provideInlineCompletions: async (model, position, context, token) => {
           if (!this.isEnabled) {
-            return null;
-          }
-
-          // Check if AI is configured
-          const aiConfig = useAIStore.getState().config;
-          if (!aiConfig || !aiConfig.apiKey) {
             return null;
           }
 
@@ -143,12 +136,6 @@ class InlineCompletionService {
     const position = editor.getPosition();
     if (!model || !position) return;
 
-    const aiConfig = useAIStore.getState().config;
-    if (!aiConfig || !aiConfig.apiKey) {
-      console.warn('AI not configured');
-      return;
-    }
-
     try {
       const completion = await this.getCompletion(model, position);
       if (completion && completion.insertText) {
@@ -173,28 +160,9 @@ class InlineCompletionService {
     model: monaco.editor.ITextModel,
     position: monaco.Position
   ): Promise<InlineCompletionResult | null> {
-    const aiConfig = useAIStore.getState().config;
-    if (!aiConfig || !aiConfig.apiKey) {
-      return null;
-    }
-
     try {
-      // Create and initialize the model
-      const modelInstance = createAIModel(aiConfig.provider);
-      const config: AIConfig = {
-        provider: aiConfig.provider,
-        apiKey: aiConfig.apiKey,
-        baseUrl: aiConfig.baseUrl,
-        model: aiConfig.model,
-        resourceName: aiConfig.resourceName,
-        apiVersion: aiConfig.apiVersion
-      };
-
-      const initialized = await modelInstance.initialize(config);
-      if (!initialized) {
-        console.warn('AI model not initialized');
-        return null;
-      }
+      const config = await loadActiveGenericAgentConfig();
+      if (!config || !window.electronAPI) return null;
 
       // Build context
       const context = this.buildContext(model, position);
@@ -202,11 +170,7 @@ class InlineCompletionService {
       const beforeCursor = currentLine.substring(0, position.column - 1);
 
       // Build prompt for code completion with SSL rules
-      const messages: ChatMessage[] = [
-        {
-          role: 'system',
-          content: `You are an AI code completion assistant for STARLIMS SSL (Server Script Language).
-
+      const prompt = `You are completing STARLIMS SSL (Server Script Language).
 STARLIMS SSL Syntax Rules - CRITICAL:
 1. EVERY statement MUST end with semicolon (;)
 2. Keywords: :PROCEDURE/:ENDPROC, :FUNCTION/:ENDFUNC, :IF/:ENDIF/:ELSE, :FOR/:NEXT, :WHILE/:ENDWHILE, :TRY/:CATCH/:FINALLY/:ENDTRY, :DECLARE, :PARAMETERS
@@ -230,22 +194,11 @@ Complete the code at the cursor position. Rules:
 3. Match the surrounding code style and indentation
 4. If completing a block (:IF, :FOR, :WHILE, :PROCEDURE), include the closing keyword (:ENDIF, :ENDFOR, :ENDWHILE, :ENDPROC)
 5. EVERY line must end with semicolon including comments
-6. Do NOT repeat text that already exists after the cursor`
-        },
-        {
-          role: 'user',
-          content: `Code before cursor:\n${beforeCursor}\n\nCurrent line (cursor at |):\n${currentLine}\n\nContext (lines around cursor):\n${context}\n\nComplete the code after the cursor. Output ONLY the code to insert, no explanations.`
-        }
-      ];
+6. Do NOT repeat text that already exists after the cursor
 
-      // Get completion from AI
-      const response = await modelInstance.chat({
-        messages,
-        maxTokens: 150,
-        temperature: 0.2
-      });
+Code before cursor:\n${beforeCursor}\n\nCurrent line (cursor at |):\n${currentLine}\n\nContext:\n${context}\n\nOutput only the code to insert.`;
 
-      let completionText = response.content.trim();
+      let completionText = await window.electronAPI.genericAgentComplete(config, prompt);
 
       // Clean up the completion text
       completionText = completionText

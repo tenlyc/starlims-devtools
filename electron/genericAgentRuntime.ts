@@ -112,6 +112,23 @@ export class GenericAgentRuntime {
     return (Array.isArray(data?.data) ? data.data : []).map((item: any) => String(item.id || '')).filter(Boolean);
   }
 
+  async complete(config: GenericAgentConfig, prompt: string): Promise<string> {
+    const data = await jsonRequest(endpoint(config.baseUrl, 'chat/completions'), config.apiKey, {
+      method: 'POST',
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          { role: 'system', content: 'You provide concise STARLIMS code completions. Return only code to insert, without Markdown.' },
+          { role: 'user', content: prompt }
+        ],
+        max_tokens: 150,
+        temperature: 0.2,
+        stream: false
+      })
+    });
+    return String(data?.choices?.[0]?.message?.content || '').trim();
+  }
+
   async send(config: GenericAgentConfig, prompt: string): Promise<AgentStartResult> {
     if (this.controller) throw new Error('Generic Agent is already processing a turn.');
     this.sessionId ||= randomUUID();
