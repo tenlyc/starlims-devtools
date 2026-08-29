@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { AgentRuntimeManager } from '../electron/agentRuntime';
 import { withLocalMcpNoProxy } from '../electron/localMcpEnv';
+import type { AgentEvent } from '../electron/agentTypes';
 
 async function main() {
   const proxyEnv = withLocalMcpNoProxy({
@@ -11,7 +12,7 @@ async function main() {
   assert.equal(proxyEnv.NO_PROXY, 'example.internal,127.0.0.1,localhost,::1');
   assert.equal(proxyEnv.no_proxy, proxyEnv.NO_PROXY);
 
-  const events: unknown[] = [];
+  const events: AgentEvent[] = [];
   const runtime = new AgentRuntimeManager({
     codexCommand: () => 'codex',
     mcpUrl: () => 'http://127.0.0.1:3102/mcp',
@@ -43,6 +44,12 @@ async function main() {
     if (timeout) clearTimeout(timeout);
   }
   runtime.dispose();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(
+    events.some((event) => event.type === 'error' && event.text.includes('exited with code null')),
+    false,
+    'An intentional Codex runtime restart must not be reported as a crash.'
+  );
 
   console.log(`Agent runtime smoke test passed (${statuses.codex.version}; ${statuses.claude.version}).`);
 }

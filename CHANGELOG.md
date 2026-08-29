@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 修复 HTML Form 保存时误将文件类型作为 `UserLang` 的问题
 - 修复 MCP 签出与检入声明了语言参数、但执行阶段丢失参数的问题
 - 修复 Claude Agent 未执行 Plan/Ask 只读权限策略的问题
+- 修复切换到服务器专属 Agent 工作区时，Codex 正常重启被错误显示为 `exited with code null` 的问题
 
 ### Changed | 变更
 

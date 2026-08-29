@@ -58,6 +58,7 @@ function itemStatus(value: unknown): 'running' | 'completed' | 'failed' | 'decli
 
 export class CodexAppServerRuntime {
   private child?: ChildProcessWithoutNullStreams;
+  private stopping = false;
   private starting?: Promise<void>;
   private nextId = 1;
   private threadId?: string;
@@ -165,6 +166,10 @@ export class CodexAppServerRuntime {
   }
 
   dispose(): void {
+    this.stopping = true;
+    const stopped = new Error('Codex App Server stopped for a runtime restart.');
+    for (const request of this.pending.values()) request.reject(stopped);
+    this.pending.clear();
     this.child?.kill();
     this.child = undefined;
     this.starting = undefined;
@@ -178,6 +183,7 @@ export class CodexAppServerRuntime {
   }
 
   private async start(): Promise<void> {
+    this.stopping = false;
     const command = this.command();
     const args = [
       'app-server',
@@ -196,12 +202,17 @@ export class CodexAppServerRuntime {
       const text = chunk.toString().trim();
       if (text) this.emit({ provider: 'codex', type: 'status', text });
     });
-    child.once('exit', (code) => {
+    child.once('exit', (code, signal) => {
+      const expectedStop = this.stopping;
+      this.stopping = false;
       const error = new Error(`Codex App Server exited with code ${code}.`);
       for (const request of this.pending.values()) request.reject(error);
       this.pending.clear();
       this.child = undefined;
-      this.emit({ provider: 'codex', type: 'error', text: error.message });
+      if (!expectedStop) {
+        const detail = signal ? ` (signal ${signal})` : '';
+        this.emit({ provider: 'codex', type: 'error', text: `${error.message}${detail}` });
+      }
     });
     child.once('error', (error) => {
       this.child = undefined;
