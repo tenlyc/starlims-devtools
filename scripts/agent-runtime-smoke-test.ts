@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict';
 import { AgentRuntimeManager } from '../electron/agentRuntime';
+import { withLocalMcpNoProxy } from '../electron/localMcpEnv';
 
 async function main() {
+  const proxyEnv = withLocalMcpNoProxy({
+    HTTP_PROXY: 'http://127.0.0.1:7897',
+    no_proxy: 'example.internal,127.0.0.1'
+  });
+  assert.equal(proxyEnv.HTTP_PROXY, 'http://127.0.0.1:7897');
+  assert.equal(proxyEnv.NO_PROXY, 'example.internal,127.0.0.1,localhost,::1');
+  assert.equal(proxyEnv.no_proxy, proxyEnv.NO_PROXY);
+
   const events: unknown[] = [];
   const runtime = new AgentRuntimeManager({
     codexCommand: () => 'codex',
-    mcpUrl: () => 'http://127.0.0.1:3002/mcp',
+    mcpUrl: () => 'http://127.0.0.1:3102/mcp',
     cwd: () => process.cwd(),
     getVersion: () => 'test',
     emit: (event) => events.push(event)
@@ -23,6 +32,9 @@ async function main() {
       (runtime.codex as unknown as { ensureStarted: () => Promise<void> }).ensureStarted(),
       new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Codex App Server handshake timed out.')), 10_000); })
     ]);
+    const models = await runtime.models('codex');
+    assert.ok(models.length > 0, 'Codex App Server did not return any selectable models.');
+    assert.ok(models.some((model) => model.isDefault), 'Codex App Server model list has no default model.');
   } finally {
     if (timeout) clearTimeout(timeout);
   }

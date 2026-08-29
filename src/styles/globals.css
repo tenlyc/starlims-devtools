@@ -10,7 +10,51 @@
   --sl-border: #3c3c3c;
   --sl-text: #cccccc;
   --sl-text-dim: #858585;
+  --workbench-panel: #f3f3f3;
+  --workbench-panel-raised: #ffffff;
+  --workbench-border: #d4d4d4;
+  --workbench-handle: #e5e5e5;
 }
+
+html.dark {
+  --workbench-panel: #181818;
+  --workbench-panel-raised: #1e1e1e;
+  --workbench-border: #2b2b2b;
+  --workbench-handle: #2b2b2b;
+}
+
+/* Cursor-compatible neutral dark palette for legacy pages and dialogs. */
+html.dark .dark\:bg-slate-900,
+html.dark .dark\:bg-slate-900\/50 { background-color: #181818 !important; }
+html.dark .dark\:bg-slate-900\/30 { background-color: rgba(24, 24, 24, 0.96) !important; }
+html.dark .dark\:bg-slate-800,
+html.dark .dark\:bg-slate-800\/50 { background-color: #1f1f1f !important; }
+html.dark .dark\:bg-slate-700 { background-color: #2a2a2a !important; }
+html.dark .dark\:bg-slate-700\/50 { background-color: rgba(42, 42, 42, 0.72) !important; }
+html.dark .dark\:bg-slate-600 { background-color: #333333 !important; }
+html.dark .dark\:border-slate-700 { border-color: #303030 !important; }
+html.dark .dark\:border-slate-600 { border-color: #3a3a3a !important; }
+html.dark .dark\:border-slate-500 { border-color: #454545 !important; }
+html.dark .dark\:hover\:bg-slate-700:hover { background-color: #2a2d2e !important; }
+html.dark .dark\:hover\:bg-slate-600:hover { background-color: #333333 !important; }
+html.dark .dark\:hover\:bg-slate-500:hover { background-color: #3a3a3a !important; }
+html.dark .bg-blue-600 { background-color: #0e639c !important; }
+html.dark .hover\:bg-blue-500:hover,
+html.dark .hover\:bg-blue-600:hover { background-color: #1177bb !important; }
+html.dark .border-blue-500,
+html.dark .border-blue-600,
+html.dark .border-blue-700 { border-color: #0e639c !important; }
+
+/* Keep legacy light-theme surfaces neutral instead of Tailwind's blue-tinted slate. */
+html:not(.dark) .bg-slate-50 { background-color: #fafafa !important; }
+html:not(.dark) .bg-slate-100 { background-color: #f3f3f3 !important; }
+html:not(.dark) .bg-slate-200 { background-color: #e8e8e8 !important; }
+html:not(.dark) .bg-slate-300 { background-color: #dddddd !important; }
+html:not(.dark) .border-slate-200,
+html:not(.dark) .border-slate-300 { border-color: #d4d4d4 !important; }
+html:not(.dark) .hover\:bg-slate-100:hover { background-color: #eeeeee !important; }
+html:not(.dark) .hover\:bg-slate-200:hover { background-color: #e5e5e5 !important; }
+html:not(.dark) .hover\:bg-slate-300:hover { background-color: #d8d8d8 !important; }
 
 .workbench-rail-button {
   width: 32px;
@@ -20,6 +64,9 @@
   justify-content: center;
   color: #858585;
   border-left: 2px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
 }
 
 .workbench-rail-button svg {
@@ -29,7 +76,19 @@
 
 .workbench-rail-button:hover,
 .workbench-rail-button.active {
+  color: #1f2937;
+  background-color: rgba(0, 0, 0, 0.06);
+}
+
+html.dark .workbench-rail-button:hover,
+html.dark .workbench-rail-button.active {
   color: #e7e7e7;
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.workbench-rail-button:focus-visible {
+  outline: 1px solid #4daafc;
+  outline-offset: 1px;
 }
 
 .workbench-rail-button.active {
@@ -60,10 +119,14 @@ html, body, #root {
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  background-color: var(--sl-dark);
-  color: var(--sl-text);
+  background-color: var(--workbench-panel-raised);
+  color: #334155;
   font-size: 14px;
   line-height: 1.4;
+}
+
+html.dark body {
+  color: var(--sl-text);
 }
 
 /* Scrollbar styling - light mode */
@@ -118,20 +181,43 @@ html.dark ::-webkit-scrollbar-thumb:hover {
 
 /* Tab styles */
 .editor-tab {
-  @apply flex items-center px-3 py-1.5 bg-slate-200 dark:bg-slate-800 border-r border-slate-300 dark:border-slate-700 cursor-pointer text-slate-700 dark:text-slate-200;
+  @apply flex items-center px-3 py-1.5 cursor-pointer text-slate-700 dark:text-slate-200;
+  background: var(--workbench-panel);
+  border-right: 1px solid var(--workbench-border);
+  border-top: 1px solid transparent;
 }
 
 .editor-tab.active {
-  @apply bg-slate-300 dark:bg-slate-700;
+  background: var(--workbench-panel-raised);
+  border-top-color: #4daafc;
 }
 
 .editor-tab:hover:not(.active) {
-  @apply bg-slate-200 dark:bg-slate-800;
+  background: #e8e8e8;
+}
+
+html.dark .editor-tab {
+  background: #181818;
+  border-color: #2b2b2b;
+  border-top: 1px solid transparent;
+  color: #969696;
+}
+
+html.dark .editor-tab.active {
+  background: #1e1e1e;
+  border-top-color: #4daafc;
+  color: #ffffff;
+}
+
+html.dark .editor-tab:hover:not(.active) {
+  background: #1f1f1f;
+  color: #cccccc;
 }
 
 /* Status bar */
 .status-bar {
-  @apply flex items-center justify-between px-2 py-0.5 bg-slate-200 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300;
+  @apply flex items-center justify-between px-2 py-0.5 text-xs text-slate-700 dark:text-slate-300;
+  background: var(--workbench-panel);
 }
 
 /* Button styles */
@@ -149,6 +235,15 @@ html.dark ::-webkit-scrollbar-thumb:hover {
 
 .btn-danger {
   @apply bg-red-600 text-white hover:bg-red-700 dark:hover:bg-red-500;
+}
+
+/* Shared hit target for toolbar actions that only show an icon. */
+.icon-button {
+  @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-transparent text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-200 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:pointer-events-none disabled:opacity-40 dark:text-[#b3b3b3] dark:hover:border-[#4a4a4a] dark:hover:bg-[#2a2d2e] dark:hover:text-white;
+}
+
+.icon-button svg {
+  @apply h-[18px] w-[18px];
 }
 
 /* Input styles */

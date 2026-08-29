@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { readFileSync } from 'node:fs';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StarlimsMcpHttpServer } from '../electron/mcpServer';
 
 const port = 33102;
+const electronMain = readFileSync('electron/main.ts', 'utf8');
+const mcpServerSource = readFileSync('electron/mcpServer.ts', 'utf8');
+assert.match(electronMain, /LEGACY_MCP_PORT = 3002/);
+assert.match(electronMain, /DEFAULT_MCP_PORT = 3102/);
+assert.match(electronMain, /store\.set\('mcpPort', DEFAULT_MCP_PORT\)/);
+assert.match(mcpServerSource, /private port = 3102/);
 const calls: Array<{ tool: string; arguments_: Record<string, unknown> }> = [];
 const server = new StarlimsMcpHttpServer(
   async (tool, arguments_) => {
@@ -31,6 +38,7 @@ try {
   const tools = await client.listTools();
   assert.ok(tools.tools.some((tool) => tool.name === 'get_item_code'));
   assert.ok(tools.tools.some((tool) => tool.name === 'save_item'));
+  assert.ok(tools.tools.some((tool) => tool.name === 'query_checkin_history'));
 
   const result = await client.callTool({ name: 'browse_tree', arguments: { uri: '/Applications', maxItems: 10 } });
   assert.equal(result.isError, undefined);

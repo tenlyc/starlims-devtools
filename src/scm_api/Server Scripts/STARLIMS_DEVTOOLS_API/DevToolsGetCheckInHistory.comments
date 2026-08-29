@@ -1,0 +1,1 @@
+update limsSOURCECONTROL set REASONFORCHECKOUT = 'STARLIMS DevTools: query check-in history through SourceControlMgmt.dsGetItemsFromSearch.' where versionID = ?

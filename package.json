@@ -1,6 +1,6 @@
 {
   "name": "starlims-devtools",
-  "version": "1.6.0",
+  "version": "1.6.2",
   "description": "Cross-platform STARLIMS Development Tools with MCP integration | 跨平台 STARLIMS 开发工具",
   "main": "dist-electron/main.js",
   "author": "STARLIMS DevTools Team",
@@ -16,6 +16,11 @@
     "test:ai-context": "tsx scripts/ai-context-smoke-test.ts",
     "test:agent-runtime": "tsx scripts/agent-runtime-smoke-test.ts",
     "test:editor-languages": "tsx scripts/editor-language-smoke-test.ts",
+    "test:checkout-forms": "tsx scripts/checkout-form-smoke-test.ts",
+    "test:enterprise-search-tree": "tsx scripts/enterprise-search-tree-smoke-test.ts",
+    "test:i18n": "tsx scripts/i18n-smoke-test.ts",
+    "test:scm-export": "tsx scripts/scm-export-smoke-test.ts",
+    "test:bottom-panel": "tsx scripts/bottom-panel-smoke-test.ts",
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite\" \"electron .\"",
     "lint": "eslint src --ext ts,tsx"
@@ -86,7 +91,11 @@
         "to": "scm_api"
       }
     ],
+    "mac": {
+      "icon": "build/icon.png"
+    },
     "win": {
+      "icon": "build/icon.ico",
       "signAndEditExecutable": false,
       "target": [
         {
@@ -100,6 +109,9 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "icon": "build/icon.png"
     },
     "forceCodeSigning": false
   }

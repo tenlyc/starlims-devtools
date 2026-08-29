@@ -509,7 +509,7 @@ STARLIMS SSL 语法规则（用于代码分析和生成）：
                   onCloseSettings();
                 }
               }}
-              className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white rounded"
+              className="icon-button"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -547,7 +547,7 @@ STARLIMS SSL 语法规则（用于代码分析和生成）：
               <button
                 type="button"
                 onClick={() => setShowApiKey(!showApiKey)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 p-1"
+                className="icon-button absolute right-1 top-1/2 -translate-y-1/2"
                 title={showApiKey ? '隐藏' : '显示'}
               >
                 {showApiKey ? (
@@ -680,7 +680,7 @@ STARLIMS SSL 语法规则（用于代码分析和生成）：
           </div>
           <div className="flex items-center gap-1">
             <button
-              className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white rounded"
+              className="icon-button"
               onClick={() => setShowSettings(true)}
               title="AI Settings"
             >
@@ -691,7 +691,7 @@ STARLIMS SSL 语法规则（用于代码分析和生成）：
             </button>
             {activeTab === 'chat' && (
               <button
-                className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white rounded"
+                className="icon-button"
                 onClick={handleClearMessages}
                 title="Clear chat"
               >

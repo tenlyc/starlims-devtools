@@ -1,0 +1,71 @@
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+
+const upstreamExport = readFileSync('src/scm_api/Server Scripts/SCM_API/ExportPackage.srvscr', 'utf8');
+const upstreamImport = readFileSync('src/scm_api/Server Scripts/SCM_API/ImportPackage.srvscr', 'utf8');
+const backend = readFileSync('src/scm_api/Server Scripts/STARLIMS_DEVTOOLS_API/DevToolsExportPackage.srvscr', 'utf8');
+const panel = readFileSync('src/components/SCM/SourceControlPanel.tsx', 'utf8');
+const history = readFileSync('src/scm_api/Server Scripts/STARLIMS_DEVTOOLS_API/DevToolsGetCheckInHistory.srvscr', 'utf8');
+const users = readFileSync('src/scm_api/Server Scripts/STARLIMS_DEVTOOLS_API/DevToolsGetSCMUsers.srvscr', 'utf8');
+const importer = readFileSync('src/scm_api/Server Scripts/STARLIMS_DEVTOOLS_API/DevToolsImportPackage.srvscr', 'utf8');
+const service = readFileSync('src/services/enterpriseService.ts', 'utf8');
+const electronMain = readFileSync('electron/main.ts', 'utf8');
+const devToolsApiDir = 'src/scm_api/Server Scripts/STARLIMS_DEVTOOLS_API';
+
+assert.match(backend, /:PARAMETERS sSelectedItems, bHistoryMode, sSelectedLanguages/);
+assert.doesNotMatch(backend, /Request:QueryString/);
+assert.match(backend, /AScanExact\(aSelectedIds, LimsString\(pendingRow\["CHILDID"\]\)\)/);
+assert.match(backend, /SaveApplicationForm/);
+assert.match(backend, /SaveApplicationForm", \{sPackageId, sItemID, aPackageLangs\[j\]\}/);
+assert.match(backend, /SaveGlobalResource/);
+assert.match(backend, /createsdpbatch/);
+assert.match(backend, /bHistoryMode/);
+assert.match(backend, /CheckInHistory_/);
+assert.match(backend, /sDefaultLangId := "ENG"/);
+assert.match(backend, /BuildArray\(sSelectedLanguages, , ","\)/);
+assert.match(backend, /<LanguageCollection>/);
+assert.match(backend, /OverwriteCodeBehind/);
+assert.match(history, /LIMSSOURCECONTROL/);
+assert.match(history, /CHECKEDINBY/);
+assert.match(history, /CHECKEDINDATE/);
+assert.match(history, /SourceControlMgmt\.dsGetItemsFromSearch/);
+assert.match(users, /distinct CHECKEDINBY/);
+assert.match(importer, /fileName/);
+assert.match(importer, /StartNewImport/);
+assert.doesNotMatch(importer, /DoProc\("Enterprise_Data_Providers\.ImportProvider\.StartImportUpdater/);
+assert.match(panel, /getSCMUsers\(\)/);
+assert.match(panel, /getCheckInHistory/);
+assert.match(panel, /getLanguageOptions\(\)/);
+assert.match(panel, /exportPackage\(tokens, true, languageIds\)/);
+assert.match(panel, /handleImportFile/);
+assert.match(panel, /importPackage\(file\)/);
+assert.match(service, /bodyBase64: this\.arrayBufferToBase64\(await file\.arrayBuffer\(\)\)/);
+assert.match(service, /STARLIMS_DEVTOOLS_API\.DevToolsExportPackage/);
+assert.match(service, /URI: '\/ServerScripts\/STARLIMS_DEVTOOLS_API\/DevToolsExportPackage'/);
+assert.match(service, /Parameters: \[items\?\.join\(','\) \|\| '', history, languages\.join\(','\)\]/);
+assert.match(history, /:PARAMETERS sUser, sDateFrom, sDateTo/);
+assert.doesNotMatch(history, /Request:QueryString/);
+assert.match(history, /RunDS\("SourceControlMgmt\.dsGetItemsFromSearch", aParams, "XML"\)/);
+assert.match(history, /"<DataSet" \$ sXML/);
+assert.match(history, /"FULLMODULE"/);
+assert.match(history, /\{"source", "SourceControlMgmt\.dsGetItemsFromSearch"\}/);
+assert.match(service, /URI: '\/ServerScripts\/STARLIMS_DEVTOOLS_API\/DevToolsGetCheckInHistory'/);
+assert.match(service, /Parameters: \[filter\.user, filter\.dateFrom, filter\.dateTo\]/);
+assert.match(service, /URI: '\/ServerScripts\/STARLIMS_DEVTOOLS_API\/DevToolsGetSCMUsers'/);
+assert.match(service, /SCM_API\.ImportPackage/);
+assert.doesNotMatch(service, /STARLIMS_DEVTOOLS_API\.DevToolsImportPackage\.\$\{this\.urlSuffix\}/);
+assert.match(service, /summarizeHttpError/);
+assert.match(electronMain, /Buffer\.from\(options\.bodyBase64, 'base64'\)/);
+assert.doesNotMatch(upstreamExport, /bHistoryMode|CheckInHistory_|Request:QueryString:IsProperty\("items"\)/);
+assert.doesNotMatch(upstreamImport, /Request:QueryString\["fileName"\]/);
+assert.doesNotMatch(service, /formData\.append\('file'/);
+assert.doesNotMatch(panel, /showArchives|showLabels|handleRecover|handleCompare/);
+
+for (const fileName of readdirSync(devToolsApiDir)) {
+  if (!fileName.endsWith('.ver') && !fileName.endsWith('.comments')) continue;
+  const metadataSql = readFileSync(`${devToolsApiDir}/${fileName}`, 'utf8').trim();
+  assert.match(metadataSql, /^update lims(?:VERSIONS|SOURCECONTROL) set /i, `${fileName} must contain import metadata SQL`);
+  assert.match(metadataSql, /where versionID = \?$/i, `${fileName} must bind the imported version id`);
+}
+
+console.log('Simplified SCM check-in-history export smoke test passed.');

@@ -1,169 +1,154 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { getEnterpriseService } from '../../services/enterpriseService';
 import { EnterpriseItem } from '../../services/iEnterpriseService';
 import { useOutputLogStore } from '../../services/outputLogStore';
+import { useI18n } from '../../i18n';
 
 interface SCMPackageDialogProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-interface CheckoutItem {
-  id: string;
+interface ExportItem {
   uri: string;
+  guid: string;
   name: string;
   type: string;
-  user: string;
-  date: string;
+  language: string;
+  checkedOutBy: string;
   selected: boolean;
 }
 
+const TYPE_LABELS: Record<string, string> = {
+  FORM: 'Form', HTMLFORMCODE: 'HTML Form', XFDFORMCODE: 'XFD Form',
+  SERVERSCRIPT: 'Server Script', SS: 'Server Script',
+  CLIENTSCRIPT: 'Client Script', CS: 'Client Script',
+  DATASOURCE: 'Data Source', DS: 'Data Source',
+  TABLE: 'Table'
+};
+
+/**
+ * Source Control Manager - Package Manager.
+ *
+ * Export mirrors the official STARLIMS Source Control Manager flow
+ * (tree selection -> manifest -> Package Manager): the user picks any
+ * enterprise items and the server packages their live (checked-in / current)
+ * code into an SDP file that can be imported into another STARLIMS
+ * environment for deployment. Uses SCM_API.GetAllItems for the item list and
+ * the patched SCM_API.ExportItems endpoint for packaging.
+ */
 export function SCMPackageDialog({ isOpen, onClose }: SCMPackageDialogProps) {
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<'export' | 'import'>('export');
-  const [items, setItems] = useState<CheckoutItem[]>([]);
+  const [items, setItems] = useState<ExportItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [filterUser, setFilterUser] = useState('');
-  const [filterDateFrom, setFilterDateFrom] = useState('');
-  const [filterDateTo, setFilterDateTo] = useState('');
-  const [users, setUsers] = useState<string[]>([]);
+  const [filterText, setFilterText] = useState('');
+  const [filterType, setFilterType] = useState('ALL');
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importLog, setImportLog] = useState('');
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [error, setError] = useState('');
 
   const addEntry = useOutputLogStore(state => state.addEntry);
 
-  // Load checked in items (items that have been completed and can be exported)
+  // Load all enterprise items from the server
   const loadItems = useCallback(async () => {
     setIsLoading(true);
+    setError('');
     try {
       const enterpriseService = getEnterpriseService();
-      const checkedInItems = await enterpriseService.getCheckedInItems({
-        user: filterUser || undefined,
-        dateFrom: filterDateFrom || undefined,
-        dateTo: filterDateTo || undefined
-      });
+      const allItems = await enterpriseService.getAllItems();
 
-      console.log('Loaded checked in items:', checkedInItems.length);
-
-      const mappedItems: CheckoutItem[] = checkedInItems.map((item: any) => ({
-        id: item.uri || item.id,
+      const mappedItems: ExportItem[] = allItems.map((item: EnterpriseItem) => ({
         uri: item.uri || '',
-        name: item.name || item.text || item.id?.split('.').pop() || 'Unknown',
+        guid: item.guid || item.id || '',
+        name: item.name || '',
         type: item.type || 'UNKNOWN',
-        user: item.checkedOutBy || 'Unknown',
-        date: item.checkedOutDate || '',
+        language: item.language || '',
+        checkedOutBy: item.checkedOutBy || '',
         selected: false
       }));
 
       setItems(mappedItems);
-
-      // Extract unique users
-      const uniqueUsers = [...new Set(mappedItems.map(item => item.user).filter(Boolean))];
-      setUsers(uniqueUsers.sort());
+      addEntry({
+        level: 'info',
+        message: `Loaded ${mappedItems.length} items from server`,
+        source: 'SCM'
+      });
     } catch (err) {
-      console.error('Failed to load pending checkins:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`Failed to load items: ${message}`);
+      addEntry({ level: 'error', message: `Failed to load items: ${message}`, source: 'SCM' });
     } finally {
       setIsLoading(false);
     }
-  }, [filterUser, filterDateFrom, filterDateTo]);
+  }, [addEntry]);
 
+  // Load automatically when the export tab opens the first time
   useEffect(() => {
-    if (isOpen && activeTab === 'export') {
+    if (isOpen && activeTab === 'export' && items.length === 0 && !isLoading) {
       loadItems();
     }
-  }, [isOpen, activeTab, loadItems]);
+  }, [isOpen, activeTab]);
 
-  // Filter items
-  const filteredItems = items.filter(item => {
-    if (filterUser && item.user !== filterUser) return false;
-    if (filterDateFrom) {
-      const itemDate = new Date(item.date);
-      const fromDate = new Date(filterDateFrom);
-      if (itemDate < fromDate) return false;
-    }
-    if (filterDateTo) {
-      const itemDate = new Date(item.date);
-      const toDate = new Date(filterDateTo);
-      toDate.setHours(23, 59, 59, 999);
-      if (itemDate > toDate) return false;
-    }
-    return true;
-  });
+  // Filter items by text and type
+  const filteredItems = useMemo(() => {
+    const text = filterText.trim().toLowerCase();
+    return items.filter(item => {
+      if (filterType !== 'ALL' && item.type !== filterType) return false;
+      if (text && !item.name.toLowerCase().includes(text)) return false;
+      return true;
+    });
+  }, [items, filterText, filterType]);
 
-  // Toggle select item
-  const toggleItem = (id: string) => {
+  const typeOptions = useMemo(() => {
+    const types = new Set(items.map(item => item.type).filter(Boolean));
+    return [...types].sort();
+  }, [items]);
+
+  const selectedCount = items.filter(item => item.selected).length;
+
+  const toggleItem = (uri: string) => {
     setItems(prev => prev.map(item =>
-      item.id === id ? { ...item, selected: !item.selected } : item
+      item.uri === uri ? { ...item, selected: !item.selected } : item
     ));
   };
 
-  // Select all / Deselect all
-  const selectAll = (select: boolean) => {
-    setItems(prev => prev.map(item => ({ ...item, selected: select })));
+  const selectAllVisible = (select: boolean) => {
+    const visibleUris = new Set(filteredItems.map(item => item.uri));
+    setItems(prev => prev.map(item =>
+      visibleUris.has(item.uri) ? { ...item, selected: select } : item
+    ));
   };
 
-  // Export selected items
+  // Export: ask the server to build the SDP package from the selected items
   const handleExport = async () => {
     const selectedItems = items.filter(item => item.selected);
     if (selectedItems.length === 0) {
-      alert('Please select at least one item to export');
+      alert(t('scm.export.noSelection'));
       return;
     }
 
     setIsExporting(true);
+    setError('');
     addEntry({
       level: 'info',
-      message: `Exporting ${selectedItems.length} items...`,
+      message: `Exporting ${selectedItems.length} item(s) as SDP package...`,
       source: 'SCM'
     });
 
     try {
-      // Export the selected pending checkins as an SDP package
       const enterpriseService = getEnterpriseService();
-      const result = await enterpriseService.exportPackage();
+      const uris = selectedItems.map(item => item.uri).filter(Boolean);
+      const result = await enterpriseService.exportItems(uris);
 
-      if (result.success) {
-        addEntry({
-          level: 'success',
-          message: `Package exported: ${result.fileName}`,
-          source: 'SCM'
-        });
-
-        // Try to download the file
-        if (result.fileName) {
-          await downloadPackage(result.fileName);
-        }
-      } else {
-        addEntry({
-          level: 'error',
-          message: `Export failed: ${result.error}`,
-          source: 'SCM'
-        });
-      }
-    } catch (err) {
-      addEntry({
-        level: 'error',
-        message: `Export error: ${err instanceof Error ? err.message : String(err)}`,
-        source: 'SCM'
-      });
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  // Download package from server
-  const downloadPackage = async (fileName: string) => {
-    try {
-      const enterpriseService = getEnterpriseService();
-      const result = await enterpriseService.downloadPackage(fileName);
-
-      if (result.success && result.data) {
-        // Create download link
-        const url = URL.createObjectURL(result.data);
+      if (result.success && result.blob && result.fileName) {
+        // Create download link for the validated SDP/ZIP content
+        const url = URL.createObjectURL(result.blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = fileName;
+        a.download = result.fileName;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -171,72 +156,58 @@ export function SCMPackageDialog({ isOpen, onClose }: SCMPackageDialogProps) {
 
         addEntry({
           level: 'success',
-          message: `Downloaded: ${fileName}`,
+          message: `Package exported and downloaded: ${result.fileName}`,
           source: 'SCM'
         });
       } else {
-        addEntry({
-          level: 'error',
-          message: `Download failed: ${result.error}`,
-          source: 'SCM'
-        });
+        const message = result.error || t('scm.export.error');
+        setError(message);
+        addEntry({ level: 'error', message, source: 'SCM' });
       }
     } catch (err) {
-      addEntry({
-        level: 'error',
-        message: `Download error: ${err instanceof Error ? err.message : String(err)}`,
-        source: 'SCM'
-      });
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`${t('scm.export.error')}: ${message}`);
+      addEntry({ level: 'error', message: `${t('scm.export.error')}: ${message}`, source: 'SCM' });
+    } finally {
+      setIsExporting(false);
     }
   };
 
   // Import package
   const handleImport = async () => {
     if (!importFile) {
-      alert('Please select an SDP file to import');
+      alert(t('scm.import.selectSdp'));
       return;
     }
 
-    if (!importFile.name.endsWith('.sdp')) {
-      alert('Please select a valid .sdp file');
+    if (!importFile.name.toLowerCase().endsWith('.sdp')) {
+      alert(t('scm.import.selectSdp'));
       return;
     }
 
     setIsImporting(true);
     setImportLog('');
-    addEntry({
-      level: 'info',
-      message: `Importing ${importFile.name}...`,
-      source: 'SCM'
-    });
+    setError('');
+    addEntry({ level: 'info', message: `Importing ${importFile.name}...`, source: 'SCM' });
 
     try {
       const enterpriseService = getEnterpriseService();
       const result = await enterpriseService.importPackage(importFile);
 
       if (result.success) {
-        setImportLog(result.log || 'Import completed successfully');
-        addEntry({
-          level: 'success',
-          message: `Import completed: ${importFile.name}`,
-          source: 'SCM'
-        });
+        setImportLog(result.log || t('scm.import.completed'));
+        addEntry({ level: 'success', message: `${t('scm.import.completed')}: ${importFile.name}`, source: 'SCM' });
       } else {
-        setImportLog(`Import failed: ${result.error}`);
-        addEntry({
-          level: 'error',
-          message: `Import failed: ${result.error}`,
-          source: 'SCM'
-        });
+        const message = result.error || t('scm.import.failed');
+        setImportLog(`${t('scm.import.failed')}: ${message}`);
+        setError(message);
+        addEntry({ level: 'error', message: `${t('scm.import.failed')}: ${message}`, source: 'SCM' });
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      setImportLog(`Import error: ${errorMsg}`);
-      addEntry({
-        level: 'error',
-        message: `Import error: ${errorMsg}`,
-        source: 'SCM'
-      });
+      setImportLog(`${t('scm.import.failed')}: ${errorMsg}`);
+      setError(errorMsg);
+      addEntry({ level: 'error', message: `${t('scm.import.failed')}: ${errorMsg}`, source: 'SCM' });
     } finally {
       setIsImporting(false);
     }
@@ -247,50 +218,35 @@ export function SCMPackageDialog({ isOpen, onClose }: SCMPackageDialogProps) {
     if (!dateStr) return '';
     try {
       const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return dateStr;
       return date.toLocaleString('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
+        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
       });
     } catch {
       return dateStr;
     }
   };
 
-  // Get type icon
   const getTypeIcon = (type: string) => {
     const icons: Record<string, string> = {
-      'SS': '🖥️',
-      'SERVERSCRIPT': '🖥️',
-      'CS': '🖱️',
-      'CLIENTSCRIPT': '🖱️',
-      'DS': '🗃️',
-      'DATASOURCE': '🗃️',
-      'HTMLFORMXML': '🌐',
-      'HTMLFORMCODE': '📄',
-      'XFDFORMXML': '📝',
-      'XFDFORMCODE': '📄',
-      'DEFAULT': '📄'
+      'FORM': '📝', 'HTMLFORMCODE': '🌐', 'HTMLFORMXML': '🌐', 'XFDFORMCODE': '📄', 'XFDFORMXML': '📄',
+      'SERVERSCRIPT': '🖥️', 'SS': '🖥️', 'CLIENTSCRIPT': '🖱️', 'CS': '🖱️',
+      'DATASOURCE': '🗃️', 'DS': '🗃️', 'TABLE': '🗄️'
     };
-    return icons[type] || icons.DEFAULT;
+    return icons[type] || '📄';
   };
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-[900px] max-h-[80vh] flex flex-col">
+      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-[1000px] max-h-[85vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-300 dark:border-slate-700">
           <h2 className="text-lg font-semibold text-slate-700 dark:text-slate-200">
-            📦 Source Control Manager - Package Manager
+            📦 {t('scm.title')}
           </h2>
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"
-          >
+          <button onClick={onClose} className="icon-button" title={t('common.close')}>
             <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -303,75 +259,63 @@ export function SCMPackageDialog({ isOpen, onClose }: SCMPackageDialogProps) {
             className={`px-4 py-2 text-sm font-medium ${activeTab === 'export' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
             onClick={() => setActiveTab('export')}
           >
-            📤 Export Package
+            📤 {t('scm.tab.export')}
           </button>
           <button
             className={`px-4 py-2 text-sm font-medium ${activeTab === 'import' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
             onClick={() => setActiveTab('import')}
           >
-            📥 Import Package
+            📥 {t('scm.tab.import')}
           </button>
         </div>
 
         {/* Content */}
         <div className="flex-1 overflow-auto p-4">
-          {/* Not Implemented Banner */}
-          <div className="bg-amber-100 dark:bg-amber-900/30 border border-amber-400 dark:border-amber-600 rounded-lg p-4 mb-4">
-            <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
-              <span className="text-xl">⚠️</span>
-              <span className="font-medium">功能未实现</span>
+          {error && (
+            <div className="bg-red-100 dark:bg-red-900/30 border border-red-400 dark:border-red-600 rounded-lg p-3 mb-4 text-sm text-red-700 dark:text-red-300">
+              {error}
             </div>
-            <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
-              Source Control Manager - Package Manager 功能正在开发中，敬请期待。
-            </p>
-          </div>
+          )}
 
           {activeTab === 'export' && (
             <div className="space-y-4">
-              {/* Filters */}
-              <div className="flex flex-wrap gap-4 items-center bg-slate-50 dark:bg-slate-700/50 p-3 rounded-lg">
-                <select
-                  value={filterUser}
-                  onChange={(e) => setFilterUser(e.target.value)}
-                  className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-700"
-                >
-                  <option value="">All Users</option>
-                  {users.map(user => (
-                    <option key={user} value={user}>{user}</option>
-                  ))}
-                </select>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-slate-500">From:</span>
-                  <input
-                    type="date"
-                    value={filterDateFrom}
-                    onChange={(e) => setFilterDateFrom(e.target.value)}
-                    className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-700"
-                  />
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-slate-500">To:</span>
-                  <input
-                    type="date"
-                    value={filterDateTo}
-                    onChange={(e) => setFilterDateTo(e.target.value)}
-                    className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-700"
-                  />
-                </div>
-
-                <button
-                  onClick={loadItems}
-                  className="px-3 py-1 text-sm bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500 rounded"
-                >
-                  🔄 Refresh
-                </button>
+              {/* Info banner */}
+              <div className="bg-blue-100 dark:bg-blue-900/30 border border-blue-400 dark:border-blue-600 rounded-lg p-3 text-sm text-blue-700 dark:text-blue-300">
+                {t('scm.export.hint')}
               </div>
 
-              {/* Items List */}
+              {/* Toolbar: load + filter */}
+              <div className="flex flex-wrap gap-3 items-center bg-slate-50 dark:bg-slate-700/50 p-3 rounded-lg">
+                <button
+                  onClick={loadItems}
+                  disabled={isLoading}
+                  className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:bg-slate-400 text-white rounded font-medium"
+                  title={t('scm.export.loadAllHint')}
+                >
+                  {isLoading ? t('common.loading') : `🔄 ${t('scm.export.loadAll')}`}
+                </button>
+                <input
+                  type="text"
+                  value={filterText}
+                  onChange={(e) => setFilterText(e.target.value)}
+                  placeholder={t('scm.export.filterPlaceholder')}
+                  className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-700 flex-1 min-w-[180px]"
+                />
+                <select
+                  value={filterType}
+                  onChange={(e) => setFilterType(e.target.value)}
+                  className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-700"
+                >
+                  <option value="ALL">{t('scm.export.allTypes')}</option>
+                  {typeOptions.map(type => (
+                    <option key={type} value={type}>{TYPE_LABELS[type] || type}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Items list */}
               <div className="border border-slate-300 dark:border-slate-600 rounded-lg overflow-hidden">
-                <div className="max-h-[300px] overflow-auto">
+                <div className="max-h-[320px] overflow-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-slate-100 dark:bg-slate-700 sticky top-0">
                       <tr>
@@ -379,46 +323,44 @@ export function SCMPackageDialog({ isOpen, onClose }: SCMPackageDialogProps) {
                           <input
                             type="checkbox"
                             checked={filteredItems.length > 0 && filteredItems.every(item => item.selected)}
-                            onChange={(e) => selectAll(e.target.checked)}
+                            onChange={(e) => selectAllVisible(e.target.checked)}
                             className="rounded"
                           />
                         </th>
-                        <th className="px-3 py-2 text-left">Type</th>
-                        <th className="px-3 py-2 text-left">Name</th>
-                        <th className="px-3 py-2 text-left">User</th>
-                        <th className="px-3 py-2 text-left">Date</th>
+                        <th className="px-3 py-2 text-left">{t('scm.export.type')}</th>
+                        <th className="px-3 py-2 text-left">{t('scm.export.name')}</th>
+                        <th className="px-3 py-2 text-left">{t('scm.export.language')}</th>
+                        <th className="px-3 py-2 text-left">{t('scm.export.checkedOutBy')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                       {isLoading ? (
                         <tr>
-                          <td colSpan={5} className="px-3 py-8 text-center text-slate-500">
-                            Loading...
-                          </td>
+                          <td colSpan={5} className="px-3 py-8 text-center text-slate-500">{t('common.loading')}</td>
                         </tr>
                       ) : filteredItems.length === 0 ? (
                         <tr>
                           <td colSpan={5} className="px-3 py-8 text-center text-slate-500">
-                            No pending checkins found
+                            {items.length === 0 ? t('scm.export.noItems') : t('scm.export.noItems')}
                           </td>
                         </tr>
                       ) : (
                         filteredItems.map(item => (
-                          <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
-                            <td className="px-3 py-2">
+                          <tr key={item.uri || item.name} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                            <td className="px-3 py-1.5">
                               <input
                                 type="checkbox"
                                 checked={item.selected}
-                                onChange={() => toggleItem(item.id)}
+                                onChange={() => toggleItem(item.uri)}
                                 className="rounded"
                               />
                             </td>
-                            <td className="px-3 py-2">{getTypeIcon(item.type)}</td>
-                            <td className="px-3 py-2">
-                              <div className="truncate max-w-[200px]" title={item.uri}>{item.name}</div>
+                            <td className="px-3 py-1.5">{getTypeIcon(item.type)} {TYPE_LABELS[item.type] || item.type}</td>
+                            <td className="px-3 py-1.5">
+                              <div className="truncate max-w-[320px]" title={item.uri}>{item.name}</div>
                             </td>
-                            <td className="px-3 py-2">{item.user}</td>
-                            <td className="px-3 py-2 text-slate-500">{formatDate(item.date)}</td>
+                            <td className="px-3 py-1.5 text-slate-500 text-xs">{item.language || '-'}</td>
+                            <td className="px-3 py-1.5 text-slate-500 text-xs">{item.checkedOutBy || '-'}</td>
                           </tr>
                         ))
                       )}
@@ -427,32 +369,33 @@ export function SCMPackageDialog({ isOpen, onClose }: SCMPackageDialogProps) {
                 </div>
               </div>
 
-              {/* Selected count */}
+              {/* Selection controls */}
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-500">
-                  Selected: {items.filter(i => i.selected).length} of {items.length} items
+                  {t('scm.export.selected', { count: selectedCount, total: items.length })}
+                  {filteredItems.length !== items.length ? t('scm.export.filtered', { count: filteredItems.length }) : ''}
                 </span>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => selectAll(true)}
+                    onClick={() => selectAllVisible(true)}
                     className="px-3 py-1 text-sm bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500 rounded"
                   >
-                    Select All
+                    {t('common.selectAll')}
                   </button>
                   <button
-                    onClick={() => selectAll(false)}
+                    onClick={() => selectAllVisible(false)}
                     className="px-3 py-1 text-sm bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500 rounded"
                   >
-                    Deselect All
+                    {t('common.deselectAll')}
                   </button>
                 </div>
               </div>
 
-              {/* Export Button */}
+              {/* Export button */}
               <div className="flex justify-end">
                 <button
                   onClick={handleExport}
-                  disabled={isExporting || items.filter(i => i.selected).length === 0}
+                  disabled={isExporting || selectedCount === 0}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-400 text-white rounded font-medium flex items-center gap-2"
                 >
                   {isExporting ? (
@@ -461,18 +404,15 @@ export function SCMPackageDialog({ isOpen, onClose }: SCMPackageDialogProps) {
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                       </svg>
-                      Exporting...
+                      {t('scm.export.exporting')}
                     </>
                   ) : (
-                    <>📤 Export Package</>
+                    <>📤 {t('scm.export.button')}</>
                   )}
                 </button>
               </div>
 
-              <p className="text-xs text-slate-500">
-                Note: Export will include all selected checked-in items as an SDP package.
-                Select items using the checkboxes and click Export Package to download.
-              </p>
+              <p className="text-xs text-slate-500">{t('scm.export.verified')}</p>
             </div>
           )}
 
@@ -497,18 +437,18 @@ export function SCMPackageDialog({ isOpen, onClose }: SCMPackageDialogProps) {
                       onClick={() => setImportFile(null)}
                       className="px-3 py-1 text-sm bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500 rounded"
                     >
-                      Remove
+                      {t('scm.import.remove')}
                     </button>
                   </div>
                 ) : (
                   <div className="space-y-2">
                     <div className="text-4xl">📁</div>
                     <div className="text-lg font-medium text-slate-700 dark:text-slate-200">
-                      Drag & drop SDP file here
+                      {t('scm.import.drop')}
                     </div>
-                    <div className="text-sm text-slate-500">or</div>
+                    <div className="text-sm text-slate-500">{t('scm.import.or')}</div>
                     <label className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded cursor-pointer inline-block">
-                      Browse Files
+                      {t('scm.import.browse')}
                       <input
                         type="file"
                         accept=".sdp"
@@ -536,10 +476,10 @@ export function SCMPackageDialog({ isOpen, onClose }: SCMPackageDialogProps) {
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                       </svg>
-                      Importing...
+                      {t('scm.import.importing')}
                     </>
                   ) : (
-                    <>📥 Import Package</>
+                    <>📥 {t('scm.import.button')}</>
                   )}
                 </button>
               </div>
@@ -547,17 +487,14 @@ export function SCMPackageDialog({ isOpen, onClose }: SCMPackageDialogProps) {
               {/* Import Log */}
               {importLog && (
                 <div className="bg-slate-100 dark:bg-slate-700/50 rounded-lg p-3">
-                  <div className="text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">Import Log:</div>
+                  <div className="text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">{t('scm.import.log')}:</div>
                   <pre className="text-xs text-slate-600 dark:text-slate-400 whitespace-pre-wrap max-h-[200px] overflow-auto">
                     {importLog}
                   </pre>
                 </div>
               )}
 
-              <p className="text-xs text-slate-500">
-                Import will deploy the SDP package to the current STARLIMS server.
-                Make sure to backup your data before importing.
-              </p>
+              <p className="text-xs text-slate-500">{t('scm.import.note')}</p>
             </div>
           )}
         </div>

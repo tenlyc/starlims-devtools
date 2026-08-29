@@ -1,0 +1,176 @@
+/********************************************************************************
+Description.. :	Recover an old item version into the current version
+				(mirrors the official Source Control Manager
+				scRecoverOldVersion server script, restricted to the
+				LIMSSOURCECONTROL table).
+Parameters... :	- URI : enterprise item URI
+				- VERSIONID : version GUID to restore from
+				- Reason (optional) : reason given for the recovery
+Returns...... :	- { success, data: message }
+Author....... :	STARLIMS DevTools
+Date......... : 2026-08-29
+********************************************************************************/;
+:DECLARE oResponse, sURI, sVersionIDToRestore, sReason, oUtils, oEnterpriseItem,
+		 sItemName, sItemType, sItemID, sGuidName, sHistType, sSQL, aSel, bSuccess,
+		 sNewVersionID, sLastVersionID, sReasonForRecovery, sMsg;
+oResponse := CreateUDObject({
+	{"success", .T.},
+	{"data", NIL}
+});
+
+:IF !Request:QueryString:IsProperty("URI") .OR. Empty(Request:QueryString:URI);
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := "Missing required parameter: URI";
+	:RETURN oResponse;
+:ENDIF;
+:IF !Request:QueryString:IsProperty("VERSIONID") .OR. Empty(Request:QueryString:VERSIONID);
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := "Missing required parameter: VERSIONID";
+	:RETURN oResponse;
+:ENDIF;
+sURI := Request:QueryString:URI;
+sVersionIDToRestore := Request:QueryString:VERSIONID;
+sReason := "";
+:IF Request:QueryString:IsProperty("Reason");
+	sReason := Request:QueryString:Reason;
+:ENDIF;
+
+:TRY;
+	oUtils := CreateUDObject("SCM_API.Utils", {});
+	oEnterpriseItem := oUtils:ParseURI(sURI);
+	sItemName := BuildArray(oEnterpriseItem:Name,, ".")[1];
+	sItemType := oEnterpriseItem:Type;
+
+	/* Map SCM_API item types to the history types used by the official SCM */;
+	:BEGINCASE;
+		:CASE sItemType == "HTMLFORMXML" .OR. sItemType == "HTMLFORMCODE" .OR. sItemType == "HTMLFORMGUIDE" .OR. sItemType == "HTMLFORMRESOURCES"
+			.OR. sItemType == "XFDFORMXML" .OR. sItemType == "XFDFORMCODE" .OR. sItemType == "XFDFORMRESOURCES";
+			sHistType := "APP_FRM";
+		:EXITCASE;
+		:CASE sItemType == "CS" .OR. sItemType == "APPCS";
+			sHistType := "CSC";
+		:EXITCASE;
+		:CASE sItemType == "SS" .OR. sItemType == "APPSS";
+			sHistType := "APP_SSC";
+		:EXITCASE;
+		:CASE sItemType == "DS" .OR. sItemType == "APPDS";
+			sHistType := "APP_DS";
+		:EXITCASE;
+		:OTHERWISE;
+			Response:StatusCode := 400;
+			oResponse:success := .F.;
+			oResponse:data := "Unsupported item type for recovery: " + sItemType;
+			:RETURN oResponse;
+	:ENDCASE;
+
+	/* Resolve the item GUID */;
+	:BEGINCASE;
+		:CASE sItemType == "SS" .OR. sItemType == "CS" .OR. sItemType == "DS";
+			sGuidName := oEnterpriseItem:CategoryName + "." + sItemName;
+		:EXITCASE;
+		:OTHERWISE;
+			sGuidName := oEnterpriseItem:AppName + "." + sItemName;
+	:ENDCASE;
+	sItemID := oUtils:GetItemGUID(sGuidName, sItemType);
+
+	:IF Empty(sItemID);
+		oResponse:success := .F.;
+		oResponse:data := "Item not found: " + sURI;
+		:RETURN oResponse;
+	:ENDIF;
+
+	/* Verify the version exists in LIMSSOURCECONTROL */;
+	sSQL := "select count(1) from LIMSSOURCECONTROL where VERSIONID = '" + sVersionIDToRestore + "' and DONE = 1";
+	aSel := SQLExecute(sSQL, "DICTIONARY");
+	:IF Empty(aSel) .OR. aSel[1,1] == 0;
+		Response:StatusCode := 404;
+		oResponse:success := .F.;
+		oResponse:data := "Version not found: " + sVersionIDToRestore;
+		:RETURN oResponse;
+	:ENDIF;
+
+	/* Get the current version ID for the item */;
+	:BEGINCASE;
+		:CASE sHistType == "APP_FRM";
+			sSQL := "select VERSIONID from LIMSXFDFORMS where FORMID = '" + sItemID + "'";
+		:EXITCASE;
+		:CASE sHistType == "APP_SSC";
+			sSQL := "select VERSIONID from LIMSSERVERSCRIPTS where SCRIPTID = '" + sItemID + "'";
+		:EXITCASE;
+		:CASE sHistType == "APP_DS";
+			sSQL := "select VERSIONID from LIMSDATASOURCES where DATASOURCEID = '" + sItemID + "'";
+		:EXITCASE;
+		:CASE sHistType == "CSC";
+			sSQL := "select VERSIONID from LIMSCLIENTSCRIPTS where SCRIPTID = '" + sItemID + "'";
+		:EXITCASE;
+	:ENDCASE;
+	aSel := SQLExecute(sSQL, "DICTIONARY");
+	:IF Empty(aSel);
+		Response:StatusCode := 404;
+		oResponse:success := .F.;
+		oResponse:data := "Item not found in version tables: " + sURI;
+		:RETURN oResponse;
+	:ENDIF;
+	sLastVersionID := aSel[1,1];
+
+	/* Create a new version by copying the version number row */;
+	sNewVersionID := CreateGUID();
+	sSQL := "insert into LIMSVERSIONS (VERSIONID, MAJOR, MINOR, BUILD, DMAJOR, DMINOR, DBUILD, CMAJOR, CMINOR, CBUILD, CREATEDBY, CREATEDDATE, MODIFIEDBY, MODIFIEDDATE) " +
+			"(select ?, MAJOR, MINOR, BUILD, DMAJOR, DMINOR, DBUILD, CMAJOR, CMINOR, CBUILD, ?, NOW(), ?, NOW() " +
+			" from LIMSVERSIONS where VERSIONID = ?)";
+	bSuccess := RunSQL(sSQL, "DICTIONARY", {sNewVersionID, MYUSERNAME, MYUSERNAME, sLastVersionID});
+
+	/* Create the new LIMSSOURCECONTROL entry pointing at the restored documents */;
+	sReasonForRecovery := "(RECOVERY from version " + sVersionIDToRestore + ") " + sReason;
+	sSQL := "insert into LIMSSOURCECONTROL (ITEMID, PARENTITEMID, VERSIONID, DONE, XFDDOCUMENT, CODEDOCUMENT, RESOURCEDOCUMENT, ITEMTYPE, FORMWIDTH, FORMHEIGHT, LANGID, " +
+			"CHECKEDOUTBY, CHECKEDOUTDATE, CHECKEDINBY, CHECKEDINDATE, REASONFORCHECKOUT, APPROVEDBY) " +
+			"(select ITEMID, PARENTITEMID, ?, DONE, XFDDOCUMENT, CODEDOCUMENT, RESOURCEDOCUMENT, ITEMTYPE, FORMWIDTH, FORMHEIGHT, LANGID, " +
+			"?, ?, ?, ?, ?, ? " +
+			" from LIMSSOURCECONTROL LSC where VERSIONID = ?)";
+	bSuccess := RunSQL(sSQL, "DICTIONARY", {sNewVersionID, MYUSERNAME, NOW(), MYUSERNAME, NOW(), sReasonForRecovery, MYUSERNAME, sVersionIDToRestore});
+
+	/* Read the restored documents to update the live tables */;
+	sSQL := "select XFDDOCUMENT, FORMWIDTH, FORMHEIGHT, CODEDOCUMENT, RESOURCEDOCUMENT " +
+			"from LIMSSOURCECONTROL " +
+			"where ITEMID = '" + sItemID + "' " +
+			"and VERSIONID = '" + sNewVersionID + "'";
+	aSel := SQLExecute(sSQL, "DICTIONARY");
+
+	/* Update the current version of the item */;
+	:BEGINCASE;
+		:CASE sHistType == "APP_FRM";
+			sSQL := "update LIMSXFDFORMS set VERSIONID = ? where FORMID = ?";
+			bSuccess := RunSQL(sSQL, "DICTIONARY", {sNewVersionID, sItemID});
+			sSQL := "update LIMSXFDFORMDOCUMENTS set DOCUMENT = ?, FORMWIDTH = ?, FORMHEIGHT = ? where FORMID = ?";
+			bSuccess := RunSQL(sSQL, "DICTIONARY", {aSel[1,1], aSel[1,2], aSel[1,3], sItemID});
+			sSQL := "update LIMSXFDFORMCODEBEHIND set SCRIPT = ? where FORMID = ?";
+			bSuccess := RunSQL(sSQL, "DICTIONARY", {aSel[1,4], sItemID});
+			sSQL := "update LIMSXFDRESOURCES set XFDRESOURCE = ? where FORMID = ?";
+			bSuccess := RunSQL(sSQL, "DICTIONARY", {aSel[1,5], sItemID});
+		:EXITCASE;
+		:CASE sHistType == "APP_SSC";
+			sSQL := "update LIMSSERVERSCRIPTS set VERSIONID = ?, SCRIPT = ? where SCRIPTID = ?";
+			bSuccess := RunSQL(sSQL, "DICTIONARY", {sNewVersionID, aSel[1,4], sItemID});
+		:EXITCASE;
+		:CASE sHistType == "APP_DS";
+			sSQL := "update LIMSDATASOURCES set VERSIONID = ?, SCRIPT = ? where DATASOURCEID = ?";
+			bSuccess := RunSQL(sSQL, "DICTIONARY", {sNewVersionID, aSel[1,4], sItemID});
+		:EXITCASE;
+		:CASE sHistType == "CSC";
+			sSQL := "update LIMSCLIENTSCRIPTS set VERSIONID = ?, SCRIPT = ? where SCRIPTID = ?";
+			bSuccess := RunSQL(sSQL, "DICTIONARY", {sNewVersionID, aSel[1,4], sItemID});
+		:EXITCASE;
+	:ENDCASE;
+
+	Response:StatusCode := 200;
+	oResponse:success := .T.;
+	oResponse:data := "Version " + sVersionIDToRestore + " recovered as new version " + sNewVersionID;
+	:RETURN oResponse;
+:CATCH;
+	Response:StatusCode := 500;
+	oResponse:success := .F.;
+	oResponse:data := "RecoverVersion error: " + ErrorMessage();
+	:RETURN oResponse;
+:ENDTRY;

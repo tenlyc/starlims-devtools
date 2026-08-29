@@ -11,5 +11,6 @@ assert.equal(resolveEditorLanguage('HTMLFORMRESOURCES'), 'xml');
 assert.equal(resolveEditorLanguage('DataSourceScript', 'STARLIMS'), 'ssl');
 assert.equal(resolveEditorLanguage('APPDS', 'SQL'), 'slsql');
 assert.equal(resolveEditorLanguage('TABLE'), 'xml');
+assert.equal(resolveEditorLanguage('SERVERLOG'), 'starlimslog');
 
 console.log('Editor language mapping smoke test passed.');

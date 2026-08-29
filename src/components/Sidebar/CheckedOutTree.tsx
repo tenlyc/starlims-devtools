@@ -4,6 +4,7 @@ import { editorStore } from '../../stores/editorStore';
 import { registerCheckedOutRefresh } from '../../services/checkedOutStore';
 import { ContextMenu } from '../ContextMenu';
 import { useAiContextStore } from '../../services/aiContextStore';
+import { useI18n } from '../../i18n';
 
 export interface CheckedOutItem {
   id: string;
@@ -15,6 +16,89 @@ export interface CheckedOutItem {
   path?: string;
   language?: string;
   rawType?: string;
+  guid?: string;
+}
+
+interface CheckedOutTreeNode {
+  id: string;
+  label: string;
+  children: CheckedOutTreeNode[];
+  item?: CheckedOutItem;
+}
+
+const FORM_PART_ORDER: Record<string, number> = {
+  HTMLFORMXML: 0,
+  XFDFORMXML: 0,
+  HTMLFORMCODE: 1,
+  XFDFORMCODE: 1,
+  HTMLFORMGUIDE: 2,
+  HTMLFORMRESOURCES: 3,
+  XFDFORMRESOURCES: 3
+};
+
+const LOCALIZED_FORM_PART_TYPES = new Set([
+  'HTMLFORMXML',
+  'HTMLFORMGUIDE',
+  'HTMLFORMRESOURCES',
+  'XFDFORMXML',
+  'XFDFORMRESOURCES'
+]);
+
+export function getCheckedOutDisplayLanguage(item: CheckedOutItem): string | undefined {
+  if (!LOCALIZED_FORM_PART_TYPES.has(item.type.toUpperCase())) return undefined;
+  const language = item.language?.trim();
+  return language ? language.toUpperCase() : undefined;
+}
+
+function formBaseName(label: string): string {
+  return label.replace(/\s*\[(?:XML|Code Behind|Guide|Resources)\]\s*$/i, '');
+}
+
+export function buildCheckedOutTree(items: CheckedOutItem[]): CheckedOutTreeNode[] {
+  const roots: CheckedOutTreeNode[] = [];
+
+  for (const item of items) {
+    const folders = (item.path || 'Other').split('/').map((part) => part.trim()).filter(Boolean);
+    let level = roots;
+    let parentId = '';
+
+    for (const folder of folders) {
+      parentId = `${parentId}/${folder}`;
+      let node = level.find((candidate) => candidate.id === parentId);
+      if (!node) {
+        node = { id: parentId, label: folder, children: [] };
+        level.push(node);
+      }
+      level = node.children;
+    }
+
+    level.push({
+      id: `item:${item.id}`,
+      label: item.name,
+      children: [],
+      item
+    });
+  }
+
+  const sortNodes = (nodes: CheckedOutTreeNode[]) => {
+    nodes.sort((left, right) => {
+      if (!!left.item !== !!right.item) return left.item ? 1 : -1;
+      if (left.item && right.item) {
+        const baseOrder = formBaseName(left.label).localeCompare(formBaseName(right.label), undefined, { sensitivity: 'base' });
+        if (baseOrder !== 0) return baseOrder;
+        const partOrder = (FORM_PART_ORDER[left.item.type.toUpperCase()] ?? 99) - (FORM_PART_ORDER[right.item.type.toUpperCase()] ?? 99);
+        if (partOrder !== 0) return partOrder;
+      }
+      return left.label.localeCompare(right.label, undefined, { sensitivity: 'base' });
+    });
+    nodes.forEach((node) => sortNodes(node.children));
+  };
+  sortNodes(roots);
+  return roots;
+}
+
+function collectFolderIds(nodes: CheckedOutTreeNode[]): string[] {
+  return nodes.flatMap((node) => node.item ? [] : [node.id, ...collectFolderIds(node.children)]);
 }
 
 // Format date to readable format
@@ -36,10 +120,12 @@ function formatDate(dateStr: string): string {
 }
 
 export function CheckedOutTree() {
+  const { t } = useI18n();
   const [items, setItems] = useState<CheckedOutItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<CheckedOutItem | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ item: CheckedOutItem; x: number; y: number } | null>(null);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const addAiContext = useAiContextStore((state) => state.addItem);
 
   // Load checked out items
@@ -54,7 +140,7 @@ export function CheckedOutTree() {
       const enterpriseService = getEnterpriseService();
       const checkedOutItems = await enterpriseService.getCheckedOutItems();
 
-      const items: CheckedOutItem[] = checkedOutItems.map((item: any) => ({
+      const mappedItems: CheckedOutItem[] = checkedOutItems.map((item: any) => ({
         id: item.uri || item.id,
         name: item.name,
         type: item.type || 'DEFAULT',
@@ -63,11 +149,13 @@ export function CheckedOutTree() {
         uri: item.uri,
         path: item.displayPath,
         language: item.language,
-        rawType: item.rawType
+        rawType: item.rawType,
+        guid: item.guid
       }));
 
-      setItems(items);
-      console.log('Loaded checked out items:', items.length);
+      setItems(mappedItems);
+      setExpandedFolders(new Set(collectFolderIds(buildCheckedOutTree(mappedItems))));
+      console.log('Loaded checked out items:', mappedItems.length);
     } catch (err) {
       console.error('Failed to load checked out items:', err);
     } finally {
@@ -112,7 +200,7 @@ export function CheckedOutTree() {
         return;
       }
 
-      const code = await enterpriseService.getItemCode(uri);
+      const code = await enterpriseService.getItemCode(uri, item.language);
       if (code) {
         editorStore.getState().openFile({
           uri,
@@ -192,8 +280,11 @@ export function CheckedOutTree() {
     'DS': '🗃️',
     'HTMLFORMXML': '🌐',
     'HTMLFORMCODE': '📄',
+    'HTMLFORMGUIDE': '{}',
+    'HTMLFORMRESOURCES': 'XML',
     'XFDFORMXML': '📝',
     'XFDFORMCODE': '📄',
+    'XFDFORMRESOURCES': 'XML',
     'TABLE': '📊',
     'AppServerScript': 'S',
     'ServerScript': 'S',
@@ -205,50 +296,112 @@ export function CheckedOutTree() {
     'DEFAULT': '•'
   };
 
+  const treeNodes = buildCheckedOutTree(items);
+
+  const renderTreeNode = (node: CheckedOutTreeNode, level: number): JSX.Element => {
+    const isFolder = !node.item;
+    const isExpanded = expandedFolders.has(node.id);
+    const item = node.item;
+    const displayLanguage = item ? getCheckedOutDisplayLanguage(item) : undefined;
+    const checkoutLabel = item
+      ? t(displayLanguage ? 'checkout.byWithLanguage' : 'checkout.by', {
+          user: item.user,
+          language: displayLanguage || ''
+        })
+      : '';
+
+    return (
+      <div key={node.id}>
+        <div
+          className={`min-h-[24px] flex items-center py-0.5 pr-2 cursor-pointer hover:bg-slate-200 dark:hover:bg-[#2a2d2e] ${
+            item && selectedItem?.id === item.id ? 'bg-slate-200 dark:bg-[#37373d]' : ''
+          }`}
+          style={{ paddingLeft: `${level * 14 + 6}px` }}
+          onClick={() => {
+            if (isFolder) {
+              setExpandedFolders((current) => {
+                const next = new Set(current);
+                if (next.has(node.id)) next.delete(node.id);
+                else next.add(node.id);
+                return next;
+              });
+            } else if (item) {
+              setSelectedItem(item);
+            }
+          }}
+          onDoubleClick={() => item && handleOpenFile(item)}
+          onContextMenu={(event) => {
+            if (!item) return;
+            event.preventDefault();
+            setContextMenu({ item, x: event.clientX, y: event.clientY });
+          }}
+          title={item ? `${item.name}\n${item.uri || ''}\n${t('checkout.byOn', { user: item.user, date: formatDate(item.date) })}${displayLanguage ? `\n${t('checkout.language', { language: displayLanguage })}` : ''}` : node.label}
+        >
+          <span className={`w-4 mr-1 text-[10px] text-slate-500 ${isFolder ? '' : 'text-transparent'}`}>
+            {isFolder ? (isExpanded ? '▼' : '▶') : '•'}
+          </span>
+          <span className={`mr-1.5 min-w-[22px] text-[10px] font-semibold ${isFolder ? 'text-amber-500' : 'text-slate-500 dark:text-[#c5c5c5]'}`}>
+            {isFolder ? '▱' : (itemTypeIcons[item?.type || 'DEFAULT'] || itemTypeIcons.DEFAULT)}
+          </span>
+          <span className={`truncate text-[12px] ${isFolder ? 'font-medium text-slate-700 dark:text-[#cccccc]' : 'text-green-700 dark:text-[#73c991]'}`}>
+            {node.label}{item ? ` ${checkoutLabel}` : ''}
+          </span>
+        </div>
+        {isFolder && isExpanded && node.children.map((child) => renderTreeNode(child, level + 1))}
+      </div>
+    );
+  };
+
   return (
     <div className="p-2">
       {/* Header */}
       <div className="flex items-center justify-between mb-2 px-2 min-h-[28px]">
-        <span className="text-[11px] font-semibold text-slate-500 dark:text-[#bbbbbb] uppercase tracking-wide truncate">Checked Out <span className="text-slate-400 dark:text-[#777]">{items.length}</span></span>
+        <span className="text-[11px] font-semibold text-slate-500 dark:text-[#bbbbbb] uppercase tracking-wide truncate">{t('checkout.title')} <span className="text-slate-400 dark:text-[#777]">{items.length}</span></span>
         <div className="flex items-center gap-1 flex-shrink-0">
           {items.length > 0 && (
             <>
               <button
                 className="px-1.5 py-0.5 text-xs hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-white"
-                title="Check In All"
+                title={t('checkout.checkInAll')}
                 onClick={async () => {
-                  if (!confirm(`Check in all ${items.length} items?`)) return;
+                  if (!confirm(t('checkout.checkInAllConfirm', { count: items.length }))) return;
                   const enterpriseService = getEnterpriseService();
                   const success = await enterpriseService.checkInAll();
                   if (success) {
                     loadCheckedOutItems();
                   } else {
-                    alert('Failed to check in all items');
+                    alert(t('checkout.checkInAllFailed'));
                   }
                 }}
               >
-                Check In All
+                {t('checkout.checkInAll')}
               </button>
               <button
                 className="px-1.5 py-0.5 text-xs hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-yellow-600 dark:text-yellow-400 hover:text-yellow-700 dark:hover:text-white"
-                title="Export All"
+                title={t('checkout.exportAll')}
                 onClick={async () => {
                   const enterpriseService = getEnterpriseService();
-                  const success = await enterpriseService.exportCheckouts();
-                  if (success) {
-                    alert('Export successful');
-                  } else {
-                    alert('Export failed');
-                  }
+                  const ids = [...new Set(items.map(item => item.guid).filter((value): value is string => !!value))];
+                  const result = await enterpriseService.exportPackage(ids);
+                  if (result.success && result.blob && result.fileName) {
+                    const url = URL.createObjectURL(result.blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = result.fileName;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(url);
+                  } else alert(result.error || t('checkout.exportFailed'));
                 }}
               >
-                Export
+                {t('checkout.export')}
               </button>
             </>
           )}
           <button
-            className="p-1 hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
-            title="Refresh"
+            className="icon-button"
+            title={t('common.refresh')}
             onClick={loadCheckedOutItems}
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -266,39 +419,15 @@ export function CheckedOutTree() {
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
-            Loading...
+            {t('common.loading')}
           </div>
         ) : items.length === 0 ? (
           <div className="text-center py-8 text-slate-400 dark:text-slate-500">
-            No checked out items
+            {t('checkout.empty')}
           </div>
         ) : (
-          <div className="space-y-px relative">
-            {items.map(item => (
-              <div
-                key={item.id}
-                className={`px-2 py-1.5 cursor-pointer hover:bg-slate-200 dark:hover:bg-[#2a2d2e] group border-l-2 ${
-                  selectedItem?.id === item.id ? 'bg-slate-200 dark:bg-[#37373d] border-[#4daafc]' : 'border-transparent'
-                }`}
-                onClick={() => setSelectedItem(item)}
-                onDoubleClick={() => handleOpenFile(item)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setContextMenu({ item, x: e.clientX, y: e.clientY });
-                }}
-              >
-                <div className="flex items-start gap-2 min-w-0">
-                  <span className="mt-0.5 min-w-[27px] h-[18px] px-1 rounded-sm flex items-center justify-center bg-slate-300 dark:bg-[#333] text-[9px] font-bold text-slate-600 dark:text-[#c5c5c5]">
-                    {itemTypeIcons[item.type] || itemTypeIcons.DEFAULT}
-                  </span>
-                  <div className="flex-1 min-w-0" title={`${item.name}\n${item.path || item.uri || ''}\nChecked out by ${item.user} on ${formatDate(item.date)}`}>
-                    <div className="truncate text-[12px] text-slate-700 dark:text-[#d4d4d4]">{item.name}</div>
-                    <div className="truncate text-[10px] text-slate-400 dark:text-[#858585]">{item.path || item.rawType || item.type}{item.language ? ` · ${item.language}` : ''}</div>
-                  </div>
-                  <span className="text-[9px] text-slate-400 dark:text-[#6f9e6f] flex-shrink-0">{item.user}</span>
-                </div>
-              </div>
-            ))}
+          <div className="relative">
+            {treeNodes.map((node) => renderTreeNode(node, 0))}
           </div>
         )}
       </div>

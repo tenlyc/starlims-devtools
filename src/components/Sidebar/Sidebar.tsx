@@ -3,14 +3,14 @@ import { CheckedOutTree } from './CheckedOutTree';
 
 export function Sidebar() {
   return (
-    <div className="h-full flex flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {/* Enterprise Tree - Top Half */}
-      <div className="flex-1 overflow-auto border-b border-slate-300 dark:border-[#2b2b2b]">
+      <div className="min-h-0 flex-1 overflow-auto border-b border-[#d4d4d4] dark:border-[#2b2b2b]">
         <EnterpriseTree />
       </div>
 
       {/* Checked Out Tree - Bottom Half */}
-      <div className="flex-1 overflow-auto">
+      <div className="min-h-0 flex-1 overflow-auto">
         <CheckedOutTree />
       </div>
     </div>

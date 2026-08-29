@@ -1,0 +1,1248 @@
+/******************************************************************************
+Description.. :	Export all checked out items to an SDP package file
+Author....... :	DC
+Date......... : 2024-10-20
+******************************************************************************;
+:PARAMETERS sSelectedItems, bHistoryMode, sSelectedLanguages;
+:DECLARE oResponse, aResult, ds, aRows, aSelectedIds, sPackageId, sPackageName, sExportLog, i, j,
+	aHistoryTokens, aTokenParts, sHistoryIdList, sHistorySQL, aSelectedLanguages, bHasForms;
+
+sSelectedItems := AllTrim(LimsString(sSelectedItems));
+bHistoryMode := bHistoryMode == .T.;
+sSelectedLanguages := AllTrim(LimsString(sSelectedLanguages));
+
+oResponse := CreateUDObject({
+	{"success", .T.},
+	{"data", NIL}
+});
+
+:TRY;
+	:DECLARE sItemID, sItemType, sItemContent, sPackageDate, packageDTO, manifestContent, aPackageLangs, sLangId, sDefaultLangId;
+	sPackageDate := SubStr(DToS(Today()), 1, 4) + "-" + SubStr(DToS(Today()), 5, 2) + "-" + SubStr(DToS(Today()), 7, 2) + "T" + Time();
+
+	/* Normal export uses pending check-ins. History export creates the same row
+	   shape from the live items selected by the check-in-history query. */;
+	:IF bHistoryMode;
+		aHistoryTokens := BuildArray(sSelectedItems, , ",");
+		sHistoryIdList := "";
+		:FOR i := 1 :TO Len(aHistoryTokens);
+			aTokenParts := BuildArray(aHistoryTokens[i], , ":");
+			:IF Len(aTokenParts) >= 2;
+				/* IDs are quoted defensively, and the type prefix is informational. */;
+				aTokenParts[2] := StrTran(aTokenParts[2], "'", "");
+				sHistoryIdList += IIf(Empty(sHistoryIdList), "", ",") + "'" + aTokenParts[2] + "'";
+			:ENDIF;
+		:NEXT;
+
+		:IF Empty(sHistoryIdList);
+			oResponse:success := .F.;
+			oResponse:data := "No check-in-history items were selected.";
+			:RETURN oResponse;
+		:ENDIF;
+
+		sHistorySQL := "select * from (" +
+			"select 'APP' PARENTTYPE, F.APPID PARENTID, A.DISPLAYTEXT PARENTNAME, 'FORM' CHILDTYPE, F.FORMID CHILDID, F.FORMTYPE SCRIPTLANGUAGE, '' LANGID from LIMSXFDFORMS F join LIMSAPPLICATIONS A on A.APPID=F.APPID " +
+			"union select 'APP', A.APPID, A.DISPLAYTEXT, 'APPSERVERSCRIPT', S.SCRIPTID, S.SCRIPTLANGUAGE, '' from LIMSSERVERSCRIPTS S join LIMSSERVERSCRIPTCATEGORIES AC on AC.CATEGORYID=S.CATEGORYID join LIMSAPPLICATIONS A on A.APPNAME=AC.CATNAME and AC.ISSYSTEM='A' " +
+			"union select 'APP', A.APPID, A.DISPLAYTEXT, 'APPCLIENTSCRIPT', S.SCRIPTID, S.SCRIPTLANGUAGE, '' from LIMSCLIENTSCRIPTS S join LIMSCLIENTSCRIPTCATEGORIES AC on AC.CATEGORYID=S.CATEGORYID join LIMSAPPLICATIONS A on A.APPNAME=AC.CATNAME and AC.ISSYSTEM='A' " +
+			"union select 'APP', A.APPID, A.DISPLAYTEXT, 'APPDATASOURCE', D.DATASOURCEID, D.SCRIPTLANGUAGE, '' from LIMSDATASOURCES D join LIMSDATASOURCECATEGORIES AC on AC.CATEGORYID=D.CATEGORYID join LIMSAPPLICATIONS A on A.APPNAME=AC.CATNAME and AC.ISSYSTEM='A' " +
+			"union select 'SSC', S.CATEGORYID, C.DISPLAYTEXT, 'SERVERSCRIPT', S.SCRIPTID, S.SCRIPTLANGUAGE, '' from LIMSSERVERSCRIPTS S join LIMSSERVERSCRIPTCATEGORIES C on C.CATEGORYID=S.CATEGORYID where C.ISSYSTEM <> 'A' " +
+			"union select 'CSC', S.CATEGORYID, C.DISPLAYTEXT, 'CLIENTSCRIPT', S.SCRIPTID, S.SCRIPTLANGUAGE, '' from LIMSCLIENTSCRIPTS S join LIMSCLIENTSCRIPTCATEGORIES C on C.CATEGORYID=S.CATEGORYID where C.ISSYSTEM <> 'A' " +
+			"union select 'DSC', D.CATEGORYID, C.DISPLAYTEXT, 'DATASOURCE', D.DATASOURCEID, D.SCRIPTLANGUAGE, '' from LIMSDATASOURCES D join LIMSDATASOURCECATEGORIES C on C.CATEGORYID=D.CATEGORYID where C.ISSYSTEM <> 'A' " +
+			"union select 'TBL', '', case when T.ISSYSTEM='Y' then 'DICTIONARY' else 'DATABASE' end, 'TABLE', T.TABLEID, '', '' from LIMSTABLES T" +
+			") H where H.CHILDID in (" + sHistoryIdList + ")";
+		ds := GetNetDataSet(sHistorySQL, "Dictionary", {}, , .F.);
+	:ELSE;
+		aResult := DoProc("Enterprise_Data_Providers.CheckInProvider.GetPendingCheckins", {.F.});
+		ds := DoProc("Enterprise_Data_Providers.Utils.ConvertXMLStringToDataset", {aResult});
+	:ENDIF;
+
+	/* Normalize rows into an array and, when requested by DevTools, keep only
+	   the selected CHILDIDs.  A form has four editor documents but one FORMID,
+	   so filtering by CHILDID also guarantees that an SDP contains the complete
+	   form exactly once (XML, code behind, guide and resources are packaged by
+	   SaveApplicationForm).;
+	aRows := {};
+	aSelectedIds := {};
+	:IF !Empty(sSelectedItems);
+		aSelectedIds := BuildArray(sSelectedItems, , ",");
+	:ENDIF;
+
+	:FOR i:=0 :TO ds:Tables[0]:Rows:Count - 1;
+		:DECLARE pendingRow;
+		pendingRow := ds:Tables[0]:Rows[i];
+		:IF bHistoryMode .OR. Len(aSelectedIds) == 0 .OR. AScanExact(aSelectedIds, LimsString(pendingRow["CHILDID"])) > 0;
+			AAdd(aRows, pendingRow);
+		:ENDIF;
+	:NEXT;
+
+	:IF Len(aRows) == 0;
+		oResponse:success := .F.;
+		oResponse:data := IIf(bHistoryMode, "No matching live items were found for the selected check-in history.", "No selected checked-out items were found. Check out the items before exporting.");
+		:RETURN oResponse;
+	:ENDIF;
+
+	/* Create package ID and name;
+	sPackageId := CreateGuid();
+	sPackageName := IIf(bHistoryMode, "CheckInHistory_", "CheckedOutItems_") + sPackageId;
+	usrmes("sPackageName", sPackageName);
+
+	/* Get the ImpExp path from settings;
+	:IF !DosSupport("ISDIR", GlbImpExpPath + sPackageId);
+		:IF !DosSupport("MD", GlbImpExpPath + sPackageId);
+			oResponse:success := .F.;
+			oResponse:data := "Cannot create package directory";
+			usrmes("Cannot create package directory");
+			:RETURN oResponse;
+		:ENDIF;
+	:ENDIF;
+
+	/* Use the languages explicitly selected in DevTools. The UI obtains these
+	   values from SCM_API.GetLanguages, so only known language ids are sent.;
+	aPackageLangs := {};
+	:IF !Empty(sSelectedLanguages);
+		aSelectedLanguages := BuildArray(sSelectedLanguages, , ",");
+		:FOR i:=1 :TO Len(aSelectedLanguages);
+			sLangId := Upper(AllTrim(LimsString(aSelectedLanguages[i])));
+			sLangId := StrTran(sLangId, "'", "");
+			:IF !Empty(sLangId) .AND. AScanExact(aPackageLangs, sLangId) == 0;
+				AAdd(aPackageLangs, sLangId);
+			:ENDIF;
+		:NEXT;
+	:ENDIF;
+
+	/* Older clients do not send a language list. Preserve their behaviour by
+	   deriving a form language from the checkout row/source-control record.;
+	:IF Len(aPackageLangs) == 0;
+		:FOR i:=1 :TO Len(aRows);
+			:DECLARE langRow;
+			langRow := aRows[i];
+			:IF AScanExact({"FORM", "Form", "HTMLFORMXML", "HTMLFORMCODE", "XFDFORMXML", "XFDFORMCODE"}, langRow["CHILDTYPE"]) > 0;
+				sLangId := langRow["LANGID"];
+				:IF Empty(sLangId);
+					sLangId := LSearch("select LANGID from LIMSSOURCECONTROL where ITEMID = ? and DONE = 0", "", "DICTIONARY", {langRow["CHILDID"]});
+				:ENDIF;
+				:IF !Empty(sLangId) .AND. AScanExact(aPackageLangs, sLangId) == 0;
+					AAdd(aPackageLangs, sLangId);
+				:ENDIF;
+			:ENDIF;
+		:NEXT;
+	:ENDIF;
+
+	/* Fall back to the server default language when no form language could be collected.;
+	:IF Len(aPackageLangs) == 0;
+		sDefaultLangId := GetSetting("DEFAULTLANGUAGE");
+		:IF Empty(sDefaultLangId);
+			sDefaultLangId := "ENG";
+		:ENDIF;
+		AAdd(aPackageLangs, sDefaultLangId);
+	:ENDIF;
+
+	packageDTO := DoProc("_CreatePackageDTO", {sPackageId, sPackageName, sPackageDate, aPackageLangs});
+
+	/* Export each checked out item and add it to the package manifest DTO;
+	bHasForms := .F.;
+	:FOR i:=1 :TO Len(aRows);
+		:DECLARE row;
+		row := aRows[i];
+		sItemID := row["CHILDID"];
+		sItemType := row["CHILDTYPE"];
+		sItemContent := "";
+
+		:BEGINCASE;
+			:CASE sItemType == "FORM" .OR. sItemType == "Form" .OR. sItemType == "HTMLFORMXML" .OR. sItemType == "HTMLFORMCODE" .OR. sItemType == "XFDFORMXML" .OR. sItemType == "XFDFORMCODE";
+				usrmes("Exporting FORM", sItemID);
+				bHasForms := .T.;
+				:FOR j:=1 :TO Len(aPackageLangs);
+					sItemContent := DoProc("ENTERPRISE_DATA_PROVIDERS.PACKAGEBUILDERPROVIDER.SaveApplicationForm", {sPackageId, sItemID, aPackageLangs[j]});
+				:NEXT;
+			:EXITCASE;
+
+			:CASE sItemType == "SERVERSCRIPT" .OR. sItemType == "ServerScript" .OR. sItemType == "SS";
+				usrmes("Exporting SERVERSCRIPT", sItemID);
+				sItemContent := DoProc("ENTERPRISE_DATA_PROVIDERS.PACKAGEBUILDERPROVIDER.SaveServerScript", {sPackageId, sItemID});
+			:EXITCASE;
+
+			:CASE sItemType == "APPSERVERSCRIPT" .OR. sItemType == "AppServerScript" .OR. sItemType == "APPSS";
+				usrmes("Exporting APPSERVERSCRIPT", sItemID);
+				sItemContent := DoProc("ENTERPRISE_DATA_PROVIDERS.PACKAGEBUILDERPROVIDER.SaveApplicationServerScript", {sPackageId, sItemID});
+			:EXITCASE;
+
+			:CASE sItemType == "DATASOURCE" .OR. sItemType == "DataSource" .OR. sItemType == "DataSourceScript" .OR. sItemType == "DS";
+				usrmes("Exporting DATASOURCE", sItemID);
+				sItemContent := DoProc("ENTERPRISE_DATA_PROVIDERS.PACKAGEBUILDERPROVIDER.SaveDataSource", {sPackageId, sItemID});
+			:EXITCASE;
+
+			:CASE sItemType == "APPDATASOURCE" .OR. sItemType == "AppDataSource" .OR. sItemType == "AppDataSourceScript" .OR. sItemType == "APPDS";
+				usrmes("Exporting APPDATASOURCE", sItemID);
+				sItemContent := DoProc("ENTERPRISE_DATA_PROVIDERS.PACKAGEBUILDERPROVIDER.SaveApplicationDataSource", {sPackageId, sItemID});
+			:EXITCASE;
+
+			:CASE sItemType == "CLIENTSCRIPT" .OR. sItemType == "ClientScript" .OR. sItemType == "CS";
+				usrmes("Exporting CLIENTSCRIPT", sItemID);
+				sItemContent := DoProc("ENTERPRISE_DATA_PROVIDERS.PACKAGEBUILDERPROVIDER.SaveClientScript", {sPackageId, sItemID});
+			:EXITCASE;
+
+			:CASE sItemType == "APPCLIENTSCRIPT" .OR. sItemType == "AppClientScript" .OR. sItemType == "APPCS";
+				usrmes("Exporting APPCLIENTSCRIPT", sItemID);
+				sItemContent := DoProc("ENTERPRISE_DATA_PROVIDERS.PACKAGEBUILDERPROVIDER.SaveApplicationClientScript", {sPackageId, sItemID});
+			:EXITCASE;
+
+			:CASE sItemType == "TABLE" .OR. sItemType == "Table";
+				usrmes("Exporting TABLE", sItemID);
+				sItemContent := DoProc("ENTERPRISE_DATA_PROVIDERS.PACKAGEBUILDERPROVIDER.SaveTable", {sPackageId, sItemID, .F.});
+			:EXITCASE;
+
+			:OTHERWISE;
+				usrmes("Skipping unsupported checked out item type", sItemType + ":" + sItemID);
+			:EXITCASE;
+		:ENDCASE;
+
+		:IF !Empty(sItemContent);
+			DoProc("_AddExportedItemToPackage", {packageDTO, row, sItemContent});
+		:ENDIF;
+	:NEXT;
+
+	/* The Designer includes the global resource document for every selected
+	   form language. It is the main reason a complete package is much larger
+	   than a form-only archive and is required for translated shared labels.;
+	:IF bHasForms;
+		:FOR j:=1 :TO Len(aPackageLangs);
+			DoProc("ENTERPRISE_DATA_PROVIDERS.PACKAGEBUILDERPROVIDER.SaveGlobalResource", {sPackageId, aPackageLangs[j]});
+		:NEXT;
+	:ENDIF;
+
+	manifestContent := DoProc("_ManifestToXml", {packageDTO});
+	WriteText(GlbImpExpPath + sPackageId + "\manifest.xml", manifestContent);
+	usrmes(manifestContent);
+
+	/* Create the SDP file;
+	DoProc("ENTERPRISE_DATA_PROVIDERS.PACKAGEBUILDERPROVIDER.createsdpbatch", {sPackageId, sPackageName, ""});
+	usrmes(sPackageId);
+
+	:DECLARE sPackageFile, fileUtils, fileContent, convert, oExportData;
+	sPackageFile := GlbImpExpPath + sPackageId + "\" + sPackageName + ".sdp";
+
+	:IF !FileSupport(sPackageFile, "CHECK");
+		oResponse:success := .F.;
+		oResponse:data := "Export finished, but the SDP file could not be found.";
+		:RETURN oResponse;
+	:ENDIF;
+
+	fileUtils := LimsNetConnect("", "System.IO.File");
+	fileContent := fileUtils:ReadAllBytes(sPackageFile);
+	convert := LimsNetConnect("", "System.Convert");
+
+	oExportData := CreateUDObject({
+		{"fileName", sPackageName + ".sdp"},
+		{"content", convert:ToBase64String(fileContent)}
+	});
+
+	oResponse:success := .T.;
+	oResponse:data := oExportData;
+
+:CATCH;
+	:DECLARE sError;
+	sError := GetLastSSLError():FullDescription;
+	oResponse:success := .F.;
+	oResponse:data := "Error exporting Source Control items: " + sError;
+:ENDTRY;
+
+:RETURN oResponse;
+
+:PROCEDURE _CreatePackageDTO;
+:PARAMETERS sPackageId, sPackageName, sPackageDate, aPackageLangs;
+
+	:DECLARE packageDTO, languageDTO, i, sLangName;
+	packageDTO := CreateUDObject("DEI_ManifestDTO.Package");
+	packageDTO:ItemID := sPackageId;
+	packageDTO:ItemName := sPackageName;
+	packageDTO:PackageDate := sPackageDate;
+	packageDTO:PathReadMe := "";
+	packageDTO:PathEULA := "";
+	packageDTO:PathLogo := "";
+	packageDTO:OverwriteLayer := .F.;
+	packageDTO:IsMandatory := .F.;
+	packageDTO:ItemBehaviour := "merge";
+
+	/* Build the language section like the STARLIMS Designer does. Each language
+	   must carry its flag image - a language without a flag crashes the import
+	   engine (ImportManager.importlanguages null reference), so languages whose
+	   flag image cannot be resolved are omitted from the package;
+	:FOR i := 1 :TO Len(aPackageLangs);
+		languageDTO := CreateUDObject("DEI_ManifestDTO.Language");
+		languageDTO:ItemID := aPackageLangs[i];
+		sLangName := LSearch("select LANGUAGE from limsLanguages where LANGID = ?", "", "DICTIONARY", {aPackageLangs[i]});
+		:IF Empty(sLangName);
+			sLangName := aPackageLangs[i];
+		:ENDIF;
+		languageDTO:ItemName := sLangName;
+		languageDTO:ItemDescription := sLangName;
+		languageDTO:IsMandatory := .F.;
+		languageDTO:ItemBehaviour := "merge";
+		languageDTO:ItemFlag := DoProc("_CreateLanguageFlagDTO", {sPackageId, aPackageLangs[i], sLangName});
+		:IF !Empty(languageDTO:ItemFlag);
+			AAdd(packageDTO:Languages, languageDTO);
+		:ENDIF;
+	:NEXT;
+
+	:RETURN packageDTO;
+:ENDPROC;
+
+:PROCEDURE _CreateLanguageFlagDTO;
+:PARAMETERS sPackageId, sLangId, sLangName;
+
+	:DECLARE sImageId, sItemContent, aParts, sImageName, sImageCategory, nLayerId, imageDTO, sCategoryName;
+	sImageId := LSearch("select FLAG from limsLanguages where LANGID = ?", "", "DICTIONARY", {sLangId});
+	:IF Empty(sImageId);
+		:RETURN NIL;
+	:ENDIF;
+
+	/* SaveImage writes the flag image into the package and returns the
+	   package-relative content path ("Images\<category>\<name>.img"),
+	   exactly like the STARLIMS Designer export does;
+	sItemContent := DoProc("ENTERPRISE_DATA_PROVIDERS.PACKAGEBUILDERPROVIDER.SaveImage", {sPackageId, sImageId});
+	usrmes("_CreateLanguageFlagDTO", sLangId + "|" + sImageId + "|" + sItemContent);
+
+	:IF Empty(sItemContent);
+		/* SaveImage may return an empty string even when the image file was
+		   written, so derive the content path from the image tables;
+		sCategoryName := LSearch("select c.DISPLAYTEXT from limsIMAGECATEGORIES c inner join limsIMAGES i on i.CATEGORYID = c.CATEGORYID where i.IMAGEID = ?", "", "DICTIONARY", {sImageId});
+		sItemContent := "Images\" + sCategoryName + "\" + LSearch("select IMAGENAME from limsIMAGES where IMAGEID = ?", "", "DICTIONARY", {sImageId}) + ".img";
+	:ENDIF;
+
+	:IF !FileSupport(GlbImpExpPath + sPackageId + "\" + sItemContent, "CHECK");
+		usrmes("_CreateLanguageFlagDTO: image file missing", sItemContent);
+		:RETURN NIL;
+	:ENDIF;
+
+	/* derive name and category from the content path;
+	aParts := BuildArray(StrTran(sItemContent, "/", "\"), , "\");
+	:IF Len(aParts) < 2;
+		:RETURN NIL;
+	:ENDIF;
+	sImageCategory := aParts[Len(aParts) - 1];
+	sImageName := aParts[Len(aParts)];
+	:IF Right(Upper(sImageName), 4) == ".IMG";
+		sImageName := SubStr(sImageName, 1, Len(sImageName) - 4);
+	:ENDIF;
+
+	nLayerId := LSearch("select ISNULL(LAYERID, 300) from limsIMAGES where IMAGEID = ?", "300", "DICTIONARY", {sImageId});
+	:IF Empty(nLayerId);
+		nLayerId := "300";
+	:ENDIF;
+
+	imageDTO := CreateUDObject("DEI_ManifestDTO.Image");
+	imageDTO:ItemID := sImageId;
+	imageDTO:ItemName := sImageName;
+	imageDTO:LayerId := Val(LimsString(nLayerId));
+	imageDTO:ItemDescription := sImageName + ".img";
+	imageDTO:ItemCategory := sImageCategory;
+	imageDTO:ItemContent := sItemContent;
+	imageDTO:IsMandatory := .F.;
+	imageDTO:ItemBehaviour := "overwrite";
+	imageDTO:ImageType := "";
+	imageDTO:ColorDepth := "";
+	imageDTO:ImageHeight := 0;
+	imageDTO:ImageWidth := 0;
+	imageDTO:Size := 0;
+
+	:RETURN imageDTO;
+:ERROR;
+	/* never emit a flag-less language - it crashes the import engine
+	   (ImportManager.importlanguages null reference), so skip the language;
+	usrmes("_CreateLanguageFlagDTO error", GetLastSSLError():FullDescription);
+	:RETURN NIL;
+:ENDPROC;
+
+:PROCEDURE _AddExportedItemToPackage;
+:PARAMETERS packageDTO, row, sItemContent;
+
+	:DECLARE sItemType, sParentType, sScriptLanguage;
+	sItemType := row["CHILDTYPE"];
+	sParentType := row["PARENTTYPE"];
+	sScriptLanguage := row["SCRIPTLANGUAGE"];
+
+	:IF sParentType == "APP";
+		:IF sItemType == "FORM" .OR. sItemType == "Form" .OR. sItemType == "HTMLFORMXML" .OR. sItemType == "HTMLFORMCODE" .OR. sItemType == "XFDFORMXML" .OR. sItemType == "XFDFORMCODE" .OR. sScriptLanguage == "HTML" .OR. sScriptLanguage == "XFD";
+			DoProc("_AddApplicationFormToPackage", {packageDTO, row, sItemContent});
+			:RETURN .T.;
+		:ENDIF;
+
+		:IF AScanExact({"APPSERVERSCRIPT", "AppServerScript", "APPSS"}, sItemType) > 0;
+			DoProc("_AddApplicationServerScriptToPackage", {packageDTO, row, sItemContent});
+			:RETURN .T.;
+		:ENDIF;
+
+		:IF AScanExact({"APPCLIENTSCRIPT", "AppClientScript", "APPCS"}, sItemType) > 0;
+			DoProc("_AddApplicationClientScriptToPackage", {packageDTO, row, sItemContent});
+			:RETURN .T.;
+		:ENDIF;
+
+		:IF AScanExact({"APPDATASOURCE", "AppDataSource", "AppDataSourceScript", "APPDS"}, sItemType) > 0;
+			DoProc("_AddApplicationDataSourceToPackage", {packageDTO, row, sItemContent});
+			:RETURN .T.;
+		:ENDIF;
+	:ENDIF;
+
+	:IF sParentType == "SSC";
+		DoProc("_AddServerScriptToPackage", {packageDTO, row["CHILDID"], sItemContent});
+		:RETURN .T.;
+	:ENDIF;
+
+	:IF sParentType == "CSC";
+		DoProc("_AddClientScriptToPackage", {packageDTO, row["CHILDID"], sItemContent});
+		:RETURN .T.;
+	:ENDIF;
+
+	:IF sParentType == "DSC";
+		DoProc("_AddDataSourceToPackage", {packageDTO, row["CHILDID"], sItemContent});
+		:RETURN .T.;
+	:ENDIF;
+
+	:IF sItemType == "TABLE" .OR. sItemType == "Table";
+		DoProc("_AddTableToPackage", {packageDTO, row, sItemContent});
+		:RETURN .T.;
+	:ENDIF;
+
+	:RETURN .F.;
+:ENDPROC;
+
+:PROCEDURE _GetArrayItemById;
+:PARAMETERS aItems, sItemId;
+
+	:DECLARE i;
+	:FOR i := 1 :TO Len(aItems);
+		:IF aItems[i]:ItemID == sItemId;
+			:RETURN aItems[i];
+		:ENDIF;
+	:NEXT;
+
+	:RETURN NIL;
+:ENDPROC;
+
+:PROCEDURE _EnsureApplicationDTO;
+:PARAMETERS packageDTO, sAppId;
+
+	:DECLARE nSysLayerId, aAppInfo, appCategoryDTO, applicationDTO;
+	nSysLayerId := GetSystemLayerId();
+	aAppInfo := SqlExecute(
+		"select a.APPID, a.DISPLAYTEXT, a.APPDESCRIPTION, b.DISPLAYTEXT, b.CATEGORYID, b.DISPLAYTEXT, b.CATDESCRIPTION, b.ISSYSTEM, b.LAYERID, a.LAYERID, b.CATNAME " +
+		"from LIMSAPPLICATIONS a inner join LIMSAPPCATEGORIES b on a.CATEGORYID = b.CATEGORYID " +
+		"where a.APPID = ?sAppId? " +
+		"order by case when a.LAYERID <= ?nSysLayerId? then ?nSysLayerId? - a.LAYERID else a.LAYERID end",
+		"DICTIONARY"
+	);
+
+	:IF Empty(aAppInfo);
+		:RETURN NIL;
+	:ENDIF;
+
+	appCategoryDTO := DoProc("_GetArrayItemById", {packageDTO:ApplicationCategories, aAppInfo[1][5]});
+	:IF Empty(appCategoryDTO);
+		appCategoryDTO := CreateUDObject("DEI_ManifestDTO.ApplicationCategory");
+		appCategoryDTO:ItemID := aAppInfo[1][5];
+		appCategoryDTO:ItemName := aAppInfo[1][6];
+		appCategoryDTO:ItemIsSystem := aAppInfo[1][8];
+		appCategoryDTO:LayerId := DoProc("_GetSafeLayerId", {aAppInfo[1][9]});
+		appCategoryDTO:IsMandatory := .F.;
+		appCategoryDTO:ItemBehaviour := "merge";
+		appCategoryDTO:Applications := {};
+		AAdd(packageDTO:ApplicationCategories, appCategoryDTO);
+	:ENDIF;
+
+	applicationDTO := DoProc("_GetArrayItemById", {appCategoryDTO:Applications, aAppInfo[1][1]});
+	:IF Empty(applicationDTO);
+		applicationDTO := CreateUDObject("DEI_ManifestDTO.Application");
+		applicationDTO:ItemID := aAppInfo[1][1];
+		applicationDTO:ItemName := aAppInfo[1][2];
+		applicationDTO:ItemCategory := aAppInfo[1][11];
+		applicationDTO:LayerId := DoProc("_GetSafeLayerId", {aAppInfo[1][10]});
+		applicationDTO:IsMandatory := .F.;
+		applicationDTO:ItemBehaviour := "merge";
+		applicationDTO:Forms := {};
+		applicationDTO:ReferedForms := {};
+		applicationDTO:DataSources := {};
+		applicationDTO:ReferedDataSources := {};
+		applicationDTO:ServerScripts := {};
+		applicationDTO:ReferedServerScripts := {};
+		applicationDTO:ClientScripts := {};
+		AAdd(appCategoryDTO:Applications, applicationDTO);
+	:ENDIF;
+
+	:RETURN applicationDTO;
+:ENDPROC;
+
+/* Returns a non-null layer id for the manifest. The import engine calls
+   Val() on the LayerId and crashes when it is null, so the same default as
+   ImportManager._GetLayerId is applied (300 = customer system layer);
+:PROCEDURE _GetSafeLayerId;
+:PARAMETERS nLayerId;
+
+	:IF Empty(nLayerId);
+		:RETURN 300;
+	:ENDIF;
+
+	:RETURN nLayerId;
+:ENDPROC;
+
+/* Returns the application category name (CATNAME) used by the Designer as
+   ItemCategory for application items;
+:PROCEDURE _GetAppCategoryName;
+:PARAMETERS sAppId;
+
+	:DECLARE sName;
+	sName := LSearch("select APPNAME from LIMSAPPLICATIONS where APPID = ?", "", "DICTIONARY", {sAppId});
+	:IF Empty(sName);
+		sName := LSearch("select DISPLAYTEXT from LIMSAPPLICATIONS where APPID = ?", "", "DICTIONARY", {sAppId});
+	:ENDIF;
+
+	:RETURN sName;
+:ENDPROC;
+
+:PROCEDURE _AddApplicationFormToPackage;
+:PARAMETERS packageDTO, row, sItemContent;
+
+	:DECLARE applicationDTO, nSysLayerId, sFormType, aFormInfo, formDTO;
+	applicationDTO := DoProc("_EnsureApplicationDTO", {packageDTO, row["PARENTID"]});
+	:IF Empty(applicationDTO);
+		:RETURN;
+	:ENDIF;
+
+	formDTO := DoProc("_GetArrayItemById", {applicationDTO:Forms, row["CHILDID"]});
+	:IF !Empty(formDTO);
+		:RETURN;
+	:ENDIF;
+
+	nSysLayerId := GetSystemLayerId();
+	sFormType := IIf(row["SCRIPTLANGUAGE"] == "HTML", "HTML", "XFD");
+	sFormID := row["CHILDID"];
+	aFormInfo := SqlExecute(
+		"select f.FORMID, f.DISPLAYTEXT, a.DISPLAYTEXT, c.DISPLAYTEXT, f.LAYERID, f.FORMTYPE, a.APPNAME " +
+		"from LIMSXFDFORMS f " +
+		"inner join LIMSAPPLICATIONS a on a.APPID = f.APPID " +
+		"inner join LIMSAPPCATEGORIES c on c.CATEGORYID = a.CATEGORYID " +
+		"where f.FORMID = ?sFormID? and f.FORMTYPE = ?sFormType? " +
+		"order by case when f.LAYERID <= ?nSysLayerId? then ?nSysLayerId? - f.LAYERID else f.LAYERID end",
+		"DICTIONARY"
+	);
+
+	:IF Empty(aFormInfo);
+		:RETURN;
+	:ENDIF;
+
+	formDTO := CreateUDObject("DEI_ManifestDTO.Form");
+	formDTO:ItemID := aFormInfo[1][1];
+	formDTO:ItemName := aFormInfo[1][2];
+	formDTO:ItemCategory := aFormInfo[1][7];
+	formDTO:LayerId := DoProc("_GetSafeLayerId", {aFormInfo[1][5]});
+	formDTO:ItemContent := sItemContent;
+	formDTO:IsMandatory := .F.;
+	formDTO:ItemBehaviour := "overwrite";
+	formDTO:ModesOfOperationImportMode := "ignore";
+	formDTO:OverwriteTransactionSettings := .F.;
+	formDTO:FormType := aFormInfo[1][6];
+	AAdd(applicationDTO:Forms, formDTO);
+:ENDPROC;
+
+:PROCEDURE _AddApplicationServerScriptToPackage;
+:PARAMETERS packageDTO, row, sItemContent;
+
+	:DECLARE applicationDTO, nSysLayerId, aInfo, itemDTO, sChildId;
+	applicationDTO := DoProc("_EnsureApplicationDTO", {packageDTO, row["PARENTID"]});
+	:IF Empty(applicationDTO);
+		:RETURN;
+	:ENDIF;
+
+	itemDTO := DoProc("_GetArrayItemById", {applicationDTO:ServerScripts, row["CHILDID"]});
+	:IF !Empty(itemDTO);
+		:RETURN;
+	:ENDIF;
+
+	nSysLayerId := GetSystemLayerId();
+	sChildId := row["CHILDID"];
+	aInfo := SqlExecute(
+		"select s.SCRIPTID, s.DISPLAYTEXT, s.SCRIPTDESCRIPTION, s.SCRIPTLANGUAGE, s.LAYERID " +
+		"from LIMSSERVERSCRIPTS s " +
+		"where s.SCRIPTID = ?sChildId? " +
+		"order by case when s.LAYERID <= ?nSysLayerId? then ?nSysLayerId? - s.LAYERID else s.LAYERID end",
+		"DICTIONARY"
+	);
+
+	:IF Empty(aInfo);
+		:RETURN;
+	:ENDIF;
+
+	itemDTO := CreateUDObject("DEI_ManifestDTO.ServerScript");
+	itemDTO:ItemID := aInfo[1][1];
+	itemDTO:ItemName := aInfo[1][2];
+	:IF !Empty(aInfo[1][3]);
+		itemDTO:ItemDescription := aInfo[1][3];
+	:ENDIF;
+	itemDTO:ItemCategory := DoProc("_GetAppCategoryName", {row["PARENTID"]});
+	itemDTO:LayerId := DoProc("_GetSafeLayerId", {aInfo[1][5]});
+	itemDTO:ItemContent := sItemContent;
+	itemDTO:IsMandatory := .F.;
+	itemDTO:ItemBehaviour := "overwrite";
+	itemDTO:ItemProgrammingLanguage := aInfo[1][4];
+	itemDTO:ItemIsOwned := "Y";
+	itemDTO:IsReferred := .F.;
+	AAdd(applicationDTO:ServerScripts, itemDTO);
+:ENDPROC;
+
+:PROCEDURE _AddApplicationClientScriptToPackage;
+:PARAMETERS packageDTO, row, sItemContent;
+
+	:DECLARE applicationDTO, nSysLayerId, aInfo, itemDTO, sChildId;
+	applicationDTO := DoProc("_EnsureApplicationDTO", {packageDTO, row["PARENTID"]});
+	:IF Empty(applicationDTO);
+		:RETURN;
+	:ENDIF;
+
+	sChildId := row["CHILDID"];
+	itemDTO := DoProc("_GetArrayItemById", {applicationDTO:ClientScripts, sChildId});
+	:IF !Empty(itemDTO);
+		:RETURN;
+	:ENDIF;
+
+	nSysLayerId := GetSystemLayerId();
+	aInfo := SqlExecute(
+		"select s.SCRIPTID, s.DISPLAYTEXT, s.SCRIPTDESCRIPTION, s.SCRIPTLANGUAGE, s.LAYERID " +
+		"from LIMSCLIENTSCRIPTS s " +
+		"where s.SCRIPTID = ?sChildId? " +
+		"order by case when s.LAYERID <= ?nSysLayerId? then ?nSysLayerId? - s.LAYERID else s.LAYERID end",
+		"DICTIONARY"
+	);
+
+	:IF Empty(aInfo);
+		:RETURN;
+	:ENDIF;
+
+	itemDTO := CreateUDObject("DEI_ManifestDTO.ClientScript");
+	itemDTO:ItemID := aInfo[1][1];
+	itemDTO:ItemName := aInfo[1][2];
+	:IF !Empty(aInfo[1][3]);
+		itemDTO:ItemDescription := aInfo[1][3];
+	:ENDIF;
+	itemDTO:ItemCategory := DoProc("_GetAppCategoryName", {row["PARENTID"]});
+	itemDTO:LayerId := DoProc("_GetSafeLayerId", {aInfo[1][5]});
+	itemDTO:ItemContent := sItemContent;
+	itemDTO:IsMandatory := .F.;
+	itemDTO:ItemBehaviour := "overwrite";
+	itemDTO:ItemProgrammingLanguage := aInfo[1][4];
+	itemDTO:ItemIsOwned := "Y";
+	itemDTO:IsReferred := .F.;
+	AAdd(applicationDTO:ClientScripts, itemDTO);
+:ENDPROC;
+
+:PROCEDURE _AddApplicationDataSourceToPackage;
+:PARAMETERS packageDTO, row, sItemContent;
+
+	:DECLARE applicationDTO, nSysLayerId, aInfo, itemDTO, sChildId;
+	applicationDTO := DoProc("_EnsureApplicationDTO", {packageDTO, row["PARENTID"]});
+	:IF Empty(applicationDTO);
+		:RETURN;
+	:ENDIF;
+
+	sChildId := row["CHILDID"];
+	itemDTO := DoProc("_GetArrayItemById", {applicationDTO:DataSources, sChildId});
+	:IF !Empty(itemDTO);
+		:RETURN;
+	:ENDIF;
+
+	nSysLayerId := GetSystemLayerId();
+	aInfo := SqlExecute(
+		"select s.DATASOURCEID, s.DISPLAYTEXT, s.DSDESCRIPTION, s.SCRIPTLANGUAGE, s.LAYERID " +
+		"from LIMSDATASOURCES s " +
+		"where s.DATASOURCEID = ?sChildId? " +
+		"order by case when s.LAYERID <= ?nSysLayerId? then ?nSysLayerId? - s.LAYERID else s.LAYERID end",
+		"DICTIONARY"
+	);
+
+	:IF Empty(aInfo);
+		:RETURN;
+	:ENDIF;
+
+	itemDTO := CreateUDObject("DEI_ManifestDTO.DataSourceScript");
+	itemDTO:ItemID := aInfo[1][1];
+	itemDTO:ItemName := aInfo[1][2];
+	:IF !Empty(aInfo[1][3]);
+		itemDTO:ItemDescription := aInfo[1][3];
+	:ENDIF;
+	itemDTO:ItemCategory := DoProc("_GetAppCategoryName", {row["PARENTID"]});
+	itemDTO:LayerId := DoProc("_GetSafeLayerId", {aInfo[1][5]});
+	itemDTO:ItemContent := sItemContent;
+	itemDTO:IsMandatory := .F.;
+	itemDTO:ItemBehaviour := "overwrite";
+	itemDTO:ItemProgrammingLanguage := aInfo[1][4];
+	itemDTO:ItemIsOwned := "Y";
+	itemDTO:IsReferred := .F.;
+	itemDTO:IsOffline := "N";
+	AAdd(applicationDTO:DataSources, itemDTO);
+:ENDPROC;
+
+:PROCEDURE _AddServerScriptToPackage;
+:PARAMETERS packageDTO, sItemId, sItemContent;
+
+	:DECLARE nSysLayerId, aInfo, categoryDTO, itemDTO;
+	nSysLayerId := GetSystemLayerId();
+	aInfo := SqlExecute(
+		"select s.SCRIPTID, s.DISPLAYTEXT, s.SCRIPTDESCRIPTION, c.DISPLAYTEXT, s.SCRIPTLANGUAGE, c.CATEGORYID, c.DISPLAYTEXT, c.CATDESCRIPTION, c.ISSYSTEM, c.LAYERID, s.LAYERID " +
+		"from LIMSSERVERSCRIPTS s inner join LIMSSERVERSCRIPTCATEGORIES c on s.CATEGORYID = c.CATEGORYID " +
+		"where s.SCRIPTID = ?sItemId? " +
+		"order by case when s.LAYERID <= ?nSysLayerId? then ?nSysLayerId? - s.LAYERID else s.LAYERID end",
+		"DICTIONARY"
+	);
+
+	:IF Empty(aInfo);
+		:RETURN;
+	:ENDIF;
+
+	categoryDTO := DoProc("_GetArrayItemById", {packageDTO:ServerScriptCategories, aInfo[1][6]});
+	:IF Empty(categoryDTO);
+		categoryDTO := CreateUDObject("DEI_ManifestDTO.ServerScriptCategory");
+		categoryDTO:ItemID := aInfo[1][6];
+		categoryDTO:ItemName := aInfo[1][7];
+		categoryDTO:ItemDescription := aInfo[1][8];
+		categoryDTO:ItemIsSystem := aInfo[1][9];
+		categoryDTO:LayerId := DoProc("_GetSafeLayerId", {aInfo[1][10]});
+		categoryDTO:IsMandatory := .F.;
+		categoryDTO:ItemBehaviour := "merge";
+		categoryDTO:ServerScripts := {};
+		AAdd(packageDTO:ServerScriptCategories, categoryDTO);
+	:ENDIF;
+
+	itemDTO := DoProc("_GetArrayItemById", {categoryDTO:ServerScripts, aInfo[1][1]});
+	:IF !Empty(itemDTO);
+		:RETURN;
+	:ENDIF;
+
+	itemDTO := CreateUDObject("DEI_ManifestDTO.ServerScript");
+	itemDTO:ItemID := aInfo[1][1];
+	itemDTO:ItemName := aInfo[1][2];
+	:IF !Empty(aInfo[1][3]);
+		itemDTO:ItemDescription := aInfo[1][3];
+	:ENDIF;
+	itemDTO:ItemCategory := aInfo[1][4];
+	itemDTO:LayerId := DoProc("_GetSafeLayerId", {aInfo[1][11]});
+	itemDTO:ItemContent := sItemContent;
+	itemDTO:IsMandatory := .F.;
+	itemDTO:ItemBehaviour := "overwrite";
+	itemDTO:ItemProgrammingLanguage := aInfo[1][5];
+	itemDTO:ItemIsOwned := "N";
+	itemDTO:IsReferred := .F.;
+	AAdd(categoryDTO:ServerScripts, itemDTO);
+:ENDPROC;
+
+:PROCEDURE _AddClientScriptToPackage;
+:PARAMETERS packageDTO, sItemId, sItemContent;
+
+	:DECLARE nSysLayerId, aInfo, categoryDTO, itemDTO;
+	nSysLayerId := GetSystemLayerId();
+	aInfo := SqlExecute(
+		"select s.SCRIPTID, s.DISPLAYTEXT, s.SCRIPTDESCRIPTION, c.DISPLAYTEXT, s.SCRIPTLANGUAGE, c.CATEGORYID, c.DISPLAYTEXT, c.CATDESCRIPTION, c.ISSYSTEM, c.LAYERID, s.LAYERID " +
+		"from LIMSCLIENTSCRIPTS s inner join LIMSCLIENTSCRIPTCATEGORIES c on s.CATEGORYID = c.CATEGORYID " +
+		"where s.SCRIPTID = ?sItemId? " +
+		"order by case when s.LAYERID <= ?nSysLayerId? then ?nSysLayerId? - s.LAYERID else s.LAYERID end",
+		"DICTIONARY"
+	);
+
+	:IF Empty(aInfo);
+		:RETURN;
+	:ENDIF;
+
+	categoryDTO := DoProc("_GetArrayItemById", {packageDTO:ClientScriptCategories, aInfo[1][6]});
+	:IF Empty(categoryDTO);
+		categoryDTO := CreateUDObject("DEI_ManifestDTO.ClientScriptCategory");
+		categoryDTO:ItemID := aInfo[1][6];
+		categoryDTO:ItemName := aInfo[1][7];
+		categoryDTO:ItemDescription := aInfo[1][8];
+		categoryDTO:ItemIsSystem := aInfo[1][9];
+		categoryDTO:LayerId := DoProc("_GetSafeLayerId", {aInfo[1][10]});
+		categoryDTO:IsMandatory := .F.;
+		categoryDTO:ItemBehaviour := "merge";
+		categoryDTO:ClientScripts := {};
+		AAdd(packageDTO:ClientScriptCategories, categoryDTO);
+	:ENDIF;
+
+	itemDTO := DoProc("_GetArrayItemById", {categoryDTO:ClientScripts, aInfo[1][1]});
+	:IF !Empty(itemDTO);
+		:RETURN;
+	:ENDIF;
+
+	itemDTO := CreateUDObject("DEI_ManifestDTO.ClientScript");
+	itemDTO:ItemID := aInfo[1][1];
+	itemDTO:ItemName := aInfo[1][2];
+	:IF !Empty(aInfo[1][3]);
+		itemDTO:ItemDescription := aInfo[1][3];
+	:ENDIF;
+	itemDTO:ItemCategory := aInfo[1][4];
+	itemDTO:LayerId := DoProc("_GetSafeLayerId", {aInfo[1][11]});
+	itemDTO:ItemContent := sItemContent;
+	itemDTO:IsMandatory := .F.;
+	itemDTO:ItemBehaviour := "overwrite";
+	itemDTO:ItemProgrammingLanguage := aInfo[1][5];
+	itemDTO:ItemIsOwned := "N";
+	itemDTO:IsReferred := .F.;
+	AAdd(categoryDTO:ClientScripts, itemDTO);
+:ENDPROC;
+
+:PROCEDURE _AddDataSourceToPackage;
+:PARAMETERS packageDTO, sItemId, sItemContent;
+
+	:DECLARE nSysLayerId, aInfo, categoryDTO, itemDTO;
+	nSysLayerId := GetSystemLayerId();
+	aInfo := SqlExecute(
+		"select s.DATASOURCEID, s.DISPLAYTEXT, s.DSDESCRIPTION, c.DISPLAYTEXT, s.SCRIPTLANGUAGE, c.CATEGORYID, c.DISPLAYTEXT, c.CATDESCRIPTION, c.ISSYSTEM, c.LAYERID, s.LAYERID " +
+		"from LIMSDATASOURCES s inner join LIMSDATASOURCECATEGORIES c on s.CATEGORYID = c.CATEGORYID " +
+		"where s.DATASOURCEID = ?sItemId? " +
+		"order by case when s.LAYERID <= ?nSysLayerId? then ?nSysLayerId? - s.LAYERID else s.LAYERID end",
+		"DICTIONARY"
+	);
+
+	:IF Empty(aInfo);
+		:RETURN;
+	:ENDIF;
+
+	categoryDTO := DoProc("_GetArrayItemById", {packageDTO:DataSourceCategories, aInfo[1][6]});
+	:IF Empty(categoryDTO);
+		categoryDTO := CreateUDObject("DEI_ManifestDTO.DataSourceCategory");
+		categoryDTO:ItemID := aInfo[1][6];
+		categoryDTO:ItemName := aInfo[1][7];
+		categoryDTO:ItemDescription := aInfo[1][8];
+		categoryDTO:ItemIsSystem := aInfo[1][9];
+		categoryDTO:LayerId := DoProc("_GetSafeLayerId", {aInfo[1][10]});
+		categoryDTO:IsMandatory := .F.;
+		categoryDTO:ItemBehaviour := "merge";
+		categoryDTO:DataSourceScripts := {};
+		AAdd(packageDTO:DataSourceCategories, categoryDTO);
+	:ENDIF;
+
+	itemDTO := DoProc("_GetArrayItemById", {categoryDTO:DataSourceScripts, aInfo[1][1]});
+	:IF !Empty(itemDTO);
+		:RETURN;
+	:ENDIF;
+
+	itemDTO := CreateUDObject("DEI_ManifestDTO.DataSourceScript");
+	itemDTO:ItemID := aInfo[1][1];
+	itemDTO:ItemName := aInfo[1][2];
+	:IF !Empty(aInfo[1][3]);
+		itemDTO:ItemDescription := aInfo[1][3];
+	:ENDIF;
+	itemDTO:ItemCategory := aInfo[1][4];
+	itemDTO:LayerId := DoProc("_GetSafeLayerId", {aInfo[1][11]});
+	itemDTO:ItemContent := sItemContent;
+	itemDTO:IsMandatory := .F.;
+	itemDTO:ItemBehaviour := "overwrite";
+	itemDTO:ItemProgrammingLanguage := aInfo[1][5];
+	itemDTO:ItemIsOwned := "N";
+	itemDTO:IsReferred := .F.;
+	itemDTO:IsOffline := "N";
+	AAdd(categoryDTO:DataSourceScripts, itemDTO);
+:ENDPROC;
+
+:PROCEDURE _AddTableToPackage;
+:PARAMETERS packageDTO, row, sItemContent;
+
+	:DECLARE nSysLayerId, aInfo, sCategoryName, categoryDTO, itemDTO, sTableId;
+	nSysLayerId := GetSystemLayerId();
+	sTableId := row["CHILDID"];
+	aInfo := SqlExecute(
+		"select t.TABLEID, t.TABLENAME, t.LAYERID from LIMSTABLES t where t.TABLEID = ?sTableId? " +
+		"order by case when t.LAYERID <= ?nSysLayerId? then ?nSysLayerId? - t.LAYERID else t.LAYERID end",
+		"DICTIONARY"
+	);
+
+	:IF Empty(aInfo);
+		:RETURN;
+	:ENDIF;
+
+	sCategoryName := Upper(row["PARENTNAME"]);
+	categoryDTO := DoProc("_GetArrayItemById", {packageDTO:TableCategories, sCategoryName});
+	:IF Empty(categoryDTO);
+		categoryDTO := CreateUDObject("DEI_ManifestDTO.TableCategory");
+		categoryDTO:ItemID := sCategoryName;
+		categoryDTO:ItemName := sCategoryName;
+		categoryDTO:ItemDescription := "Connection to " + sCategoryName;
+		categoryDTO:ItemIsSystem := "Y";
+		categoryDTO:LayerId := GetSystemLayerId();
+		categoryDTO:IsMandatory := .F.;
+		categoryDTO:ItemBehaviour := "merge";
+		categoryDTO:Tables := {};
+		AAdd(packageDTO:TableCategories, categoryDTO);
+	:ENDIF;
+
+	itemDTO := DoProc("_GetArrayItemById", {categoryDTO:Tables, aInfo[1][1]});
+	:IF !Empty(itemDTO);
+		:RETURN;
+	:ENDIF;
+
+	itemDTO := CreateUDObject("DEI_ManifestDTO.Table");
+	itemDTO:ItemID := aInfo[1][1];
+	itemDTO:ItemName := aInfo[1][2];
+	itemDTO:ItemDescription := "";
+	itemDTO:ItemCategory := sCategoryName;
+	itemDTO:LayerId := DoProc("_GetSafeLayerId", {aInfo[1][3]});
+	itemDTO:ItemContent := sItemContent;
+	itemDTO:IsMandatory := .F.;
+	itemDTO:ItemBehaviour := "merge";
+	itemDTO:IsSystem := "Y";
+	AAdd(categoryDTO:Tables, itemDTO);
+:ENDPROC;
+
+/* Returns the manifest XML for the package in the Designer/SCM_API format.
+   The core Enterprise_Server.ManifestXmlFromPackageDTO.GetManifestXml
+   serializer is unusable here: the SSL runtime marshals the DTO arrays as
+   strings, so every collection item is emitted with a </string> closing tag
+   which the target ImportManager cannot deserialize (itemDTO:LayerId ends up
+   null and the import dies in ImportManager._getlayerid with "Argument
+   'sNumber' cannot be null and it must be a string"). The <Package> format
+   below is structurally identical to Designer exports and to the SCM_API
+   package itself, which import without problems;
+:PROCEDURE _ManifestToXml;
+:PARAMETERS packageDTO;
+
+	:DECLARE sXml, i, j, appCategory, application, lang, flag, tableCat, table, category;
+	sXml := '<?xml version="1.0" encoding="utf-8"?>' + CrLf;
+	sXml := sXml + '<Package xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">' + CrLf;
+	sXml := sXml + DoProc("_XmlElem", {"ItemID", packageDTO:ItemID}) + CrLf;
+	sXml := sXml + DoProc("_XmlElem", {"ItemName", packageDTO:ItemName}) + CrLf;
+	sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+	sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "merge"}) + CrLf;
+	sXml := sXml + DoProc("_XmlElem", {"PackageDate", packageDTO:PackageDate}) + CrLf;
+	sXml := sXml + DoProc("_XmlEmptyElem", {"PathReadMe"}) + CrLf;
+	sXml := sXml + DoProc("_XmlEmptyElem", {"PathEULA"}) + CrLf;
+	sXml := sXml + DoProc("_XmlEmptyElem", {"PathLogo"}) + CrLf;
+	sXml := sXml + DoProc("_XmlElem", {"OverwriteLayer", "false"}) + CrLf;
+
+	/* application categories;
+	:IF Len(packageDTO:ApplicationCategories) == 0;
+		sXml := sXml + DoProc("_XmlEmptyElem", {"ApplicationCategoryCollection"}) + CrLf;
+	:ELSE;
+		sXml := sXml + "<ApplicationCategoryCollection>" + CrLf;
+		:FOR i := 1 :TO Len(packageDTO:ApplicationCategories);
+			appCategory := packageDTO:ApplicationCategories[i];
+			sXml := sXml + "<ApplicationCategory>" + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemID", appCategory:ItemID}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemName", appCategory:ItemName}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"LayerId", appCategory:LayerId}) + CrLf;
+			sXml := sXml + DoProc("_XmlEmptyElem", {"ItemDescription"}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "merge"}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemIsSystem", appCategory:ItemIsSystem}) + CrLf;
+			:IF Len(appCategory:Applications) == 0;
+				sXml := sXml + DoProc("_XmlEmptyElem", {"ApplicationCollection"}) + CrLf;
+			:ELSE;
+				sXml := sXml + "<ApplicationCollection>" + CrLf;
+				:FOR j := 1 :TO Len(appCategory:Applications);
+					application := appCategory:Applications[j];
+					sXml := sXml + "<Application>" + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"ItemID", application:ItemID}) + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"ItemName", application:ItemName}) + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"LayerId", application:LayerId}) + CrLf;
+					sXml := sXml + DoProc("_XmlEmptyElem", {"ItemDescription"}) + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"ItemCategory", application:ItemCategory}) + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "merge"}) + CrLf;
+					sXml := sXml + DoProc("_FormsXml", {application:Forms}) + CrLf;
+					sXml := sXml + DoProc("_DataSourcesXml", {application:DataSources}) + CrLf;
+					sXml := sXml + DoProc("_ServerScriptsXml", {application:ServerScripts}) + CrLf;
+					sXml := sXml + DoProc("_ClientScriptsXml", {application:ClientScripts}) + CrLf;
+					sXml := sXml + "</Application>" + CrLf;
+				:NEXT;
+				sXml := sXml + "</ApplicationCollection>" + CrLf;
+			:ENDIF;
+			sXml := sXml + "</ApplicationCategory>" + CrLf;
+		:NEXT;
+		sXml := sXml + "</ApplicationCategoryCollection>" + CrLf;
+	:ENDIF;
+
+	/* server script categories;
+	:IF Len(packageDTO:ServerScriptCategories) == 0;
+		sXml := sXml + DoProc("_XmlEmptyElem", {"ServerScriptCategoryCollection"}) + CrLf;
+	:ELSE;
+		sXml := sXml + "<ServerScriptCategoryCollection>" + CrLf;
+		:FOR i := 1 :TO Len(packageDTO:ServerScriptCategories);
+			category := packageDTO:ServerScriptCategories[i];
+			sXml := sXml + "<ServerScriptCategory>" + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemID", category:ItemID}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemName", category:ItemName}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"LayerId", category:LayerId}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemDescription", category:ItemDescription}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "merge"}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemIsSystem", category:ItemIsSystem}) + CrLf;
+			sXml := sXml + DoProc("_ServerScriptsXml", {category:ServerScripts}) + CrLf;
+			sXml := sXml + "</ServerScriptCategory>" + CrLf;
+		:NEXT;
+		sXml := sXml + "</ServerScriptCategoryCollection>" + CrLf;
+	:ENDIF;
+
+	/* client script categories;
+	:IF Len(packageDTO:ClientScriptCategories) == 0;
+		sXml := sXml + DoProc("_XmlEmptyElem", {"ClientScriptCategoryCollection"}) + CrLf;
+	:ELSE;
+		sXml := sXml + "<ClientScriptCategoryCollection>" + CrLf;
+		:FOR i := 1 :TO Len(packageDTO:ClientScriptCategories);
+			category := packageDTO:ClientScriptCategories[i];
+			sXml := sXml + "<ClientScriptCategory>" + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemID", category:ItemID}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemName", category:ItemName}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"LayerId", category:LayerId}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemDescription", category:ItemDescription}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "merge"}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemIsSystem", category:ItemIsSystem}) + CrLf;
+			sXml := sXml + DoProc("_ClientScriptsXml", {category:ClientScripts}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"Hidden", "true"}) + CrLf;
+			sXml := sXml + "</ClientScriptCategory>" + CrLf;
+		:NEXT;
+		sXml := sXml + "</ClientScriptCategoryCollection>" + CrLf;
+	:ENDIF;
+
+	/* data source categories;
+	:IF Len(packageDTO:DataSourceCategories) == 0;
+		sXml := sXml + DoProc("_XmlEmptyElem", {"DataSourceCategoryCollection"}) + CrLf;
+	:ELSE;
+		sXml := sXml + "<DataSourceCategoryCollection>" + CrLf;
+		:FOR i := 1 :TO Len(packageDTO:DataSourceCategories);
+			category := packageDTO:DataSourceCategories[i];
+			sXml := sXml + "<DataSourceCategory>" + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemID", category:ItemID}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemName", category:ItemName}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"LayerId", category:LayerId}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemDescription", category:ItemDescription}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "merge"}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemIsSystem", category:ItemIsSystem}) + CrLf;
+			sXml := sXml + DoProc("_DataSourcesXml", {category:DataSourceScripts}) + CrLf;
+			sXml := sXml + "</DataSourceCategory>" + CrLf;
+		:NEXT;
+		sXml := sXml + "</DataSourceCategoryCollection>" + CrLf;
+	:ENDIF;
+
+	/* languages with their flag images;
+	:IF Len(packageDTO:Languages) == 0;
+		sXml := sXml + DoProc("_XmlEmptyElem", {"LanguageCollection"}) + CrLf;
+	:ELSE;
+		sXml := sXml + "<LanguageCollection>" + CrLf;
+		:FOR i := 1 :TO Len(packageDTO:Languages);
+			lang := packageDTO:Languages[i];
+			flag := lang:ItemFlag;
+			sXml := sXml + "<Language>" + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemID", lang:ItemID}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemName", lang:ItemName}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemDescription", lang:ItemDescription}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "merge"}) + CrLf;
+			:IF Empty(flag);
+				sXml := sXml + DoProc("_XmlEmptyElem", {"ItemFlag"}) + CrLf;
+			:ELSE;
+				sXml := sXml + "<ItemFlag>" + CrLf;
+				sXml := sXml + DoProc("_XmlElem", {"ItemID", flag:ItemID}) + CrLf;
+				sXml := sXml + DoProc("_XmlElem", {"ItemName", flag:ItemName}) + CrLf;
+				sXml := sXml + DoProc("_XmlElem", {"LayerId", flag:LayerId}) + CrLf;
+				sXml := sXml + DoProc("_XmlElem", {"ItemDescription", flag:ItemDescription}) + CrLf;
+				sXml := sXml + DoProc("_XmlElem", {"ItemCategory", flag:ItemCategory}) + CrLf;
+				sXml := sXml + DoProc("_XmlElem", {"ItemContent", flag:ItemContent}) + CrLf;
+				sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+				sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "overwrite"}) + CrLf;
+				sXml := sXml + DoProc("_XmlEmptyElem", {"ImageType"}) + CrLf;
+				sXml := sXml + DoProc("_XmlEmptyElem", {"ColorDepth"}) + CrLf;
+				sXml := sXml + DoProc("_XmlElem", {"ImageHeight", "0"}) + CrLf;
+				sXml := sXml + DoProc("_XmlElem", {"ImageWidth", "0"}) + CrLf;
+				sXml := sXml + DoProc("_XmlElem", {"Size", "0"}) + CrLf;
+				sXml := sXml + "</ItemFlag>" + CrLf;
+			:ENDIF;
+			sXml := sXml + "</Language>" + CrLf;
+		:NEXT;
+		sXml := sXml + "</LanguageCollection>" + CrLf;
+	:ENDIF;
+
+	/* table categories;
+	:IF Len(packageDTO:TableCategories) == 0;
+		sXml := sXml + DoProc("_XmlEmptyElem", {"TableCategoryCollection"}) + CrLf;
+	:ELSE;
+		sXml := sXml + "<TableCategoryCollection>" + CrLf;
+		:FOR i := 1 :TO Len(packageDTO:TableCategories);
+			tableCat := packageDTO:TableCategories[i];
+			sXml := sXml + "<TableCategory>" + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemID", tableCat:ItemID}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemName", tableCat:ItemName}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"LayerId", tableCat:LayerId}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemDescription", tableCat:ItemDescription}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "merge"}) + CrLf;
+			sXml := sXml + DoProc("_XmlElem", {"ItemIsSystem", tableCat:ItemIsSystem}) + CrLf;
+			:IF Len(tableCat:Tables) == 0;
+				sXml := sXml + DoProc("_XmlEmptyElem", {"TableCollection"}) + CrLf;
+			:ELSE;
+				sXml := sXml + "<TableCollection>" + CrLf;
+				:FOR j := 1 :TO Len(tableCat:Tables);
+					table := tableCat:Tables[j];
+					sXml := sXml + "<Table>" + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"ItemID", table:ItemID}) + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"ItemName", table:ItemName}) + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"LayerId", table:LayerId}) + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"ItemDescription", table:ItemDescription}) + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"ItemCategory", table:ItemCategory}) + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"ItemContent", table:ItemContent}) + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "merge"}) + CrLf;
+					sXml := sXml + DoProc("_XmlElem", {"IsSystem", table:IsSystem}) + CrLf;
+					sXml := sXml + "</Table>" + CrLf;
+				:NEXT;
+				sXml := sXml + "</TableCollection>" + CrLf;
+			:ENDIF;
+			sXml := sXml + "</TableCategory>" + CrLf;
+		:NEXT;
+		sXml := sXml + "</TableCategoryCollection>" + CrLf;
+	:ENDIF;
+
+	sXml := sXml + DoProc("_XmlEmptyElem", {"RequiredPackageCollection"}) + CrLf;
+	sXml := sXml + DoProc("_XmlElem", {"OverwriteCodeBehind", "true"}) + CrLf;
+	sXml := sXml + DoProc("_XmlElem", {"ImportGlobalResources", "true"}) + CrLf;
+	sXml := sXml + DoProc("_XmlElem", {"CompareTables", "false"}) + CrLf;
+	sXml := sXml + "</Package>" + CrLf;
+
+	:RETURN sXml;
+:ENDPROC;
+
+:PROCEDURE _XmlElem;
+:PARAMETERS sName, sValue;
+
+	:DECLARE s;
+	s := IIf(Empty(sValue), "", LimsString(sValue));
+	s := StrTran(s, "&", "&amp;");
+	s := StrTran(s, "<", "&lt;");
+	s := StrTran(s, ">", "&gt;");
+	:RETURN "<" + sName + ">" + s + "</" + sName + ">";
+:ENDPROC;
+
+:PROCEDURE _XmlEmptyElem;
+:PARAMETERS sName;
+
+	:RETURN "<" + sName + " />";
+:ENDPROC;
+
+:PROCEDURE _FormsXml;
+:PARAMETERS aForms;
+
+	:DECLARE sXml, i, form;
+	:IF Len(aForms) == 0;
+		:RETURN DoProc("_XmlEmptyElem", {"FormCollection"});
+	:ENDIF;
+
+	sXml := "<FormCollection>" + CrLf;
+	:FOR i := 1 :TO Len(aForms);
+		form := aForms[i];
+		sXml := sXml + "<Form>" + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemID", form:ItemID}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemName", form:ItemName}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"LayerId", form:LayerId}) + CrLf;
+		sXml := sXml + DoProc("_XmlEmptyElem", {"ItemDescription"}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemCategory", form:ItemCategory}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemContent", form:ItemContent}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "overwrite"}) + CrLf;
+		sXml := sXml + DoProc("_XmlEmptyElem", {"ClientScripts"}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ModesOfOperationImportMode", form:ModesOfOperationImportMode}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"OverwriteTransactionSettings", IIf(form:OverwriteTransactionSettings, "true", "false")}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"FormType", form:FormType}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"IsOffline", "N"}) + CrLf;
+		sXml := sXml + "</Form>" + CrLf;
+	:NEXT;
+	sXml := sXml + "</FormCollection>";
+
+	:RETURN sXml;
+:ENDPROC;
+
+:PROCEDURE _ServerScriptsXml;
+:PARAMETERS aScripts;
+
+	:DECLARE sXml, i, script;
+	:IF Len(aScripts) == 0;
+		:RETURN DoProc("_XmlEmptyElem", {"ServerScriptCollection"});
+	:ENDIF;
+
+	sXml := "<ServerScriptCollection>" + CrLf;
+	:FOR i := 1 :TO Len(aScripts);
+		script := aScripts[i];
+		sXml := sXml + "<ServerScript>" + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemID", script:ItemID}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemName", script:ItemName}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"LayerId", script:LayerId}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemDescription", script:ItemDescription}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemCategory", script:ItemCategory}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemContent", script:ItemContent}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "overwrite"}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemProgrammingLanguage", script:ItemProgrammingLanguage}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemIsOwned", script:ItemIsOwned}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"IsReferred", "false"}) + CrLf;
+		sXml := sXml + "</ServerScript>" + CrLf;
+	:NEXT;
+	sXml := sXml + "</ServerScriptCollection>";
+
+	:RETURN sXml;
+:ENDPROC;
+
+:PROCEDURE _ClientScriptsXml;
+:PARAMETERS aScripts;
+
+	:DECLARE sXml, i, script;
+	:IF Len(aScripts) == 0;
+		:RETURN DoProc("_XmlEmptyElem", {"ClientScriptCollection"});
+	:ENDIF;
+
+	sXml := "<ClientScriptCollection>" + CrLf;
+	:FOR i := 1 :TO Len(aScripts);
+		script := aScripts[i];
+		sXml := sXml + "<ClientScript>" + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemID", script:ItemID}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemName", script:ItemName}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"LayerId", script:LayerId}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemDescription", script:ItemDescription}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemCategory", script:ItemCategory}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemContent", script:ItemContent}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "overwrite"}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemProgrammingLanguage", script:ItemProgrammingLanguage}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemIsOwned", script:ItemIsOwned}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"IsReferred", "false"}) + CrLf;
+		sXml := sXml + "</ClientScript>" + CrLf;
+	:NEXT;
+	sXml := sXml + "</ClientScriptCollection>";
+
+	:RETURN sXml;
+:ENDPROC;
+
+:PROCEDURE _DataSourcesXml;
+:PARAMETERS aScripts;
+
+	:DECLARE sXml, i, script;
+	:IF Len(aScripts) == 0;
+		:RETURN DoProc("_XmlEmptyElem", {"DataSourceCollection"});
+	:ENDIF;
+
+	sXml := "<DataSourceCollection>" + CrLf;
+	:FOR i := 1 :TO Len(aScripts);
+		script := aScripts[i];
+		sXml := sXml + "<DataSourceScript>" + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemID", script:ItemID}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemName", script:ItemName}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"LayerId", script:LayerId}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemDescription", script:ItemDescription}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemCategory", script:ItemCategory}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemContent", script:ItemContent}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"IsMandatory", "false"}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemBehaviour", "overwrite"}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemProgrammingLanguage", script:ItemProgrammingLanguage}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"ItemIsOwned", script:ItemIsOwned}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"IsReferred", "false"}) + CrLf;
+		sXml := sXml + DoProc("_XmlElem", {"IsOffline", "N"}) + CrLf;
+		sXml := sXml + "</DataSourceScript>" + CrLf;
+	:NEXT;
+	sXml := sXml + "</DataSourceCollection>";
+
+	:RETURN sXml;
+:ENDPROC;

@@ -1,92 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
-import { getEnterpriseService } from '../../services/enterpriseService';
-import { useOutputLogStore, QueryResult, DiffEntry } from '../../services/outputLogStore';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { useOutputLogStore, QueryResult, DiffEntry, LogChannel, LogEntry } from '../../services/outputLogStore';
+import { useI18n } from '../../i18n';
 
-export interface LogEntry {
-  id: string;
-  timestamp: Date;
-  level: 'info' | 'warning' | 'error' | 'success' | 'script';
-  message: string;
-  source?: string;
-}
-
-// Parse STARLIMS log content into entries
-function parseLogContent(content: string): LogEntry[] {
-  if (!content.trim()) return [];
-
-  const entries: LogEntry[] = [];
-
-  // Split by log entries (each starts with pattern "LIYC / YYYYMMDD / HH:MM:SS")
-  // The pattern indicates start of a new log entry
-  const logPattern = /LIYC\s+\/\s+\d{8}\s+\/\s+\d{2}:\d{2}:\d{2}/g;
-  const lines = content.split('\n');
-
-  const currentEntry = '';
-  const lastIndex = 0;
-  let match;
-
-  // Find all log entry starts
-  const matches: { start: number; end: number; text: string }[] = [];
-  logPattern.lastIndex = 0;
-  while ((match = logPattern.exec(content)) !== null) {
-    matches.push({
-      start: match.index,
-      end: match.index + match[0].length,
-      text: match[0]
-    });
-  }
-
-  // Extract each log entry as a whole
-  for (let i = 0; i < matches.length; i++) {
-    const current = matches[i];
-    const start = current.start;
-    const end = i < matches.length - 1 ? matches[i + 1].start : content.length;
-
-    const entryText = content.substring(start, end).trim();
-    if (!entryText) continue;
-
-    // Determine log level based on content
-    let level: LogEntry['level'] = 'info';
-    if (entryText.includes('Error') || entryText.includes('Exception')) {
-      level = 'error';
-    } else if (entryText.includes('Warning') || entryText.includes('warn')) {
-      level = 'warning';
-    } else if (entryText.includes('Success')) {
-      level = 'success';
-    }
-
-    // Try to parse timestamp
-    let timestamp = new Date();
-    const dateMatch = entryText.match(/(\d{8}) \/ (\d{2}):(\d{2}):(\d{2})/);
-    if (dateMatch) {
-      const dateStr = dateMatch[1]; // YYYYMMDD
-      const timeStr = `${dateMatch[2]}:${dateMatch[3]}:${dateMatch[4]}`;
-      const fullDateStr = `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)} ${timeStr}`;
-      timestamp = new Date(fullDateStr);
-    }
-
-    entries.push({
-      id: `${Date.now()}-${i}`,
-      timestamp,
-      level,
-      message: entryText,
-      source: 'ServerLog'
-    });
-  }
-
-  // Fallback: if no matches, treat the whole content as one entry
-  if (entries.length === 0 && content.trim()) {
-    entries.push({
-      id: `${Date.now()}`,
-      timestamp: new Date(),
-      level: 'info',
-      message: content.trim(),
-      source: 'ServerLog'
-    });
-  }
-
-  return entries;
-}
+type ChannelFilter = 'all' | LogChannel;
+const CHANNELS: ChannelFilter[] = ['all', 'starlims-operation', 'starlims-api', 'ssl-language', 'mcp-server', 'mcp-tools', 'ai-runtime'];
 
 // Highlight different parts of STARLIMS log header
 function highlightLogHeader(header: string): JSX.Element {
@@ -485,12 +402,15 @@ function DiffViewer({ diff }: { diff: DiffEntry }) {
   );
 }
 
-export function OutputPanel() {
+export function OutputEntriesPanel({ embedded = false }: { embedded?: boolean }) {
+  const { t } = useI18n();
   // Use global store for entries
   const entries = useOutputLogStore((state) => state.entries);
-  const setEntries = useOutputLogStore((state) => state.setEntries);
   const clearEntries = useOutputLogStore((state) => state.clearEntries);
+  const clearChannel = useOutputLogStore((state) => state.clearChannel);
   const [filter, setFilter] = useState<'all' | 'info' | 'warning' | 'error' | 'script'>('all');
+  const [channel, setChannel] = useState<ChannelFilter>('all');
+  const [search, setSearch] = useState('');
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -515,27 +435,21 @@ export function OutputPanel() {
     useOutputLogStore.getState().addEntry({ level, message, source });
   };
 
-  // Load server log
-  const loadServerLog = async () => {
-    try {
-      const enterpriseService = getEnterpriseService();
-      const logContent = await enterpriseService.getServerLog();
-      if (logContent) {
-        const parsedEntries = parseLogContent(logContent);
-        setEntries(parsedEntries);
-        console.log('Loaded server log entries:', parsedEntries.length);
-      } else {
-        console.log('No server log content');
-      }
-    } catch (err) {
-      console.error('Failed to load server log:', err);
-    }
-  };
-
-  // Filter entries
+  const channelEntries = useMemo(() => channel === 'all' ? entries : entries.filter((entry) => entry.channel === channel), [channel, entries]);
+  const searchedEntries = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return channelEntries;
+    return channelEntries.filter((entry) => `${entry.source || ''}\n${entry.message}`.toLowerCase().includes(query));
+  }, [channelEntries, search]);
+  const counts = useMemo(() => ({
+    all: searchedEntries.length,
+    info: searchedEntries.filter((entry) => entry.level === 'info' || entry.level === 'success').length,
+    warning: searchedEntries.filter((entry) => entry.level === 'warning').length,
+    error: searchedEntries.filter((entry) => entry.level === 'error').length
+  }), [searchedEntries]);
   const filteredEntries = filter === 'all'
-    ? entries
-    : entries.filter(e => e.level === filter);
+    ? searchedEntries
+    : searchedEntries.filter((entry) => entry.level === filter || (filter === 'info' && entry.level === 'success'));
 
   // Get color for log level
   const getLevelColor = (level: LogEntry['level']): string => {
@@ -577,8 +491,24 @@ export function OutputPanel() {
     <div className="h-full flex flex-col">
       {/* Header */}
       <div className="panel-header">
-        <div className="flex items-center gap-4">
-          <span className="text-sm font-medium">Output</span>
+        <div className="flex min-w-0 items-center gap-2">
+          {!embedded && <span className="text-sm font-medium">{t('output.title')}</span>}
+
+          <select
+            value={channel}
+            onChange={(event) => setChannel(event.target.value as ChannelFilter)}
+            className="h-7 min-w-44 rounded border border-slate-300 bg-white px-2 text-xs text-slate-800 dark:border-[#3c3c3c] dark:bg-[#252526] dark:text-[#cccccc]"
+            aria-label={t('output.channel')}
+          >
+            {CHANNELS.map((item) => <option key={item} value={item}>{t(`output.channel.${item}`)}</option>)}
+          </select>
+
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={t('output.search')}
+            className="h-7 w-44 rounded border border-slate-300 bg-white px-2 text-xs text-slate-800 outline-none focus:border-blue-500 dark:border-[#3c3c3c] dark:bg-[#252526] dark:text-[#cccccc]"
+          />
 
           {/* Filter buttons */}
           <div className="flex gap-1">
@@ -592,29 +522,25 @@ export function OutputPanel() {
                 }`}
                 onClick={() => setFilter(level)}
               >
-                {level.charAt(0).toUpperCase() + level.slice(1)}
+                {t(`output.${level}`)} <span className="ml-1 opacity-70">{counts[level]}</span>
               </button>
             ))}
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Load Server Log button */}
           <button
-            className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white rounded"
-            onClick={loadServerLog}
-            title="Load Server Log"
+            className="icon-button text-base"
+            onClick={() => void navigator.clipboard.writeText(filteredEntries.map((entry) => `[${formatTime(entry.timestamp)}] [${entry.source || entry.channel}] ${entry.message}`).join('\n'))}
+            title={t('output.copyVisible')}
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
+            ⧉
           </button>
-
           {/* Auto-scroll toggle */}
           <button
-            className={`p-1 rounded ${autoScroll ? 'text-blue-500 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white'}`}
+            className={`icon-button ${autoScroll ? 'text-blue-500 dark:text-blue-400' : ''}`}
             onClick={() => setAutoScroll(!autoScroll)}
-            title={autoScroll ? 'Auto-scroll enabled' : 'Auto-scroll disabled'}
+            title={autoScroll ? t('output.autoScrollOn') : t('output.autoScrollOff')}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
@@ -623,9 +549,9 @@ export function OutputPanel() {
 
           {/* Clear button */}
           <button
-            className="p-1 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white rounded"
-            onClick={clearEntries}
-            title="Clear output"
+            className="icon-button"
+            onClick={() => channel === 'all' ? clearEntries() : clearChannel(channel)}
+            title={channel === 'all' ? t('output.clear') : t('output.clearChannel')}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -642,7 +568,7 @@ export function OutputPanel() {
       >
         {filteredEntries.length === 0 ? (
           <div className="text-center text-slate-500 py-4">
-            No output yet
+            {t('output.empty')}
           </div>
         ) : (
           filteredEntries.map(entry => {

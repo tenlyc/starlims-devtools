@@ -28,6 +28,8 @@ import {
   getInlayHints,
   getRenameEdits
 } from '../lsp/ssl/navigation';
+import { DiagnosticLevel, useDiagnosticStore } from './diagnosticStore';
+import { useOutputLogStore } from './outputLogStore';
 
 const OWNER = 'starlims-ssl-lsp';
 const KEYWORDS = [
@@ -42,6 +44,7 @@ const KEYWORDS = [
 let registered = false;
 const modelListeners = new Map<string, Monaco.IDisposable>();
 const validationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const validationSummaries = new Map<string, string>();
 
 function documentFor(model: Monaco.editor.ITextModel): TextDocument {
   return TextDocument.create(model.uri.toString(), 'ssl', model.getVersionId(), model.getValue());
@@ -63,6 +66,16 @@ function severity(monaco: typeof Monaco, value?: DiagnosticSeverity): Monaco.Mar
   }
 }
 
+function diagnosticLevel(value?: DiagnosticSeverity): DiagnosticLevel {
+  if (value === DiagnosticSeverity.Error) return 'error';
+  if (value === DiagnosticSeverity.Warning) return 'warning';
+  return 'info';
+}
+
+function modelUri(model: Monaco.editor.ITextModel): string {
+  return model.uri.path || model.uri.toString();
+}
+
 function validate(monaco: typeof Monaco, model: Monaco.editor.ITextModel): void {
   if (model.isDisposed() || model.getLanguageId() !== 'ssl') return;
   try {
@@ -71,7 +84,7 @@ function validate(monaco: typeof Monaco, model: Monaco.editor.ITextModel): void 
       ...computeDiagnostics(errors),
       ...computeStyleDiagnostics(model.getValue(), ast, DEFAULT_STYLE_RULE_CONFIG)
     ];
-    monaco.editor.setModelMarkers(model, OWNER, diagnostics.map((item) => ({
+    const markers = diagnostics.map((item) => ({
       severity: severity(monaco, item.severity),
       message: typeof item.message === 'string' ? item.message : item.message.value,
       source: item.source || OWNER,
@@ -80,17 +93,54 @@ function validate(monaco: typeof Monaco, model: Monaco.editor.ITextModel): void 
       startColumn: item.range.start.character + 1,
       endLineNumber: item.range.end.line + 1,
       endColumn: Math.max(item.range.start.character + 2, item.range.end.character + 1)
+    }));
+    monaco.editor.setModelMarkers(model, OWNER, markers);
+    const uri = modelUri(model);
+    useDiagnosticStore.getState().setDiagnostics(uri, diagnostics.map((item, index) => ({
+      id: `${uri}:${item.range.start.line}:${item.range.start.character}:${String(item.code || index)}`,
+      uri,
+      level: diagnosticLevel(item.severity),
+      message: typeof item.message === 'string' ? item.message : item.message.value,
+      source: item.source || OWNER,
+      code: typeof item.code === 'string' || typeof item.code === 'number' ? String(item.code) : undefined,
+      line: item.range.start.line + 1,
+      column: item.range.start.character + 1,
+      endLine: item.range.end.line + 1,
+      endColumn: Math.max(item.range.start.character + 2, item.range.end.character + 1)
     })));
+    const errorCount = diagnostics.filter((item) => item.severity === DiagnosticSeverity.Error).length;
+    const warningCount = diagnostics.filter((item) => item.severity === DiagnosticSeverity.Warning).length;
+    const infoCount = diagnostics.length - errorCount - warningCount;
+    const summary = `${errorCount}:${warningCount}:${infoCount}`;
+    if (validationSummaries.get(uri) !== summary) {
+      validationSummaries.set(uri, summary);
+      useOutputLogStore.getState().addEntry({
+        channel: 'ssl-language',
+        level: errorCount ? 'error' : warningCount ? 'warning' : 'info',
+        source: 'SSL Language Server',
+        message: `${uri}: ${errorCount} error(s), ${warningCount} warning(s), ${infoCount} information message(s)`
+      });
+    }
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     monaco.editor.setModelMarkers(model, OWNER, [{
       severity: monaco.MarkerSeverity.Error,
-      message: error instanceof Error ? error.message : String(error),
+      message,
       startLineNumber: 1,
       startColumn: 1,
       endLineNumber: 1,
       endColumn: 2,
       source: OWNER
     }]);
+    const uri = modelUri(model);
+    useDiagnosticStore.getState().setDiagnostics(uri, [{
+      id: `${uri}:1:1:parser`, uri, level: 'error', message, source: OWNER,
+      line: 1, column: 1, endLine: 1, endColumn: 2
+    }]);
+    useOutputLogStore.getState().addEntry({
+      channel: 'ssl-language', level: 'error', source: 'SSL Language Server',
+      message: `${uri}: parser failed: ${message}`
+    });
   }
 }
 
@@ -109,6 +159,7 @@ function attachModel(monaco: typeof Monaco, model: Monaco.editor.ITextModel): vo
   modelListeners.get(key)?.dispose();
   if (model.getLanguageId() !== 'ssl') {
     monaco.editor.setModelMarkers(model, OWNER, []);
+    useDiagnosticStore.getState().clearDiagnostics(modelUri(model));
     modelListeners.delete(key);
     return;
   }
@@ -166,6 +217,13 @@ export function registerSslLanguageFeatures(monaco: typeof Monaco): void {
     const timer = validationTimers.get(key);
     if (timer) clearTimeout(timer);
     validationTimers.delete(key);
+    useDiagnosticStore.getState().clearDiagnostics(modelUri(model));
+    validationSummaries.delete(modelUri(model));
+  });
+
+  useOutputLogStore.getState().addEntry({
+    channel: 'ssl-language', level: 'success', source: 'SSL Language Server',
+    message: `SSL language features initialized (${getAllBuiltinNames().length} built-in functions)`
   });
 
   monaco.languages.registerDocumentFormattingEditProvider('ssl', {

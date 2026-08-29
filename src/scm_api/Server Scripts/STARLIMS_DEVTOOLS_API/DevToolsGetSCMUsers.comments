@@ -1,0 +1,1 @@
+update limsSOURCECONTROL set REASONFORCHECKOUT = 'STARLIMS DevTools: list Source Control check-in users.' where versionID = ?

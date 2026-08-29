@@ -1,0 +1,18 @@
+/******************************************************************************
+Description.. : Return users who have checked code into Source Control
+Author....... : STARLIMS DevTools
+*******************************************************************************/;
+:DECLARE oData, aRows, aUsers, i;
+aRows := SQLExecute(
+	"select distinct CHECKEDINBY from LIMSSOURCECONTROL " +
+	"where CHECKEDINBY is not null and CHECKEDINBY <> '' order by CHECKEDINBY",
+	"DICTIONARY"
+);
+aUsers := {};
+
+:FOR i := 1 :TO Len(aRows);
+	AAdd(aUsers, LimsString(aRows[i][1]));
+:NEXT;
+
+oData := CreateUDObject({{"users", aUsers}});
+:RETURN oData;

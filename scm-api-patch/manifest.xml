@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <ItemID>6F2E1D4A-9B3C-4E5F-8A1B-2C3D4E5F6A7B</ItemID>
+  <ItemName>SCM_API_History</ItemName>
+  <IsMandatory>false</IsMandatory>
+  <ItemBehaviour>merge</ItemBehaviour>
+  <PackageDate>2026-08-29T12:00:00</PackageDate>
+  <PathReadMe />
+  <PathEULA />
+  <PathLogo />
+  <OverwriteLayer>false</OverwriteLayer>
+  <ServerScriptCategoryCollection>
+    <ServerScriptCategory>
+      <ItemID>7C117241-417D-442D-80B6-BAD7797E8EF2</ItemID>
+      <ItemName>SCM_API</ItemName>
+      <LayerId>200</LayerId>
+      <ItemDescription />
+      <IsMandatory>false</IsMandatory>
+      <ItemBehaviour>merge</ItemBehaviour>
+      <ItemIsSystem>N</ItemIsSystem>
+      <ServerScriptCollection>
+        <ServerScript>
+          <ItemID>8A9B0C1D-2E3F-4A5B-6C7D-8E9F0A1B2C3D</ItemID>
+          <ItemName>CreateLabel</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription>Create a version label and attach it to an item/version (official SCM Create Label mirror)</ItemDescription>
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\CreateLabel.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>merge</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>6F7A8B9C-0D1E-4F2A-3B4C-5D6E7F8A9B0C</ItemID>
+          <ItemName>GetSCMItems</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription>Return every Source Control manageable item with its checkout state (mirrors the official SCM dsGetItemsFromSearch data source)</ItemDescription>
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\GetSCMItems.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>merge</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>5E6F7A8B-9C0D-4E1F-2A3B-4C5D6E7F8A9B</ItemID>
+          <ItemName>ExportItems</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription>Export selected enterprise items (live/checked-in state) to an SDP package for cross-environment deployment, matching the official SCM Send to Package Manager flow</ItemDescription>
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\ExportItems.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>merge</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>2D1C2C3E-1F4C-4D1C-8C3E-3C6F5D8A9B0E</ItemID>
+          <ItemName>ExportPackage</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription>Export checked out items to an SDP package; optional items parameter limits the export to selected item GUIDs</ItemDescription>
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\ExportPackage.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>4D5E6F7A-8B9C-4D0E-1F2A-3B4C5D6E7F8A</ItemID>
+          <ItemName>RecoverVersion</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription>Recover an old item version into the current version (official SCM scRecoverOldVersion mirror)</ItemDescription>
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\RecoverVersion.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>merge</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>1A2B3C4D-5E6F-4A7B-8C9D-0E1F2A3B4C5D</ItemID>
+          <ItemName>GetItemHistory</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription>Return the version history of an item from LIMSSOURCECONTROL (official SCM dsGetHistory mirror)</ItemDescription>
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\GetItemHistory.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>merge</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>2B3C4D5E-6F7A-4B8C-9D0E-1F2A3B4C5D6E</ItemID>
+          <ItemName>GetItemLabels</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription>Return the labels attached to an item from VERSIONSLABELS (official SCM dsGetLabelsForItem mirror)</ItemDescription>
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\GetItemLabels.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>merge</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>3C4D5E6F-7A8B-4C9D-0E1F-2A3B4C5D6E7F</ItemID>
+          <ItemName>GetItemVersionCode</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription>Read the code documents of a specific version from LIMSSOURCECONTROL (official SCM scGetCodeFromLimsSourceControl mirror)</ItemDescription>
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\GetItemVersionCode.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>merge</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+      </ServerScriptCollection>
+    </ServerScriptCategory>
+  </ServerScriptCategoryCollection>
+  <RequiredPackageCollection />
+  <OverwriteCodeBehind>false</OverwriteCodeBehind>
+  <ImportGlobalResources>false</ImportGlobalResources>
+  <CompareTables>false</CompareTables>
+</Package>

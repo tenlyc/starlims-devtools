@@ -1,0 +1,301 @@
+/******************************************************************************
+Description.. :	Return Source Control tree items with their latest checkout
+				state and version numbers. Mirrors the official Source Control
+				Manager dsGetItemsFromSearch data source, used to populate the
+				main-window tree. Supports the dlgSearch filters (item name,
+				item types, text search on reason/code, checked out only/by/
+				date range, checked in by/date range, and Factory/Dealer/Client
+				version numbers).
+Parameters... :	- itemName, types, checkedOutOnly, checkOutBy, checkInBy,
+				checkOutDateFrom/To, checkInDateFrom/To, factoryMajor/Minor/Build,
+				dealerMajor/Minor/Build, clientMajor/Minor/Build, textType, textValue
+Returns...... :	- { success, data: { items: [ ... ] } }
+Author....... :	STARLIMS DevTools
+Date......... : 2026-08-29
+******************************************************************************;
+:DECLARE oResponse, sItemName, sTypes, aTypes, bCheckedOutOnly, sSQL, aSel, aItems, i, oItem,
+		 sType, sCatName, sAppName, sItemName2, sItemId, sUri, sLayer, sCheckedOutBy,
+		 sCheckedOutDate, sCheckedInBy, sCheckedInDate, sFactory, sDealer, sClient,
+		 sReason, sVersionId, sDone, sDateOut, sDateIn, sState, aWhere, sWhere,
+		 sCheckOutBy, sCheckOutDateFrom, sCheckOutDateTo, sCheckInBy, sCheckInDateFrom,
+		 sCheckInDateTo, sFacMajor, sFacMinor, sFacBuild, sDeaMajor, sDeaMinor, sDeaBuild,
+		 sCliMajor, sCliMinor, sCliBuild, sTextType, sTextValue, sCond;
+oResponse := CreateUDObject({
+	{"success", .T.},
+	{"data", NIL}
+});
+
+/* Read optional filter query parameters */;
+sItemName := "";
+:IF Request:QueryString:IsProperty("itemName");
+	sItemName := AllTrim(Request:QueryString:itemName);
+:ENDIF;
+sTypes := "";
+:IF Request:QueryString:IsProperty("types");
+	sTypes := Request:QueryString:types;
+:ENDIF;
+aTypes := {};
+:IF !Empty(sTypes);
+	aTypes := BuildArray(sTypes,, ",");
+:ENDIF;
+bCheckedOutOnly := .F.;
+:IF Request:QueryString:IsProperty("checkedOutOnly") .AND. Upper(Request:QueryString:checkedOutOnly) == "TRUE";
+	bCheckedOutOnly := .T.;
+:ENDIF;
+sCheckOutBy := "";
+:IF Request:QueryString:IsProperty("checkOutBy");
+	sCheckOutBy := AllTrim(Request:QueryString:checkOutBy);
+:ENDIF;
+sCheckInBy := "";
+:IF Request:QueryString:IsProperty("checkInBy");
+	sCheckInBy := AllTrim(Request:QueryString:checkInBy);
+:ENDIF;
+sCheckOutDateFrom := "";
+:IF Request:QueryString:IsProperty("checkOutDateFrom");
+	sCheckOutDateFrom := AllTrim(Request:QueryString:checkOutDateFrom);
+:ENDIF;
+sCheckOutDateTo := "";
+:IF Request:QueryString:IsProperty("checkOutDateTo");
+	sCheckOutDateTo := AllTrim(Request:QueryString:checkOutDateTo);
+:ENDIF;
+sCheckInDateFrom := "";
+:IF Request:QueryString:IsProperty("checkInDateFrom");
+	sCheckInDateFrom := AllTrim(Request:QueryString:checkInDateFrom);
+:ENDIF;
+sCheckInDateTo := "";
+:IF Request:QueryString:IsProperty("checkInDateTo");
+	sCheckInDateTo := AllTrim(Request:QueryString:checkInDateTo);
+:ENDIF;
+sFacMajor := ""; sFacMinor := ""; sFacBuild := "";
+:IF Request:QueryString:IsProperty("factoryMajor"); sFacMajor := AllTrim(Request:QueryString:factoryMajor); :ENDIF;
+:IF Request:QueryString:IsProperty("factoryMinor"); sFacMinor := AllTrim(Request:QueryString:factoryMinor); :ENDIF;
+:IF Request:QueryString:IsProperty("factoryBuild"); sFacBuild := AllTrim(Request:QueryString:factoryBuild); :ENDIF;
+sDeaMajor := ""; sDeaMinor := ""; sDeaBuild := "";
+:IF Request:QueryString:IsProperty("dealerMajor"); sDeaMajor := AllTrim(Request:QueryString:dealerMajor); :ENDIF;
+:IF Request:QueryString:IsProperty("dealerMinor"); sDeaMinor := AllTrim(Request:QueryString:dealerMinor); :ENDIF;
+:IF Request:QueryString:IsProperty("dealerBuild"); sDeaBuild := AllTrim(Request:QueryString:dealerBuild); :ENDIF;
+sCliMajor := ""; sCliMinor := ""; sCliBuild := "";
+:IF Request:QueryString:IsProperty("clientMajor"); sCliMajor := AllTrim(Request:QueryString:clientMajor); :ENDIF;
+:IF Request:QueryString:IsProperty("clientMinor"); sCliMinor := AllTrim(Request:QueryString:clientMinor); :ENDIF;
+:IF Request:QueryString:IsProperty("clientBuild"); sCliBuild := AllTrim(Request:QueryString:clientBuild); :ENDIF;
+sTextType := "";
+:IF Request:QueryString:IsProperty("textType"); sTextType := AllTrim(Request:QueryString:textType); :ENDIF;
+sTextValue := "";
+:IF Request:QueryString:IsProperty("textValue"); sTextValue := AllTrim(Request:QueryString:textValue); :ENDIF;
+
+:TRY;
+	sLayer := AllTrim(Str(GetSystemLayerId()));
+
+	/* UNION of every manageable item type */;
+	sSQL := "select * from ( " +
+	"select 'APP_FRM' ITEM_TYPE, c.DISPLAYTEXT CAT_NAME, a.DISPLAYTEXT APP_NAME, f.DISPLAYTEXT ITEM_NAME, f.FORMID ITEM_ID " +
+	"from LIMSXFDFORMS f join LIMSAPPLICATIONS a on a.APPID = f.APPID join LIMSAPPCATEGORIES c on c.CATEGORYID = a.CATEGORYID " +
+	"where f.LAYERID = " + sLayer + " union " +
+	"select 'APP_SSC' ITEM_TYPE, c.DISPLAYTEXT CAT_NAME, a.DISPLAYTEXT APP_NAME, s.DISPLAYTEXT ITEM_NAME, s.SCRIPTID ITEM_ID " +
+	"from LIMSAPPLICATIONS a join LIMSAPPSERVERSCRIPTS aps on aps.APPID = a.APPID join LIMSSERVERSCRIPTS s on s.SCRIPTID = aps.SCRIPTID join LIMSAPPCATEGORIES c on c.CATEGORYID = a.CATEGORYID " +
+	"where s.LAYERID = " + sLayer + " union " +
+	"select 'APP_CS' ITEM_TYPE, c.DISPLAYTEXT CAT_NAME, a.DISPLAYTEXT APP_NAME, s.DISPLAYTEXT ITEM_NAME, s.SCRIPTID ITEM_ID " +
+	"from LIMSAPPLICATIONS a join LIMSAPPCLIENTSCRIPTS apc on apc.APPID = a.APPID join LIMSCLIENTSCRIPTS s on s.SCRIPTID = apc.SCRIPTID join LIMSAPPCATEGORIES c on c.CATEGORYID = a.CATEGORYID " +
+	"where s.LAYERID = " + sLayer + " union " +
+	"select 'APP_DS' ITEM_TYPE, c.DISPLAYTEXT CAT_NAME, a.DISPLAYTEXT APP_NAME, s.DISPLAYTEXT ITEM_NAME, s.DATASOURCEID ITEM_ID " +
+	"from LIMSAPPLICATIONS a join LIMSAPPDATASOURCES apd on apd.APPID = a.APPID join LIMSDATASOURCES s on s.DATASOURCEID = apd.DATASOURCEID join LIMSAPPCATEGORIES c on c.CATEGORYID = a.CATEGORYID " +
+	"where s.LAYERID = " + sLayer + " union " +
+	"select 'SSC' ITEM_TYPE, c.DISPLAYTEXT CAT_NAME, '' APP_NAME, s.DISPLAYTEXT ITEM_NAME, s.SCRIPTID ITEM_ID " +
+	"from LIMSSERVERSCRIPTS s join LIMSSERVERSCRIPTCATEGORIES c on c.CATEGORYID = s.CATEGORYID " +
+	"where s.LAYERID = " + sLayer + " union " +
+	"select 'CSC' ITEM_TYPE, c.DISPLAYTEXT CAT_NAME, '' APP_NAME, s.DISPLAYTEXT ITEM_NAME, s.SCRIPTID ITEM_ID " +
+	"from LIMSCLIENTSCRIPTS s join LIMSCLIENTSCRIPTCATEGORIES c on c.CATEGORYID = s.CATEGORYID " +
+	"where s.LAYERID = " + sLayer + " union " +
+	"select 'DS' ITEM_TYPE, c.DISPLAYTEXT CAT_NAME, '' APP_NAME, s.DISPLAYTEXT ITEM_NAME, s.DATASOURCEID ITEM_ID " +
+	"from LIMSDATASOURCES s join LIMSDATASOURCECATEGORIES c on c.CATEGORYID = s.CATEGORYID " +
+	"where s.LAYERID = " + sLayer + " union " +
+	"select 'TBL' ITEM_TYPE, iif(ISSYSTEM = 'Y', 'DICTIONARY', 'DATABASE') CAT_NAME, '' APP_NAME, TABLENAME ITEM_NAME, TABLEID ITEM_ID " +
+	"from LIMSTABLES where LAYERID = " + sLayer + " ) SCMITEMS ";
+
+	/* Join items with their newest Source Control record + version numbers */;
+	sSQL := "select T.ITEM_TYPE, T.CAT_NAME, T.APP_NAME, T.ITEM_NAME, T.ITEM_ID, " +
+			"LSC.CHECKEDOUTBY, LSC.CHECKEDOUTDATE, LSC.CHECKEDINBY, LSC.CHECKEDINDATE, " +
+			"LSC.REASONFORCHECKOUT, LSC.VERSIONID, LSC.DONE, " +
+			"VER.MAJOR, VER.MINOR, VER.BUILD, VER.DMAJOR, VER.DMINOR, VER.DBUILD, VER.CMAJOR, VER.CMINOR, VER.CBUILD, LSC.CODEDOCUMENT " +
+			"from (" + sSQL + ") T " +
+			"left outer join ( " +
+			"select LSC1.CHECKEDOUTBY, LSC1.CHECKEDOUTDATE, LSC1.CHECKEDINBY, LSC1.CHECKEDINDATE, " +
+			"LSC1.REASONFORCHECKOUT, LSC1.VERSIONID, LSC1.DONE, LSC1.ITEMID, LSC1.CODEDOCUMENT " +
+			"from LIMSSOURCECONTROL LSC1 " +
+			"where LSC1.ORIGREC in (select max(ORIGREC) from LIMSSOURCECONTROL group by ITEMID) " +
+			") LSC on T.ITEM_ID = LSC.ITEMID " +
+			"left outer join LIMSVERSIONS VER on LSC.VERSIONID = VER.VERSIONID ";
+
+	/* Build the WHERE clauses (mirrors dsGetItemsFromSearch) */;
+	aWhere := {};
+	:IF !Empty(sItemName);
+		sCond := "upper(T.ITEM_NAME) like upper('%" + StrTran(sItemName, "'", "''") + "%')";
+		AAdd(aWhere, sCond);
+	:ENDIF;
+	:IF Len(aTypes) > 0;
+		:DECLARE sTypeFilter, j;
+		sTypeFilter := "";
+		:FOR j := 1 :TO Len(aTypes);
+			:IF j > 1;
+				sTypeFilter := sTypeFilter + "','";
+			:ENDIF;
+			sTypeFilter := sTypeFilter + aTypes[j];
+		:NEXT;
+		AAdd(aWhere, "T.ITEM_TYPE in ('" + sTypeFilter + "')");
+	:ENDIF;
+	:IF bCheckedOutOnly;
+		AAdd(aWhere, "LSC.DONE = 0");
+	:ENDIF;
+	:IF !Empty(sCheckOutBy);
+		AAdd(aWhere, "upper(LSC.CHECKEDOUTBY) = upper('" + StrTran(sCheckOutBy, "'", "''") + "')");
+	:ENDIF;
+	:IF !Empty(sCheckInBy);
+		AAdd(aWhere, "upper(LSC.CHECKEDINBY) = upper('" + StrTran(sCheckInBy, "'", "''") + "')");
+	:ENDIF;
+	:IF !Empty(sCheckOutDateFrom);
+		:IF PLATFORMA == "ORACLE";
+			AAdd(aWhere, "LSC.CHECKEDOUTDATE >= TO_DATE('" + sCheckOutDateFrom + " 00:00:00', 'YYYY-MM-DD HH24:MI:SS')");
+		:ELSE;
+			AAdd(aWhere, "LSC.CHECKEDOUTDATE >= CONVERT(datetime, '" + sCheckOutDateFrom + " 00:00:00', 120)");
+		:ENDIF;
+	:ENDIF;
+	:IF !Empty(sCheckOutDateTo);
+		:IF PLATFORMA == "ORACLE";
+			AAdd(aWhere, "LSC.CHECKEDOUTDATE <= TO_DATE('" + sCheckOutDateTo + " 23:59:59', 'YYYY-MM-DD HH24:MI:SS')");
+		:ELSE;
+			AAdd(aWhere, "LSC.CHECKEDOUTDATE <= CONVERT(datetime, '" + sCheckOutDateTo + " 23:59:59', 120)");
+		:ENDIF;
+	:ENDIF;
+	:IF !Empty(sCheckInDateFrom);
+		:IF PLATFORMA == "ORACLE";
+			AAdd(aWhere, "LSC.CHECKEDINDATE >= TO_DATE('" + sCheckInDateFrom + " 00:00:00', 'YYYY-MM-DD HH24:MI:SS')");
+		:ELSE;
+			AAdd(aWhere, "LSC.CHECKEDINDATE >= CONVERT(datetime, '" + sCheckInDateFrom + " 00:00:00', 120)");
+		:ENDIF;
+	:ENDIF;
+	:IF !Empty(sCheckInDateTo);
+		:IF PLATFORMA == "ORACLE";
+			AAdd(aWhere, "LSC.CHECKEDINDATE <= TO_DATE('" + sCheckInDateTo + " 23:59:59', 'YYYY-MM-DD HH24:MI:SS')");
+		:ELSE;
+			AAdd(aWhere, "LSC.CHECKEDINDATE <= CONVERT(datetime, '" + sCheckInDateTo + " 23:59:59', 120)");
+		:ENDIF;
+	:ENDIF;
+	:IF !Empty(sFacMajor) .OR. !Empty(sFacMinor) .OR. !Empty(sFacBuild);
+		AAdd(aWhere, "VER.MAJOR = " + sFacMajor + " and VER.MINOR = " + sFacMinor + " and VER.BUILD = " + sFacBuild);
+	:ENDIF;
+	:IF !Empty(sDeaMajor) .OR. !Empty(sDeaMinor) .OR. !Empty(sDeaBuild);
+		AAdd(aWhere, "VER.DMAJOR = " + sDeaMajor + " and VER.DMINOR = " + sDeaMinor + " and VER.DBUILD = " + sDeaBuild);
+	:ENDIF;
+	:IF !Empty(sCliMajor) .OR. !Empty(sCliMinor) .OR. !Empty(sCliBuild);
+		AAdd(aWhere, "VER.CMAJOR = " + sCliMajor + " and VER.CMINOR = " + sCliMinor + " and VER.CBUILD = " + sCliBuild);
+	:ENDIF;
+	:IF !Empty(sTextType) .AND. !Empty(sTextValue);
+		:DECLARE sTextField;
+		sTextField := "LSC.CODEDOCUMENT";
+		:IF sTextType == "REASON";
+			sTextField := "LSC.REASONFORCHECKOUT";
+		:ENDIF;
+		sCond := "upper(" + sTextField + ") like upper('%" + StrTran(sTextValue, "'", "''") + "%')";
+		AAdd(aWhere, sCond);
+	:ENDIF;
+
+	/* Assemble WHERE */;
+	:IF Len(aWhere) > 0;
+		sWhere := " where 1=1 ";
+		:FOR i := 1 :TO Len(aWhere);
+			sWhere := sWhere + " and " + aWhere[i];
+		:NEXT;
+		sSQL := sSQL + sWhere;
+	:ENDIF;
+
+	aSel := SQLExecute(sSQL, "DICTIONARY");
+
+	aItems := {};
+	:FOR i := 1 :TO Len(aSel);
+		sType := aSel[i,1];
+		sCatName := aSel[i,2];
+		sAppName := aSel[i,3];
+		sItemName2 := aSel[i,4];
+		sItemId := aSel[i,5];
+		sCheckedOutBy := aSel[i,6];
+		sDateOut := aSel[i,7];
+		sCheckedInBy := aSel[i,8];
+		sDateIn := aSel[i,9];
+		sReason := aSel[i,10];
+		sVersionId := aSel[i,11];
+		sDone := aSel[i,12];
+		sFactory := ""; sDealer := ""; sClient := "";
+		:IF !Empty(aSel[i,13]) .OR. !Empty(aSel[i,14]) .OR. !Empty(aSel[i,15]);
+			sFactory := aSel[i,13] + "." + aSel[i,14] + "." + aSel[i,15];
+		:ENDIF;
+		:IF !Empty(aSel[i,16]) .OR. !Empty(aSel[i,17]) .OR. !Empty(aSel[i,18]);
+			sDealer := aSel[i,16] + "." + aSel[i,17] + "." + aSel[i,18];
+		:ENDIF;
+		:IF !Empty(aSel[i,19]) .OR. !Empty(aSel[i,20]) .OR. !Empty(aSel[i,21]);
+			sClient := aSel[i,19] + "." + aSel[i,20] + "." + aSel[i,21];
+		:ENDIF;
+
+		sUri := "";
+		:BEGINCASE;
+			:CASE sType == "APP_FRM"; sUri := "/Applications/" + sCatName + "/" + sAppName + "/" + sItemName2;
+			:EXITCASE;
+			:CASE sType == "APP_SSC"; sUri := "/Applications/" + sCatName + "/" + sAppName + "/ServerScripts/" + sItemName2;
+			:EXITCASE;
+			:CASE sType == "APP_CS"; sUri := "/Applications/" + sCatName + "/" + sAppName + "/ClientScripts/" + sItemName2;
+			:EXITCASE;
+			:CASE sType == "APP_DS"; sUri := "/Applications/" + sCatName + "/" + sAppName + "/DataSources/" + sItemName2;
+			:EXITCASE;
+			:CASE sType == "SSC"; sUri := "/ServerScripts/" + sCatName + "/" + sItemName2;
+			:EXITCASE;
+			:CASE sType == "CSC"; sUri := "/ClientScripts/" + sCatName + "/" + sItemName2;
+			:EXITCASE;
+			:CASE sType == "DS"; sUri := "/DataSources/" + sCatName + "/" + sItemName2;
+			:EXITCASE;
+			:CASE sType == "TBL"; sUri := "/Tables/" + iif(sCatName == "DICTIONARY", "Dictionary", "Database") + "/" + sItemName2;
+			:EXITCASE;
+		:ENDCASE;
+
+		:IF sDone == "0";
+			sState := "Checked Out";
+		:ELSE;
+			:IF !Empty(sCheckedInBy);
+				sState := "Checked In";
+			:ELSE;
+				sState := "";
+			:ENDIF;
+		:ENDIF;
+
+		oItem := CreateUDObject({
+			{"itemType", sType},
+			{"catName", sCatName},
+			{"appName", sAppName},
+			{"itemName", sItemName2},
+			{"itemId", sItemId},
+			{"uri", sUri},
+			{"state", sState},
+			{"isCheckedOut", iif(sDone == "0", .T., .F.)},
+			{"checkedOutBy", sCheckedOutBy},
+			{"checkedOutDate", sDateOut},
+			{"checkedInBy", sCheckedInBy},
+			{"checkedInDate", sDateIn},
+			{"factoryVersion", sFactory},
+			{"dealerVersion", sDealer},
+			{"clientVersion", sClient},
+			{"reason", sReason},
+			{"versionId", sVersionId}
+		});
+		AAdd(aItems, oItem);
+	:NEXT;
+
+	oResponse:success := .T.;
+	oResponse:data := CreateUDObject({
+		{"items", aItems}
+	});
+	Response:StatusCode := 200;
+	:RETURN oResponse;
+:CATCH;
+	Response:StatusCode := 500;
+	oResponse:success := .F.;
+	oResponse:data := "GetSCMItems error: " + ErrorMessage();
+	:RETURN oResponse;
+:ENDTRY;

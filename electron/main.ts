@@ -1,12 +1,16 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu, net } from 'electron';
-import { join } from 'path';
-import { existsSync, readdirSync, statSync } from 'fs';
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, net, safeStorage } from 'electron';
+import { delimiter, join } from 'path';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { randomUUID } from 'crypto';
 import Store from 'electron-store';
 import log from 'electron-log';
 import { StarlimsMcpHttpServer } from './mcpServer';
 import { AgentRuntimeManager } from './agentRuntime';
-import type { AgentApprovalDecision, AgentEvent, AgentProvider, AgentRuntimeStatus } from '../src/types/agent';
+import { withLocalMcpNoProxy } from './localMcpEnv';
+import { GenericAgentRuntime } from './genericAgentRuntime';
+import { ExternalMcpManager } from './externalMcpManager';
+import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentProvider, AgentRuntimeStatus, ExternalMcpServers } from '../src/types/agent';
+import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
 
 // Configure logging
 log.transports.file.level = 'info';
@@ -14,18 +18,38 @@ log.transports.console.level = 'debug';
 log.info('Application starting...');
 
 // Initialize store
+const LEGACY_MCP_PORT = 3002;
+const DEFAULT_MCP_PORT = 3102;
 const store = new Store({
   name: 'starlims-devtools-config',
   defaults: {
     servers: [],
     selectedServer: '',
-    mcpPort: 3002,
+    mcpPort: DEFAULT_MCP_PORT,
     windowBounds: { width: 1400, height: 900 }
   }
 });
 
+// Port 3002 belongs to starlimsvscode and 3003-3099 is its form callback
+// range. Migrate the old DevTools default outside both reserved ranges.
+if (Number(store.get('mcpPort')) === LEGACY_MCP_PORT) {
+  store.set('mcpPort', DEFAULT_MCP_PORT);
+  log.info(`Migrated STARLIMS DevTools MCP port from ${LEGACY_MCP_PORT} to ${DEFAULT_MCP_PORT}.`);
+}
+
+const getMcpPort = (): number => Number(store.get('mcpPort') || DEFAULT_MCP_PORT);
+
 let mainWindow: BrowserWindow | null = null;
 let agentRuntime: AgentRuntimeManager | undefined;
+let genericAgentRuntime: GenericAgentRuntime | undefined;
+const EXTERNAL_MCP_STORE_KEY = 'externalMcpServers.v1';
+const getExternalMcpServers = (): ExternalMcpServers => (store.get(EXTERNAL_MCP_STORE_KEY) || {}) as ExternalMcpServers;
+const externalMcpManager = new ExternalMcpManager();
+externalMcpManager.setConfigs(getExternalMcpServers());
+const emitDiagnosticLog = (event: Omit<DiagnosticLogEvent, 'timestamp'>): void => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('devtools:log', { ...event, timestamp: Date.now() } satisfies DiagnosticLogEvent);
+};
 const pendingMcpCalls = new Map<string, {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
@@ -50,9 +74,16 @@ const callRenderer = (tool: string, arguments_: Record<string, unknown>): Promis
 const mcpServer = new StarlimsMcpHttpServer(
   callRenderer,
   () => app.getVersion(),
-  (message, error) => error ? log.error(message, error) : log.info(message),
+  (message, error) => {
+    if (error) log.error(message, error);
+    else log.info(message);
+    emitDiagnosticLog({
+      channel: 'mcp-server', level: error ? 'error' : 'info', source: 'MCP Server',
+      message: error ? `${message} ${error instanceof Error ? error.message : String(error)}` : message
+    });
+  },
   '127.0.0.1',
-  Number(store.get('mcpPort') || 3002)
+  getMcpPort()
 );
 
 // Get resource path for production
@@ -198,6 +229,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   agentRuntime?.dispose();
+  genericAgentRuntime?.interrupt();
   void mcpServer.stop();
 });
 
@@ -242,15 +274,24 @@ ipcMain.handle('store:delete', (_, key: string) => {
   return true;
 });
 
-// Secret storage (using electron-store with encryption)
+// Secret storage. Existing plain-string entries remain readable and migrate on the next save.
 const secretsStore = new Store({ name: 'starlims-secrets' });
 
 ipcMain.handle('secrets:get', (_, key: string) => {
-  return secretsStore.get(key);
+  const stored = secretsStore.get(key) as unknown;
+  if (stored && typeof stored === 'object' && (stored as any).encrypted === true && typeof (stored as any).value === 'string') {
+    try { return safeStorage.decryptString(Buffer.from((stored as any).value, 'base64')); }
+    catch (error) { log.error(`Failed to decrypt secret ${key}.`, error); return ''; }
+  }
+  return typeof stored === 'string' ? stored : '';
 });
 
 ipcMain.handle('secrets:set', (_, key: string, value: string) => {
-  secretsStore.set(key, value);
+  if (safeStorage.isEncryptionAvailable()) {
+    secretsStore.set(key, { encrypted: true, value: safeStorage.encryptString(value).toString('base64') });
+  } else {
+    secretsStore.set(key, value);
+  }
   return true;
 });
 
@@ -338,11 +379,15 @@ ipcMain.handle('app:getResourcePath', () => {
 });
 
 // HTTP Request proxy to avoid CORS issues
+// When `binary` is true, the response body is collected as raw bytes and
+// returned base64-encoded (required for downloading SDP packages).
 ipcMain.handle('http:request', async (_, options: {
   url: string;
   method: string;
   headers?: Record<string, string>;
   body?: string;
+  bodyBase64?: string;
+  binary?: boolean;
 }) => {
   return new Promise((resolve, reject) => {
     const request = net.request({
@@ -359,6 +404,7 @@ ipcMain.handle('http:request', async (_, options: {
 
     // Collect response
     let responseData = '';
+    const chunks: Buffer[] = [];
     let responseHeaders: Record<string, string> = {};
 
     request.on('response', (response) => {
@@ -367,7 +413,11 @@ ipcMain.handle('http:request', async (_, options: {
       });
 
       response.on('data', (chunk) => {
-        responseData += chunk.toString();
+        if (options.binary) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        } else {
+          responseData += chunk.toString();
+        }
       });
 
       response.on('end', () => {
@@ -376,7 +426,7 @@ ipcMain.handle('http:request', async (_, options: {
           status: response.statusCode,
           statusText: response.statusMessage,
           headers: responseHeaders,
-          data: responseData
+          data: options.binary ? Buffer.concat(chunks).toString('base64') : responseData
         });
       });
 
@@ -390,7 +440,9 @@ ipcMain.handle('http:request', async (_, options: {
     });
 
     // Send body if present
-    if (options.body) {
+    if (options.bodyBase64) {
+      request.write(Buffer.from(options.bodyBase64, 'base64'));
+    } else if (options.body) {
       request.write(options.body);
     }
 
@@ -448,6 +500,27 @@ const resolveCodexCommand = (): string => {
   const configured = process.env.CODEX_CLI_PATH?.trim();
   if (configured && existsSync(configured)) return configured;
 
+  const executable = process.platform === 'win32' ? 'codex.exe' : 'codex';
+  const home = process.env.HOME || process.env.USERPROFILE || app.getPath('home');
+  const pathCandidates = (process.env.PATH || '')
+    .split(delimiter)
+    .filter(Boolean)
+    .map((directory) => join(directory, executable));
+
+  if (process.platform === 'darwin') {
+    const macCandidates = [
+      '/Applications/ChatGPT.app/Contents/Resources/codex',
+      '/Applications/Codex.app/Contents/Resources/codex',
+      join(home, 'Applications', 'ChatGPT.app', 'Contents', 'Resources', 'codex'),
+      join(home, 'Applications', 'Codex.app', 'Contents', 'Resources', 'codex'),
+      '/opt/homebrew/bin/codex',
+      '/usr/local/bin/codex',
+      join(home, '.local', 'bin', 'codex')
+    ];
+    const resolved = [...pathCandidates, ...macCandidates].find((candidate) => existsSync(candidate));
+    if (resolved) return resolved;
+  }
+
   if (process.platform === 'win32') {
     const localAppData = process.env.LOCALAPPDATA;
     const codexBin = localAppData ? join(localAppData, 'OpenAI', 'Codex', 'bin') : '';
@@ -465,7 +538,31 @@ const resolveCodexCommand = (): string => {
 
     const npmShim = process.env.APPDATA ? join(process.env.APPDATA, 'npm', 'codex.cmd') : '';
     if (npmShim && existsSync(npmShim)) return npmShim;
+
+    const windowsCandidates = [
+      process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Programs', 'ChatGPT', 'resources', 'codex.exe') : '',
+      process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'OpenAI', 'ChatGPT', 'resources', 'codex.exe') : '',
+      process.env.ProgramFiles ? join(process.env.ProgramFiles, 'ChatGPT', 'resources', 'codex.exe') : '',
+      join(home, '.local', 'bin', 'codex.exe')
+    ].filter(Boolean);
+    const resolved = windowsCandidates.find((candidate) => existsSync(candidate));
+    if (resolved) return resolved;
   }
+
+  if (process.platform === 'linux') {
+    const linuxCandidates = [
+      '/usr/local/bin/codex',
+      '/usr/bin/codex',
+      '/snap/bin/codex',
+      join(home, '.local', 'bin', 'codex'),
+      join(home, '.npm-global', 'bin', 'codex')
+    ];
+    const resolved = [...pathCandidates, ...linuxCandidates].find((candidate) => existsSync(candidate));
+    if (resolved) return resolved;
+  }
+
+  const resolvedFromPath = pathCandidates.find((candidate) => existsSync(candidate));
+  if (resolvedFromPath) return resolvedFromPath;
 
   return 'codex';
 };
@@ -475,6 +572,7 @@ const getAgentRuntime = (): AgentRuntimeManager => {
     agentRuntime = new AgentRuntimeManager({
       codexCommand: resolveCodexCommand,
       mcpUrl: () => mcpServer.getStatus().url,
+      externalMcpServers: getExternalMcpServers,
       cwd: () => process.cwd(),
       getVersion: () => app.getVersion(),
       emit: (event: AgentEvent) => {
@@ -485,9 +583,16 @@ const getAgentRuntime = (): AgentRuntimeManager => {
   return agentRuntime;
 };
 
+const getGenericAgentRuntime = (): GenericAgentRuntime => {
+  genericAgentRuntime ||= new GenericAgentRuntime(callRenderer, externalMcpManager, (event) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent:event', event);
+  });
+  return genericAgentRuntime;
+};
+
 const cliCommand = (provider: CliProvider): { command: string; versionArgs: string[]; runArgs: string[] } => {
   if (provider === 'codex') {
-    const mcpUrl = `http://127.0.0.1:${Number(store.get('mcpPort') || 3002)}/mcp`;
+    const mcpUrl = `http://127.0.0.1:${getMcpPort()}/mcp`;
     return {
       command: resolveCodexCommand(),
       versionArgs: ['--version'],
@@ -538,7 +643,7 @@ const executeCli = async (provider: CliProvider, prompt: string): Promise<string
     const child = spawn(spec.command, spec.runArgs, {
       shell: true,
       windowsHide: true,
-      env: { ...process.env }
+      env: provider === 'codex' ? withLocalMcpNoProxy() : { ...process.env }
     });
     let stdout = '';
     let stderr = '';
@@ -584,13 +689,61 @@ ipcMain.handle('agent:getStatuses', async () => {
   return getAgentRuntime().statuses(openCodeStatus);
 });
 
-ipcMain.handle('agent:start', async (_, provider: AgentProvider, prompt: string) => {
+ipcMain.handle('agent:getModels', async (_, provider: AgentProvider) => {
+  if (provider !== 'codex') return [];
+  return getAgentRuntime().models(provider);
+});
+
+ipcMain.handle('agent:getExternalMcpServers', () => getExternalMcpServers());
+ipcMain.handle('agent:setExternalMcpServers', async (_, servers: ExternalMcpServers) => {
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) throw new Error('MCP configuration must be an object.');
+  for (const [name, config] of Object.entries(servers)) {
+    if (!name.trim() || !config || typeof config !== 'object') throw new Error('Each MCP server requires a valid name and configuration.');
+    const transport = config.transport || (config.command ? 'stdio' : 'http');
+    if (!['http', 'sse', 'stdio'].includes(transport)) throw new Error(`Unsupported MCP transport for '${name}'.`);
+    if (transport === 'stdio' && !config.command?.trim()) throw new Error(`MCP server '${name}' requires command.`);
+    if (transport !== 'stdio' && !config.url?.trim()) throw new Error(`MCP server '${name}' requires url.`);
+  }
+  store.set(EXTERNAL_MCP_STORE_KEY, servers);
+  externalMcpManager.setConfigs(servers);
+  genericAgentRuntime?.newSession();
+  agentRuntime?.dispose();
+  agentRuntime = undefined;
+  return true;
+});
+
+ipcMain.handle('agent:selectFiles', async (): Promise<AgentFileAttachment[]> => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    title: 'Attach files to Agent',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Code and text files', extensions: ['ssl', 'srvscr', 'ss', 'js', 'jsx', 'ts', 'tsx', 'json', 'xml', 'sql', 'md', 'txt', 'css', 'html', 'htm', 'yaml', 'yml', 'csv', 'log'] },
+      { name: 'All files', extensions: ['*'] }
+    ]
+  });
+  if (result.canceled) return [];
+  return result.filePaths.map((filePath) => {
+    const size = statSync(filePath).size;
+    if (size > 2 * 1024 * 1024) throw new Error(`File is larger than 2 MB: ${filePath}`);
+    const buffer = readFileSync(filePath);
+    if (buffer.includes(0)) throw new Error(`Binary files are not supported yet: ${filePath}`);
+    return {
+      id: `file:${filePath}`,
+      name: filePath.split(/[\\/]/).pop() || filePath,
+      path: filePath,
+      content: buffer.toString('utf8'),
+      size
+    };
+  });
+});
+
+ipcMain.handle('agent:start', async (_, provider: AgentProvider, prompt: string, model?: string) => {
   if (!['codex', 'claude'].includes(provider)) throw new Error('This provider does not support rich agent sessions yet.');
   if (!prompt.trim()) throw new Error('Prompt is required.');
   await mcpServer.start();
   const status = mcpServer.getStatus();
   if (!status.running) throw new Error(`STARLIMS MCP is not running: ${status.error || status.url}`);
-  return getAgentRuntime().send(provider, prompt);
+  return getAgentRuntime().send(provider, prompt, model);
 });
 
 ipcMain.handle('agent:interrupt', async (_, provider: AgentProvider) => getAgentRuntime().interrupt(provider));
@@ -599,6 +752,14 @@ ipcMain.handle('agent:respondApproval', async (_, provider: AgentProvider, reque
   getAgentRuntime().respond(provider, requestId, decision);
   return true;
 });
+
+ipcMain.handle('generic-agent:listModels', async (_, config) => getGenericAgentRuntime().listModels(config));
+ipcMain.handle('generic-agent:start', async (_, config, prompt: string) => {
+  if (!config?.baseUrl || !config?.apiKey || !config?.model) throw new Error('Base URL, API Key, and model are required.');
+  return getGenericAgentRuntime().send(config, prompt);
+});
+ipcMain.handle('generic-agent:interrupt', async () => getGenericAgentRuntime().interrupt());
+ipcMain.handle('generic-agent:newSession', async () => getGenericAgentRuntime().newSession());
 
 ipcMain.handle('cli:execute', async (_, provider: CliProvider, prompt: string) => {
   if (!['codex', 'claude', 'opencode'].includes(provider)) throw new Error('Unsupported AI CLI provider.');

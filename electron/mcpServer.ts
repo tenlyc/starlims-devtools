@@ -45,7 +45,7 @@ export class StarlimsMcpHttpServer {
     private readonly getVersion: () => string,
     private readonly log: (message: string, error?: unknown) => void,
     private readonly host = '127.0.0.1',
-    private port = 3002
+    private port = 3102
   ) {}
 
   getStatus(): McpStatus {
@@ -153,6 +153,12 @@ export class StarlimsMcpHttpServer {
       z.object({ includeAllUsers: z.boolean().optional() }), true);
     this.register(server, 'read_log', 'Read the current STARLIMS server log.', z.object({}), true);
     this.register(server, 'get_table_definition', 'Read a STARLIMS table XML definition.', uriSchema, true);
+    this.register(server, 'query_checkin_history', 'Query STARLIMS Source Control Manager by check-in user and inclusive date range.',
+      z.object({
+        user: z.string().min(1),
+        dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+      }), true);
 
     this.register(server, 'checkout_item', 'Check out a STARLIMS item before editing it.',
       z.object({ uri: z.string().min(1), language: z.string().optional() }), false);
@@ -161,7 +167,8 @@ export class StarlimsMcpHttpServer {
     this.register(server, 'checkin_item', 'Check in a STARLIMS item after edits are complete.',
       z.object({ uri: z.string().min(1), reason: z.string().min(1) }), false);
     this.register(server, 'undo_checkout', 'Undo checkout for a STARLIMS item.', uriSchema, false);
-    this.register(server, 'execute_server_script', 'Execute a STARLIMS server script.', uriSchema, false);
+    this.register(server, 'execute_server_script', 'Execute a STARLIMS server script.',
+      z.object({ uri: z.string().min(1), parameters: z.array(z.unknown()).optional() }), false);
     this.register(server, 'execute_data_source', 'Execute a STARLIMS data source.', uriSchema, false);
 
     return server;

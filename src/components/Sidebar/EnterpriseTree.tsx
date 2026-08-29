@@ -3,6 +3,9 @@ import { useServerStore } from '../../stores/serverStore';
 import { getEnterpriseService } from '../../services/enterpriseService';
 import { editorStore } from '../../stores/editorStore';
 import { ContextMenu, ContextMenuItem } from '../ContextMenu';
+import { VersionHistoryDialog } from '../SCM/VersionHistoryDialog';
+import { useI18n } from '../../i18n';
+import { buildEnterpriseSearchTree, collectSearchFolderIds } from '../../services/enterpriseSearchTree';
 
 export interface TreeItem {
   id: string;
@@ -22,6 +25,12 @@ function getItemKey(item: TreeItem, index: number): string {
   return `${item.id || item.uri || item.label}-${item.type}-${index}`;
 }
 
+function resultLeafCount(items: TreeItem[]): number {
+  return items.reduce((count, item) => count + (item.children?.length
+    ? resultLeafCount(item.children)
+    : 1), 0);
+}
+
 // Icon mapping for different item types
 const itemTypeIcons: Record<string, string> = {
   'SERVERLOG': '📋',
@@ -30,8 +39,11 @@ const itemTypeIcons: Record<string, string> = {
   'APP': '📦',
   'HTMLFORMXML': '🌐',
   'HTMLFORMCODE': '📄',
+  'HTMLFORMGUIDE': '{}',
+  'HTMLFORMRESOURCES': '📑',
   'XFDFORMXML': '📝',
   'XFDFORMCODE': '📄',
+  'XFDFORMRESOURCES': '📑',
   'SS': '🖥️',
   'APPSS': '🖥️',
   'CS': '🖱️',
@@ -111,7 +123,7 @@ function TreeNode({ item, level, onItemClick, onItemExpand, onContextMenu, onDou
 
         {/* Loading indicator */}
         {item.isLoading && (
-          <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">Loading...</span>
+          <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">…</span>
         )}
       </div>
 
@@ -137,12 +149,14 @@ function TreeNode({ item, level, onItemClick, onItemExpand, onContextMenu, onDou
 }
 
 export function EnterpriseTree() {
+  const { t } = useI18n();
   const [rootItems, setRootItems] = useState<TreeItem[]>([]);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [selectedItem, setSelectedItem] = useState<TreeItem | null>(null);
   const [_isLoading, _setIsLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: TreeItem } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [historyItem, setHistoryItem] = useState<TreeItem | null>(null);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -150,6 +164,7 @@ export function EnterpriseTree() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchType, setSearchType] = useState<'name' | 'global'>('name'); // 'name' = search by name, 'global' = global code search
   const [isSearchLoading, setIsSearchLoading] = useState(false);
+  const [isSearchBarOpen, setIsSearchBarOpen] = useState(false);
 
   const { currentServer, isConnected } = useServerStore();
   const currentUser = currentServer?.user || '';
@@ -159,29 +174,27 @@ export function EnterpriseTree() {
     setRefreshKey(k => k + 1);
   }, []);
 
+  const openSearch = useCallback((type: 'name' | 'global') => {
+    setSearchType(type);
+    setIsSearchBarOpen(true);
+    window.setTimeout(() => {
+      const searchInput = document.querySelector('#enterprise-tree-search input') as HTMLInputElement | null;
+      searchInput?.focus();
+      searchInput?.select();
+    }, 0);
+  }, []);
+
   // Listen for global search trigger event (from keyboard shortcut in editor)
   useEffect(() => {
     const handleTriggerGlobalSearch = () => {
-      // Switch to global code search mode
-      setSearchType('global');
-      // Focus the search input by scrolling to top and triggering search
-      const searchContainer = document.getElementById('enterprise-tree-search');
-      if (searchContainer) {
-        searchContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-      // Select the search input
-      const searchInput = document.querySelector('#enterprise-tree-search input') as HTMLInputElement;
-      if (searchInput) {
-        searchInput.focus();
-        searchInput.select();
-      }
+      openSearch('global');
     };
 
     window.addEventListener('trigger-global-search', handleTriggerGlobalSearch);
     return () => {
       window.removeEventListener('trigger-global-search', handleTriggerGlobalSearch);
     };
-  }, []);
+  }, [openSearch]);
 
   // Reveal item in tree by expanding path to it
   const revealItemInTree = useCallback(async (itemUri: string) => {
@@ -279,7 +292,7 @@ export function EnterpriseTree() {
     if (item.uri && !item.hasChildren) {
       try {
         const enterpriseService = getEnterpriseService();
-        const code = await enterpriseService.getItemCode(item.uri);
+        const code = await enterpriseService.getItemCode(item.uri, item.language);
         if (code) {
           editorStore.getState().openFile({
             uri: item.uri,
@@ -570,6 +583,18 @@ export function EnterpriseTree() {
       }
     }
 
+    // Version History & Labels (official SCM feature) for code items and forms
+    if (!isFolder && item.uri && ['SS', 'APPSS', 'CS', 'APPCS', 'DS', 'APPDS',
+      'HTMLFORMXML', 'HTMLFORMCODE', 'HTMLFORMGUIDE', 'HTMLFORMRESOURCES',
+      'XFDFORMXML', 'XFDFORMCODE', 'XFDFORMRESOURCES'].includes(item.type)) {
+      items.push({ id: 'divider', label: '', divider: true } as ContextMenuItem);
+      items.push({
+        id: 'version-history',
+        label: t('history.title'),
+        icon: '📜'
+      });
+    }
+
     return items;
   };
 
@@ -827,7 +852,10 @@ export function EnterpriseTree() {
           if (foundItem && foundItem.uri) {
             // Reveal in tree and open
             await revealItemInTree(foundItem.uri);
-            const code = await enterpriseService.getItemCode(foundItem.uri);
+            const code = await enterpriseService.getItemCode(
+              foundItem.uri,
+              foundItem.scriptLanguage || foundItem.language
+            );
             if (code) {
               editorStore.getState().openFile({
                 uri: foundItem.uri,
@@ -842,6 +870,9 @@ export function EnterpriseTree() {
             console.log('Could not find item:', itemName, 'types:', searchTypes.join(', '));
           }
         }
+        break;
+      case 'version-history':
+        setHistoryItem(item);
         break;
     }
   };
@@ -929,9 +960,12 @@ export function EnterpriseTree() {
         type: item.type || 'DEFAULT',
         uri: item.uri,
         language: item.scriptLanguage || item.language,
-        hasChildren: item.hasChildren || false
+        hasChildren: false,
+        guid: item.guid
       }));
-      setSearchResults(items);
+      const tree = buildEnterpriseSearchTree(items);
+      setSearchResults(tree);
+      setExpandedItems(new Set(collectSearchFolderIds(tree)));
     } catch (err) {
       console.error('Search failed:', err);
       setSearchResults([]);
@@ -947,16 +981,19 @@ export function EnterpriseTree() {
     setIsSearching(true);
     try {
       const enterpriseService = getEnterpriseService();
-      const result = await enterpriseService.globalSearch(searchQuery.trim(), ['SS', 'CS', 'DS']);
+      const result = await enterpriseService.globalSearch(searchQuery.trim(), ['ALL']);
       const items: TreeItem[] = result.items.map((item: any) => ({
         id: item.uri || item.id,
         label: item.name,
         type: item.type || 'DEFAULT',
         uri: item.uri,
         language: item.scriptLanguage || item.language,
-        hasChildren: item.hasChildren || false
+        hasChildren: false,
+        guid: item.guid
       }));
-      setSearchResults(items);
+      const tree = buildEnterpriseSearchTree(items);
+      setSearchResults(tree);
+      setExpandedItems(new Set(collectSearchFolderIds(tree)));
     } catch (err) {
       console.error('Global search failed:', err);
       setSearchResults([]);
@@ -980,6 +1017,7 @@ export function EnterpriseTree() {
     setSearchQuery('');
     setSearchResults([]);
     setIsSearching(false);
+    setIsSearchBarOpen(false);
   };
 
   // Initial load
@@ -1017,14 +1055,14 @@ export function EnterpriseTree() {
     <div className="p-2 flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between mb-2 px-2">
-        <span className="text-xs font-medium text-slate-400 uppercase">
-          {isSearching ? 'Search Results' : 'Explorer'}
+        <span className="text-[11px] font-semibold text-slate-500 dark:text-[#bbbbbb] uppercase tracking-wide">
+          {isSearching ? t('sidebar.searchResults') : t('sidebar.enterprise')}
         </span>
         <div className="flex gap-1">
           {isSearching ? (
             <button
-              className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
-              title="Back to Tree"
+              className="icon-button"
+              title={t('sidebar.backToTree')}
               onClick={handleClearSearch}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1034,17 +1072,35 @@ export function EnterpriseTree() {
           ) : (
             <>
               <button
-                className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
-                title="Refresh"
-                onClick={() => {/* Refresh */}}
+                className="icon-button"
+                title={t('sidebar.refreshTree')}
+                onClick={refreshTree}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
               </button>
               <button
-                className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
-                title="Collapse All"
+                className={`icon-button ${searchType === 'name' && isSearchBarOpen ? 'text-blue-500' : ''}`}
+                title={t('sidebar.searchByName')}
+                onClick={() => openSearch('name')}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35m1.35-5.65a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </button>
+              <button
+                className={`icon-button ${searchType === 'global' && isSearchBarOpen ? 'text-blue-500' : ''}`}
+                title={t('sidebar.searchCode')}
+                onClick={() => openSearch('global')}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h3m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h7l5 5v4M15 3v5h5m1 13l-3-3m0 0a3 3 0 10-4.243-4.243A3 3 0 0018 18z" />
+                </svg>
+              </button>
+              <button
+                className="icon-button"
+                title={t('sidebar.collapseAll')}
                 onClick={() => setExpandedItems(new Set())}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1057,37 +1113,41 @@ export function EnterpriseTree() {
       </div>
 
       {/* Search Bar */}
-      <form onSubmit={handleSearchSubmit} id="enterprise-tree-search" className="mb-2 px-2 mr-2 sticky top-0 bg-slate-50 dark:bg-slate-800 z-10">
+      {isSearchBarOpen && <form onSubmit={handleSearchSubmit} id="enterprise-tree-search" className="mb-2 px-2 mr-2 sticky top-0 bg-slate-50 dark:bg-slate-800 z-10">
         <div className="flex gap-1">
-          {/* Search Type Toggle */}
-          <select
-            value={searchType}
-            onChange={(e) => setSearchType(e.target.value as 'name' | 'global')}
-            className="bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs rounded px-2 py-1 border border-slate-300 dark:border-slate-600"
-          >
-            <option value="name">By Name</option>
-            <option value="global">In Code</option>
-          </select>
+          <span className="flex items-center px-2 text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-[#252526] border border-slate-300 dark:border-slate-600 rounded-l">
+            {searchType === 'name' ? t('sidebar.searchName') : t('sidebar.searchCodeShort')}
+          </span>
           {/* Search Input */}
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={searchType === 'name' ? 'Search items...' : 'Search in code...'}
-            className="flex-1 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs rounded px-2 py-1 border border-slate-300 dark:border-slate-600 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"
+            placeholder={searchType === 'name' ? t('sidebar.searchPlaceholder') : t('sidebar.searchCodePlaceholder')}
+            className="min-w-0 flex-1 bg-white dark:bg-[#1e1e1e] text-slate-700 dark:text-slate-200 text-xs px-2 py-1 border-y border-slate-300 dark:border-slate-600 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"
           />
           <button
             type="submit"
             disabled={isSearchLoading || !searchQuery.trim()}
-            className="p-1 hover:bg-slate-200 dark:hover:bg-slate-600 rounded text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Search"
+            className="icon-button"
+            title={t('common.search')}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </button>
+          <button
+            type="button"
+            className="icon-button"
+            title={t('sidebar.closeSearch')}
+            onClick={handleClearSearch}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
-      </form>
+      </form>}
 
       {/* Tree/Search Results content */}
       <div className="text-slate-700 dark:text-slate-300 flex-1 overflow-auto">
@@ -1099,45 +1159,30 @@ export function EnterpriseTree() {
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
-              Searching...
+              {t('sidebar.searching')}
             </div>
           ) : searchResults.length === 0 ? (
             <div className="text-center py-8 text-slate-500">
-              No results found for "{searchQuery}"
+              {t('sidebar.noResults')}: “{searchQuery}”
             </div>
           ) : (
-            <div className="space-y-1">
+            <div>
               <div className="text-xs text-slate-500 px-2 mb-2">
-                Found {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
-                {searchType === 'global' && ' in code'}
+                {t(searchType === 'global' ? 'sidebar.foundInCode' : 'sidebar.found', {
+                  count: resultLeafCount(searchResults)
+                })}
               </div>
               {searchResults.map((item, index) => (
-                <div
+                <TreeNode
                   key={getItemKey(item, index)}
-                  className={`p-2 rounded cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 ${
-                    selectedItem?.id === item.id ? 'bg-slate-200 dark:bg-slate-700' : ''
-                  }`}
-                  onClick={() => {
-                    handleItemClick(item);
-                    // Reveal item in tree
-                    if (item.uri) {
-                      revealItemInTree(item.uri);
-                    }
-                  }}
-                  onDoubleClick={() => handleDoubleClick(item)}
-                  onContextMenu={(e) => handleContextMenu(e, item)}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm">
-                      {itemTypeIcons[item.type] || itemTypeIcons.DEFAULT}
-                    </span>
-                    <span className="flex-1 truncate text-sm">{item.label}</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1 text-xs text-slate-500">
-                    <span>{item.type}</span>
-                    {item.uri && <span className="truncate">{item.uri}</span>}
-                  </div>
-                </div>
+                  item={item}
+                  level={0}
+                  onItemClick={handleItemClick}
+                  onItemExpand={handleItemExpand}
+                  onContextMenu={handleContextMenu}
+                  onDoubleClick={handleDoubleClick}
+                  expandedItems={expandedItems}
+                />
               ))}
             </div>
           )
@@ -1145,7 +1190,7 @@ export function EnterpriseTree() {
           // Normal tree view
           rootItems.length === 0 ? (
             <div className="text-center py-8 text-slate-500">
-              {isConnected ? 'No items found' : 'Not connected'}
+              {isConnected ? t('sidebar.noResults') : t('sidebar.notConnected')}
             </div>
           ) : (
             rootItems.map((item, index) => (
@@ -1185,6 +1230,14 @@ export function EnterpriseTree() {
           </div>
         </div>
       )}
+
+      {/* Version History dialog */}
+      <VersionHistoryDialog
+        isOpen={!!historyItem}
+        onClose={() => setHistoryItem(null)}
+        uri={historyItem?.uri || ''}
+        itemName={historyItem?.label}
+      />
     </div>
   );
 }

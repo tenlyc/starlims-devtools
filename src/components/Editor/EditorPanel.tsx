@@ -13,6 +13,8 @@ import { useThemeStore } from '../../stores/themeStore';
 import { getInlineCompletionService } from '../../services/InlineCompletionService';
 import * as monaco from 'monaco-editor';
 import { useAiContextStore } from '../../services/aiContextStore';
+import { useI18n } from '../../i18n';
+import { CustomizePage } from '../Customize/CustomizePage';
 
 interface EditorContextMenu {
   x: number;
@@ -37,6 +39,7 @@ interface CloseConfirmModal {
 }
 
 export function EditorPanel() {
+  const { t } = useI18n();
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
   const [activeFileUri, setActiveFileUri] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<EditorContextMenu | null>(null);
@@ -73,8 +76,27 @@ export function EditorPanel() {
   // Subscribe to editorStore
   const files = editorStore(state => state.openFiles);
   const currentActiveUri = editorStore(state => state.activeFileUri);
+  const pendingReveal = editorStore(state => state.pendingReveal);
 
   const activeFile = files.find(f => f.uri === currentActiveUri);
+
+  const revealPendingLocation = useCallback((editor: monaco.editor.IStandaloneCodeEditor) => {
+    const location = editorStore.getState().pendingReveal;
+    if (!location || location.uri !== editorStore.getState().activeFileUri) return;
+    const position = { lineNumber: Math.max(1, location.line), column: Math.max(1, location.column) };
+    editor.setPosition(position);
+    editor.revealPositionInCenter(position);
+    editor.focus();
+    editorStore.getState().consumeReveal();
+  }, []);
+
+  useEffect(() => {
+    if (!pendingReveal || pendingReveal.uri !== currentActiveUri || !editorRef.current) return;
+    const frame = requestAnimationFrame(() => {
+      if (editorRef.current) revealPendingLocation(editorRef.current);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [currentActiveUri, pendingReveal, revealPendingLocation]);
 
   // Update Monaco theme when resolvedTheme changes
   useEffect(() => {
@@ -155,6 +177,8 @@ export function EditorPanel() {
     const completionService = getInlineCompletionService();
     completionService.register(monacoInstance as any, editor);
     console.log('Inline completion service registered');
+
+    requestAnimationFrame(() => revealPendingLocation(editor));
 
     // Expose editor methods globally for AI panel integration
     (window as any).getEditorSelection = () => {
@@ -1341,34 +1365,46 @@ export function EditorPanel() {
       case 'HTMLFORMXML':
       case 'XFDFORMXML':
         return '🌐';
+      case 'HTMLFORMCODE':
+      case 'XFDFORMCODE':
+        return 'JS';
+      case 'HTMLFORMGUIDE':
+        return '{}';
+      case 'HTMLFORMRESOURCES':
+      case 'XFDFORMRESOURCES':
+        return 'XML';
+      case 'SERVERLOG':
+        return '▤';
+      case 'CUSTOMIZE':
+        return '▦';
       default:
         return '📄';
     }
   };
 
   return (
-    <div className="h-full flex flex-col bg-slate-100 dark:bg-[#1e1e1e] relative">
+    <div className="h-full flex flex-col bg-white dark:bg-[#1e1e1e] relative">
       {/* Tab bar */}
       {files.length > 0 && (
-        <div className="flex items-center bg-slate-200 dark:bg-slate-800 border-b border-slate-300 dark:border-slate-700 overflow-x-auto">
-          <div className="flex items-center gap-2 min-w-0 flex-1 overflow-x-auto">
+        <div className="flex h-9 items-stretch bg-[#f3f3f3] dark:bg-[#181818] border-b border-[#d4d4d4] dark:border-[#2b2b2b] overflow-x-auto">
+          <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
             {files.map(file => (
               <div
                 key={file.uri}
-                className={`editor-tab flex items-center gap-2 min-w-0 px-3 py-2 cursor-pointer border-r border-slate-300 dark:border-slate-700 ${
-                  currentActiveUri === file.uri ? 'active bg-slate-300 dark:bg-slate-700' : 'hover:bg-slate-300 dark:hover:bg-slate-700/50'
+                className={`editor-tab flex min-w-[180px] max-w-[360px] shrink-0 items-center gap-2 px-3 cursor-pointer border-r border-slate-300 dark:border-[#2b2b2b] ${
+                  currentActiveUri === file.uri ? 'active' : ''
                 }`}
                 onClick={() => editorStore.getState().setActiveFile(file.uri)}
                 onContextMenu={(e) => handleTabContextMenu(e, file.uri)}
-                title={file.uri}
+                title={`${file.name}\n${file.type}\n${file.uri}`}
               >
-                <span className="text-sm">{getFileIcon(file.type)}</span>
-                <span className="truncate text-sm max-w-32 text-slate-700 dark:text-slate-200">
+                <span className="shrink-0 text-sm">{getFileIcon(file.type)}</span>
+                <span className="min-w-0 flex-1 truncate text-sm text-slate-700 dark:text-slate-200">
                   {file.name}
                   {file.isDirty && <span className="ml-1 text-blue-600 dark:text-blue-400">●</span>}
                 </span>
                 <button
-                  className="ml-1 p-0.5 hover:bg-slate-300 dark:hover:bg-slate-600 rounded text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
+                  className="icon-button ml-1 h-7 w-7"
                   onClick={(e) => { e.stopPropagation(); handleCloseFile(file.uri); }}
                 >
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1384,9 +1420,9 @@ export function EditorPanel() {
             (activeFile.type === 'DS' || activeFile.type === 'APPDS' || activeFile.type === 'DataSourceScript' || activeFile.type === 'AppDataSourceScript')
           ) && (
             <button
-              className="px-3 py-1 mx-2 text-sm text-green-600 dark:text-green-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded flex items-center gap-1"
+              className="mx-2 flex items-center gap-1 rounded px-2 py-1 text-xs text-green-600 hover:bg-slate-300 dark:text-[#4ec9b0] dark:hover:bg-[#2a2d2e]"
               onClick={handleRunScript}
-              title="Run Script (F5)"
+              title={t('editor.runScript')}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
@@ -1400,9 +1436,9 @@ export function EditorPanel() {
             (activeFile.type === 'HTMLFORMXML' || activeFile.type === 'HTMLFORMCODE')
           ) && (
             <button
-              className="px-3 py-1 mx-2 text-sm text-orange-600 dark:text-orange-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded flex items-center gap-1"
+              className="mx-2 flex items-center gap-1 rounded px-2 py-1 text-xs text-orange-600 hover:bg-slate-300 dark:text-[#d7ba7d] dark:hover:bg-[#2a2d2e]"
               onClick={handleDebugForm}
-              title="Debug Form"
+              title={t('editor.debugForm')}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1415,9 +1451,9 @@ export function EditorPanel() {
             (activeFile.type === 'HTMLFORMXML' || activeFile.type === 'HTMLFORMCODE')
           ) && (
             <button
-              className="px-3 py-1 mx-1 text-sm text-purple-600 dark:text-purple-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded flex items-center gap-1"
+              className="mx-1 flex items-center gap-1 rounded px-2 py-1 text-xs text-purple-600 hover:bg-slate-300 dark:text-[#c586c0] dark:hover:bg-[#2a2d2e]"
               onClick={handleDesignForm}
-              title="Design Form"
+              title={t('editor.designForm')}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -1425,12 +1461,13 @@ export function EditorPanel() {
               Design
             </button>
           )}
+          {activeFile?.type !== 'CUSTOMIZE' && <>
           {/* View Controls - Separator */}
-          <div className="border-l border-slate-400 dark:border-slate-600 mx-2 h-6" />
+          <div className="my-2 mx-1 border-l border-slate-400 dark:border-[#3c3c3c]" />
           {/* Font Size Controls */}
           <div className="flex items-center gap-1">
             <button
-              className="px-1.5 py-1 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600 rounded"
+              className="flex h-7 min-w-7 items-center justify-center rounded px-1.5 text-xs text-slate-600 hover:bg-slate-300 dark:text-[#cccccc] dark:hover:bg-[#2a2d2e]"
               onClick={() => { editorStore.getState().decreaseFontSize(); setSettingsKey(k => k + 1); }}
               title="减小字体"
             >
@@ -1440,7 +1477,7 @@ export function EditorPanel() {
               {editorStore.getState().editorSettings.fontSize}
             </span>
             <button
-              className="px-1.5 py-1 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600 rounded"
+              className="flex h-7 min-w-7 items-center justify-center rounded px-1.5 text-xs text-slate-600 hover:bg-slate-300 dark:text-[#cccccc] dark:hover:bg-[#2a2d2e]"
               onClick={() => { editorStore.getState().increaseFontSize(); setSettingsKey(k => k + 1); }}
               title="增大字体"
             >
@@ -1450,44 +1487,45 @@ export function EditorPanel() {
           {/* Toggle Buttons */}
           <div className="flex items-center gap-1">
             <button
-              className={`px-2 py-1 text-xs rounded ${editorStore.getState().editorSettings.showLineNumbers ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-300 dark:hover:bg-slate-600'}`}
+              className={`flex h-7 min-w-7 items-center justify-center rounded px-2 text-xs ${editorStore.getState().editorSettings.showLineNumbers ? 'bg-blue-600 text-white dark:bg-[#37373d]' : 'text-slate-500 hover:bg-slate-300 dark:text-[#8b8b8b] dark:hover:bg-[#2a2d2e]'}`}
               onClick={() => { editorStore.getState().toggleLineNumbers(); setSettingsKey(k => k + 1); }}
               title="显示行号"
             >
               #
             </button>
             <button
-              className={`px-2 py-1 text-xs rounded ${editorStore.getState().editorSettings.wordWrap ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-300 dark:hover:bg-slate-600'}`}
+              className={`flex h-7 min-w-7 items-center justify-center rounded px-2 text-xs ${editorStore.getState().editorSettings.wordWrap ? 'bg-blue-600 text-white dark:bg-[#37373d]' : 'text-slate-500 hover:bg-slate-300 dark:text-[#8b8b8b] dark:hover:bg-[#2a2d2e]'}`}
               onClick={() => { editorStore.getState().toggleWordWrap(); setSettingsKey(k => k + 1); }}
               title="自动换行"
             >
               ↩
             </button>
             <button
-              className={`px-2 py-1 text-xs rounded ${editorStore.getState().editorSettings.showWhitespace ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-300 dark:hover:bg-slate-600'}`}
+              className={`flex h-7 min-w-7 items-center justify-center rounded px-2 text-xs ${editorStore.getState().editorSettings.showWhitespace ? 'bg-blue-600 text-white dark:bg-[#37373d]' : 'text-slate-500 hover:bg-slate-300 dark:text-[#8b8b8b] dark:hover:bg-[#2a2d2e]'}`}
               onClick={() => { editorStore.getState().toggleWhitespace(); setSettingsKey(k => k + 1); }}
               title="显示空白"
             >
               ␣
             </button>
             <button
-              className={`px-2 py-1 text-xs rounded ${editorStore.getState().editorSettings.minimap ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-300 dark:hover:bg-slate-600'}`}
+              className={`flex h-7 min-w-7 items-center justify-center rounded px-2 text-xs ${editorStore.getState().editorSettings.minimap ? 'bg-blue-600 text-white dark:bg-[#37373d]' : 'text-slate-500 hover:bg-slate-300 dark:text-[#8b8b8b] dark:hover:bg-[#2a2d2e]'}`}
               onClick={() => { editorStore.getState().toggleMinimap(); setSettingsKey(k => k + 1); }}
               title="小地图"
             >
               ≡
             </button>
           </div>
+          </>}
         </div>
       )}
 
       {/* Breadcrumb Navigation */}
-      {activeFile && (
-        <div className="flex items-center gap-1 px-3 py-1 bg-slate-100 dark:bg-slate-800 border-b border-slate-300 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400 overflow-x-auto">
+      {activeFile && activeFile.type !== 'CUSTOMIZE' && (
+        <div className="flex h-7 items-center gap-1 overflow-x-auto border-b border-[#d4d4d4] bg-[#f3f3f3] px-3 text-xs text-slate-500 dark:border-[#2b2b2b] dark:bg-[#1e1e1e] dark:text-[#969696]">
           <span>📁</span>
           <span className="truncate">{activeFile.uri || '未分类'}</span>
           <span className="text-slate-400">/</span>
-          <span className="font-medium text-slate-700 dark:text-slate-200">{activeFile.name}</span>
+          <span className="font-medium text-slate-700 dark:text-[#cccccc]">{activeFile.name}</span>
         </div>
       )}
 
@@ -1512,9 +1550,10 @@ export function EditorPanel() {
 
       {/* Editor content */}
       <div className="flex-1 overflow-hidden" onContextMenu={handleContextMenu}>
-        {activeFile ? (
+        {activeFile?.type === 'CUSTOMIZE' ? <CustomizePage /> : activeFile ? (
           <MonacoEditor
             key={`${currentActiveUri || 'empty'}-${settingsKey}`}
+            path={activeFile.uri}
             height="100%"
             language={resolveEditorLanguage(activeFile.type, activeFile.language)}
             defaultValue={activeFile.content}
@@ -1524,7 +1563,9 @@ export function EditorPanel() {
               ...editorStore.getState().editorSettings,
               minimap: { enabled: editorStore.getState().editorSettings.minimap ?? true },
               fontSize: editorStore.getState().editorSettings.fontSize ?? 14,
-              fontFamily: "'Consolas', 'Courier New', monospace",
+              fontFamily: "'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace",
+              lineHeight: Math.round((editorStore.getState().editorSettings.fontSize ?? 14) * 1.55),
+              padding: { top: 6 },
               lineNumbers: editorStore.getState().editorSettings.showLineNumbers ? 'on' : 'off',
               renderWhitespace: editorStore.getState().editorSettings.showWhitespace ? 'selection' : 'none',
               automaticLayout: true,
@@ -1576,8 +1617,8 @@ export function EditorPanel() {
             <svg className="w-16 h-16 mb-4 text-slate-400 dark:text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            <p className="text-lg mb-2">No file open</p>
-            <p className="text-sm">Double-click a file from the Enterprise Explorer or Checked Out list to edit</p>
+            <p className="text-lg mb-2">{t('editor.noFile')}</p>
+            <p className="text-sm">{t('editor.noFileHint')}</p>
           </div>
         )}
       </div>
@@ -1710,14 +1751,14 @@ export function EditorPanel() {
                 onClick={() => { handleDebugForm(); setContextMenu(null); }}
               >
                 <span>🐛</span>
-                <span>调试表单 (Debug Form)</span>
+                <span>{t('editor.debugForm')}</span>
               </button>
               <button
                 className="w-full px-3 py-2 text-left text-sm text-purple-600 dark:text-purple-400 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
                 onClick={() => { handleDesignForm(); setContextMenu(null); }}
               >
                 <span>🎨</span>
-                <span>设计表单 (Design Form)</span>
+                <span>{t('editor.designForm')}</span>
               </button>
               <div className="border-t border-slate-200 dark:border-slate-600 my-1" />
             </>

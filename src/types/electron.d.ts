@@ -1,13 +1,15 @@
 /**
  * Type declarations for Electron API exposed via preload
  */
-import type { AgentApprovalDecision, AgentEvent, AgentProvider, AgentRuntimeStatus, AgentStartResult } from './agent';
+import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, ExternalMcpServers, GenericAgentConfig } from './agent';
+import type { DiagnosticLogEvent } from './diagnosticLog';
 
 export interface ElectronAPI {
   // STARLIMS MCP bridge
   mcpGetStatus: () => Promise<{ enabled: boolean; running: boolean; host: string; port: number; url: string; error?: string }>;
   onMcpRequest: (callback: (request: { id: string; tool: string; arguments: Record<string, unknown> }) => void) => () => void;
   respondToMcpRequest: (response: { id: string; result?: unknown; error?: string }) => void;
+  onDiagnosticLog: (callback: (event: DiagnosticLogEvent) => void) => () => void;
 
   // Dialog
   showOpenDialog: (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>;
@@ -50,12 +52,14 @@ export interface ElectronAPI {
     method: string;
     headers?: Record<string, string>;
     body?: string;
+    bodyBase64?: string;
+    binary?: boolean;
   }) => Promise<{
     ok: boolean;
     status: number;
     statusText: string;
     headers: Record<string, string>;
-    data: string;
+    data: string; // base64 when binary=true
   }>;
 
   // Menu events
@@ -71,12 +75,20 @@ export interface ElectronAPI {
   cliExecute: (provider: 'codex' | 'claude' | 'opencode', prompt: string) => Promise<string>;
 
   // Rich agent runtimes
-  agentGetStatuses: () => Promise<Record<AgentProvider, AgentRuntimeStatus>>;
-  agentStart: (provider: AgentProvider, prompt: string) => Promise<AgentStartResult>;
+  agentGetStatuses: () => Promise<Partial<Record<AgentProvider, AgentRuntimeStatus>>>;
+  agentGetModels: (provider: AgentProvider) => Promise<AgentModelOption[]>;
+  agentSelectFiles: () => Promise<AgentFileAttachment[]>;
+  agentGetExternalMcpServers: () => Promise<ExternalMcpServers>;
+  agentSetExternalMcpServers: (servers: ExternalMcpServers) => Promise<boolean>;
+  agentStart: (provider: AgentProvider, prompt: string, model?: string) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
   agentNewSession: (provider: AgentProvider) => Promise<void>;
   agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => Promise<boolean>;
   onAgentEvent: (callback: (event: AgentEvent) => void) => () => void;
+  genericAgentListModels: (config: Pick<GenericAgentConfig, 'baseUrl' | 'apiKey'>) => Promise<string[]>;
+  genericAgentStart: (config: GenericAgentConfig, prompt: string) => Promise<AgentStartResult>;
+  genericAgentInterrupt: () => Promise<void>;
+  genericAgentNewSession: () => Promise<void>;
 }
 
 declare global {

@@ -40,7 +40,7 @@ export function resolveEditorLanguage(fileType: string, scriptLanguage?: string)
     case 'HTMLFORMGUIDE':
       return 'json';
     case 'SERVERLOG':
-      return 'plaintext';
+      return 'starlimslog';
     default:
       return 'plaintext';
   }

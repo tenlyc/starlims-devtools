@@ -1,7 +1,17 @@
 import { useEffect } from 'react';
 import { getEnterpriseService } from '../../services/enterpriseService';
+import { useOutputLogStore } from '../../services/outputLogStore';
 
 type McpRequest = { id: string; tool: string; arguments: Record<string, unknown> };
+
+function summarizeArguments(args: Record<string, unknown>): string {
+  const safe = Object.fromEntries(Object.entries(args).map(([key, value]) => {
+    if (/password|pass|token|cookie|secret|code|body/i.test(key)) return [key, '[hidden]'];
+    if (typeof value === 'string' && value.length > 240) return [key, `${value.slice(0, 240)}…`];
+    return [key, value];
+  }));
+  return JSON.stringify(safe);
+}
 
 const limitArray = <T,>(items: T[], requested?: unknown): T[] => {
   const limit = typeof requested === 'number' ? Math.max(1, Math.min(requested, 10000)) : 100;
@@ -52,6 +62,15 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
       return { log: await service.getServerLog() };
     case 'get_table_definition':
       return { uri: uri(), definition: await service.getTableDefinition(uri()) };
+    case 'query_checkin_history': {
+      const filter = {
+        user: String(args.user || ''),
+        dateFrom: String(args.dateFrom || ''),
+        dateTo: String(args.dateTo || '')
+      };
+      const items = await service.getCheckInHistory(filter);
+      return { filter, items, totalItems: items.length };
+    }
     case 'checkout_item': {
       const result = await service.checkOut(uri());
       if (!result.success) throw new Error(result.message || 'Checkout failed.');
@@ -72,7 +91,7 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
       return { uri: uri(), undone: true };
     }
     case 'execute_server_script': {
-      const result = await service.runScript(uri());
+      const result = await service.runScript(uri(), Array.isArray(args.parameters) ? args.parameters : []);
       if (!result.success) throw new Error(result.error || 'Server script execution failed.');
       return { uri: uri(), ...result };
     }
@@ -87,16 +106,51 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
 }
 
 export function McpRequestBridge() {
+  useEffect(() => window.electronAPI?.onDiagnosticLog?.((event) => {
+    useOutputLogStore.getState().addEntry({
+      channel: event.channel, level: event.level, source: event.source, message: event.message
+    });
+  }), []);
+
+  useEffect(() => {
+    if (!window.electronAPI?.mcpGetStatus) return;
+    void window.electronAPI.mcpGetStatus().then((status) => {
+      useOutputLogStore.getState().addEntry({
+        channel: 'mcp-server', level: status.running ? 'success' : 'error', source: 'MCP Server',
+        message: status.running ? `Listening at ${status.url}` : `Unavailable${status.error ? `: ${status.error}` : ''}`
+      });
+    }).catch((error) => {
+      useOutputLogStore.getState().addEntry({
+        channel: 'mcp-server', level: 'error', source: 'MCP Server',
+        message: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }, []);
+
   useEffect(() => {
     if (!window.electronAPI?.onMcpRequest) return;
     return window.electronAPI.onMcpRequest(async (request) => {
+      const started = performance.now();
+      useOutputLogStore.getState().addEntry({
+        channel: 'mcp-tools', level: 'info', source: 'MCP Tool',
+        message: `${request.tool} started · ${summarizeArguments(request.arguments)}`
+      });
       try {
         const result = await executeMcpTool(request);
+        useOutputLogStore.getState().addEntry({
+          channel: 'mcp-tools', level: 'success', source: 'MCP Tool',
+          message: `${request.tool} completed (${Math.round(performance.now() - started)} ms)`
+        });
         window.electronAPI.respondToMcpRequest({ id: request.id, result });
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        useOutputLogStore.getState().addEntry({
+          channel: 'mcp-tools', level: 'error', source: 'MCP Tool',
+          message: `${request.tool} failed (${Math.round(performance.now() - started)} ms): ${message}`
+        });
         window.electronAPI.respondToMcpRequest({
           id: request.id,
-          error: error instanceof Error ? error.message : String(error)
+          error: message
         });
       }
     });

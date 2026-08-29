@@ -1,0 +1,110 @@
+/******************************************************************************
+Description.. :	Create a version label for an item and attach it to a version
+				(mirrors the official Source Control Manager Create Label flow,
+				writing VERSIONSLABELS + VERSIONSLABELS_ITEMS).
+Parameters... :	- URI : enterprise item URI
+				- labelTitle : label title
+				- labelDesc (optional) : label description
+				- versionId (optional) : version GUID to attach, defaults to the
+				current version GUID of the item
+Returns...... :	- { success, data: message }
+Author....... :	STARLIMS DevTools
+Date......... : 2026-08-29
+******************************************************************************;
+:DECLARE oResponse, sURI, sLabelTitle, sLabelDesc, sVersionId, oUtils, oEnterpriseItem,
+		 sItemName, sItemType, sGuidName, sItemID, sLabelId, sSQL, bSuccess, sOldIn, sCleanTitle;
+oResponse := CreateUDObject({
+	{"success", .T.},
+	{"data", NIL}
+});
+
+:IF !Request:QueryString:IsProperty("URI") .OR. Empty(Request:QueryString:URI);
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := "Missing required parameter: URI";
+	:RETURN oResponse;
+:ENDIF;
+:IF !Request:QueryString:IsProperty("labelTitle") .OR. Empty(Request:QueryString:labelTitle);
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := "Missing required parameter: labelTitle";
+	:RETURN oResponse;
+:ENDIF;
+sURI := Request:QueryString:URI;
+sCleanTitle := StrTran(Request:QueryString:labelTitle, "'", "''");
+sLabelTitle := sCleanTitle;
+sLabelDesc := "";
+:IF Request:QueryString:IsProperty("labelDesc");
+	sLabelDesc := StrTran(Request:QueryString:labelDesc, "'", "''");
+:ENDIF;
+sVersionId := "";
+:IF Request:QueryString:IsProperty("versionId");
+	sVersionId := Request:QueryString:versionId;
+:ENDIF;
+
+:TRY;
+	oUtils := CreateUDObject("SCM_API.Utils", {});
+	oEnterpriseItem := oUtils:ParseURI(sURI);
+	sItemName := BuildArray(oEnterpriseItem:Name,, ".")[1];
+	sItemType := oEnterpriseItem:Type;
+
+	sGuidName := sItemName;
+	:BEGINCASE;
+		:CASE sItemType == "SS" .OR. sItemType == "CS" .OR. sItemType == "DS";
+			sGuidName := oEnterpriseItem:CategoryName + "." + sItemName;
+		:EXITCASE;
+		:OTHERWISE;
+			sGuidName := oEnterpriseItem:AppName + "." + sItemName;
+	:ENDCASE;
+	sItemID := oUtils:GetItemGUID(sGuidName, sItemType);
+	:IF Empty(sItemID);
+		oResponse:success := .F.;
+		oResponse:data := "Item not found: " + sURI;
+		:RETURN oResponse;
+	:ENDIF;
+
+	/* Resolve the version to attach when not supplied (current item version) */;
+	:IF Empty(sVersionId);
+		:BEGINCASE;
+			:CASE sItemType == "APP_FRM" .OR. sItemType == "HTMLFORMXML" .OR. sItemType == "HTMLFORMCODE" .OR. sItemType == "XFDFORMXML" .OR. sItemType == "XFDFORMCODE";
+				:DECLARE aV;
+				aV := SQLExecute("select VERSIONID from LIMSXFDFORMS where FORMID = '" + sItemID + "'", "DICTIONARY");
+				:IF !Empty(aV); sVersionId := aV[1,1]; :ENDIF;
+			:EXITCASE;
+			:CASE sItemType == "SS" .OR. sItemType == "APPSS";
+				aV := SQLExecute("select VERSIONID from LIMSSERVERSCRIPTS where SCRIPTID = '" + sItemID + "'", "DICTIONARY");
+				:IF !Empty(aV); sVersionId := aV[1,1]; :ENDIF;
+			:EXITCASE;
+			:CASE sItemType == "CS" .OR. sItemType == "APPCS";
+				aV := SQLExecute("select VERSIONID from LIMSCLIENTSCRIPTS where SCRIPTID = '" + sItemID + "'", "DICTIONARY");
+				:IF !Empty(aV); sVersionId := aV[1,1]; :ENDIF;
+			:EXITCASE;
+			:CASE sItemType == "DS" .OR. sItemType == "APPDS";
+				aV := SQLExecute("select VERSIONID from LIMSDATASOURCES where DATASOURCEID = '" + sItemID + "'", "DICTIONARY");
+				:IF !Empty(aV); sVersionId := aV[1,1]; :ENDIF;
+			:EXITCASE;
+		:ENDCASE;
+	:ENDIF;
+
+	sLabelId := CreateGUID();
+
+	/* Insert the label */;
+	sSQL := "insert into VERSIONSLABELS (LABEL_ID, LABEL_TITLE, LABEL_DESC, CREATED_BY, CREATED_DT, ORIGREC) " +
+			"values ('" + sLabelId + "', '" + sLabelTitle + "', '" + sLabelDesc + "', '" + MYUSERNAME + "', NOW(), 0)";
+	bSuccess := RunSQL(sSQL, "DICTIONARY");
+
+	/* Attach the label to the item + version */;
+	sSQL := "insert into VERSIONSLABELS_ITEMS (LABEL_ID, ITEM_GUID, ITEM_VERSIONID) " +
+			"values ('" + sLabelId + "', '" + sItemID + "', '" + sVersionId + "')";
+	bSuccess := RunSQL(sSQL, "DICTIONARY");
+
+	Response:StatusCode := 200;
+	oResponse:success := .T.;
+	oResponse:data := "Label '" + sLabelTitle + "' created";
+	:RETURN oResponse;
+:CATCH;
+	Response:StatusCode := 500;
+	oResponse:success := .F.;
+	oResponse:data := "CreateLabel error: " + ErrorMessage();
+	:RETURN oResponse;
+:ENDTRY;

@@ -4,9 +4,10 @@
  */
 
 // Using native browser fetch
-import { IEnterpriseService, ServerConfig, SessionInfo, EnterpriseItem, CheckOutResult, CheckInResult, ScriptResult, SearchResult, QueryResult } from './iEnterpriseService';
+import { IEnterpriseService, ServerConfig, SessionInfo, EnterpriseItem, CheckOutResult, CheckInResult, ScriptResult, SearchResult, QueryResult, ItemHistoryEntry, ItemLabelEntry, ItemVersionCode, SCMItem, LanguageOption } from './iEnterpriseService';
 import { cleanUrl, isJson, getErrorMessage } from './miscUtils';
 import { isBridgeRunning, launchXFDForm, launchHTMLForm } from './bridge';
+import { useOutputLogStore } from './outputLogStore';
 
 export class EnterpriseService implements IEnterpriseService {
   private config: ServerConfig | null = null;
@@ -29,6 +30,8 @@ export class EnterpriseService implements IEnterpriseService {
     method: string;
     headers?: Record<string, string>;
     body?: string;
+    bodyBase64?: string;
+    binary?: boolean;
   }): Promise<{ ok: boolean; status: number; statusText: string; headers: Record<string, string>; data: string }> {
     // In browser context, use IPC to proxy request
     if (typeof window !== 'undefined' && window.electronAPI) {
@@ -38,9 +41,15 @@ export class EnterpriseService implements IEnterpriseService {
     const response = await fetch(options.url, {
       method: options.method,
       headers: options.headers,
-      body: options.body
+      body: options.bodyBase64 ? this.base64ToBytes(options.bodyBase64).buffer as ArrayBuffer : options.body
     });
-    const data = await response.text();
+    let data = '';
+    if (options.binary) {
+      const buffer = await response.arrayBuffer();
+      data = this.arrayBufferToBase64(buffer);
+    } else {
+      data = await response.text();
+    }
     const headers: Record<string, string> = {};
     response.headers.forEach((value, key) => {
       headers[key] = value;
@@ -52,6 +61,17 @@ export class EnterpriseService implements IEnterpriseService {
       headers,
       data
     };
+  }
+
+  /** Convert an ArrayBuffer to a base64 string (browser helper). */
+  private arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)));
+    }
+    return btoa(binary);
   }
 
   /**
@@ -222,7 +242,8 @@ export class EnterpriseService implements IEnterpriseService {
    */
   private async apiRequest<T = any>(
     endpoint: string,
-    options: { method?: string; body?: string } = {}
+    options: { method?: string; body?: string } = {},
+    apiCategory = 'SCM_API'
   ): Promise<T | null> {
     if (!this.sessionInfo) {
       console.error('Not connected to STARLIMS');
@@ -231,8 +252,14 @@ export class EnterpriseService implements IEnterpriseService {
 
     // endpoint format: GetEnterpriseItems or GetEnterpriseItems?URI=xxx
     const [endpointName, queryString] = endpoint.split('?');
-    const baseApiUrl = `${this.baseUrl}/SCM_API.${endpointName}.${this.urlSuffix}`;
+    const baseApiUrl = `${this.baseUrl}/${apiCategory}.${endpointName}.${this.urlSuffix}`;
     const url = queryString ? `${baseApiUrl}?${queryString}` : baseApiUrl;
+    const requestStarted = performance.now();
+    const requestLabel = `${apiCategory}.${endpointName}`;
+    useOutputLogStore.getState().addEntry({
+      channel: 'starlims-api', level: 'info', source: 'STARLIMS API',
+      message: `${options.method || 'GET'} ${requestLabel}`
+    });
     console.log('API Request URL:', url);
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -252,8 +279,14 @@ export class EnterpriseService implements IEnterpriseService {
       if (!response.ok) {
         console.error(`API request failed: ${response.status} ${response.statusText}`);
         console.error('Response:', response.data.substring(0, 500));
-        return null;
+        const detail = response.data.trim().substring(0, 2000);
+        throw new Error(`STARLIMS API ${apiCategory}.${endpointName} returned ${response.status} ${response.statusText}${detail ? `: ${detail}` : ''}`);
       }
+
+      useOutputLogStore.getState().addEntry({
+        channel: 'starlims-api', level: 'success', source: 'STARLIMS API',
+        message: `${options.method || 'GET'} ${requestLabel} → ${response.status} (${Math.round(performance.now() - requestStarted)} ms)`
+      });
 
       if (isJson(response.data)) {
         return JSON.parse(response.data);
@@ -261,8 +294,12 @@ export class EnterpriseService implements IEnterpriseService {
 
       return response.data as any;
     } catch (error) {
+      useOutputLogStore.getState().addEntry({
+        channel: 'starlims-api', level: 'error', source: 'STARLIMS API',
+        message: `${options.method || 'GET'} ${requestLabel} failed after ${Math.round(performance.now() - requestStarted)} ms: ${getErrorMessage(error)}`
+      });
       console.error(`API request error for ${endpoint}:`, getErrorMessage(error));
-      return null;
+      throw error;
     }
   }
 
@@ -317,11 +354,17 @@ export class EnterpriseService implements IEnterpriseService {
       hasChildren: item.isFolder ?? item.hasChildren ?? false,
       children: item.children ? this.parseEnterpriseItems(item.children) : undefined,
       isCheckedOut: item.checkedOut === 'true' || item.checkedOut === true,
-      checkedOutBy: item.checkedOutBy,
+      checkedOutBy: item.checkedOutBy || item.checkedoutby || item.CHECKEDOUTBY,
+      checkedOutDate: item.checkedOutDate || item.checkedoutdate || item.CHECKEDOUTDATE,
       version: item.ver || item.version,
       guid: item.guid || item.GUID || undefined,
-      language: item.language || undefined,
-      scriptLanguage: item.scriptLanguage || item.scriptlanguage || undefined
+      // LANGID is the selected STARLIMS form language (for example CHS/ENG).
+      // Keep it separate from SCRIPTLANGUAGE, which describes the item family
+      // (HTML/XFD) and is not a language that should be shown to the user.
+      language: item.language || item.langid || item.LANGID || item.userLang || item.UserLang || undefined,
+      scriptLanguage: item.scriptLanguage || item.scriptlanguage || item.SCRIPTLANGUAGE || undefined,
+      rawType: item.rawType || item.rawtype || item.CHILDTYPE || undefined,
+      displayPath: item.displayPath || item.displaypath || item.DISPLAYPATH || undefined
     }));
     console.log('Parsed enterprise items, checking for guid field:', data.map(item => ({ name: item.name, guid: item.guid || item.GUID })));
   }
@@ -358,11 +401,9 @@ export class EnterpriseService implements IEnterpriseService {
             const parentType = parentTypeMatch?.[1] || '';
             const parentName = parentNameMatch?.[1] || parentNameUpperMatch?.[1] || '';
             const appCategory = appCatNameMatch?.[1] || '';
-            const scriptLanguage = scriptLanguageMatch?.[1] || '';
+            const scriptLanguage = (scriptLanguageMatch?.[1] || '').toUpperCase();
             const isApplicationItem = parentType === 'APP';
-            const normalizedType = scriptLanguage === 'HTML'
-              ? 'HTMLForm'
-              : rawType === 'SERVERSCRIPT'
+            const normalizedType = rawType === 'SERVERSCRIPT'
                 ? (isApplicationItem ? 'AppServerScript' : 'ServerScript')
                 : rawType === 'CLIENTSCRIPT'
                   ? (isApplicationItem ? 'AppClientScript' : 'ClientScript')
@@ -371,25 +412,63 @@ export class EnterpriseService implements IEnterpriseService {
                     : rawType;
             const typeFolder = scriptLanguage === 'HTML'
               ? 'HTML Forms'
+              : scriptLanguage === 'XFD'
+                ? 'XFD Forms'
               : rawType === 'SERVERSCRIPT' ? 'Server Scripts'
                 : rawType === 'CLIENTSCRIPT' ? 'Client Scripts'
                   : rawType === 'DATASOURCE' ? 'Data Sources' : rawType;
             const pathParts = isApplicationItem
               ? ['Applications', appCategory, parentName, typeFolder]
               : [typeFolder, parentName];
-            items.push({
-              id: childIdMatch?.[1] || childNameMatch[1],
-              name: childNameMatch[1],
-              type: normalizedType,
-              uri: childIdMatch?.[1] || '',
+            const commonItem = {
               hasChildren: false,
               isCheckedOut: true,
               checkedOutBy: userMatch?.[1] || 'Unknown',
               checkedOutDate: dateMatch?.[1],
               displayPath: pathParts.filter(Boolean).join(' / '),
-              language: scriptLanguage || languageMatch?.[1] || undefined,
-              scriptLanguage: scriptLanguage || undefined,
+              guid: childIdMatch?.[1] || undefined,
               rawType
+            };
+
+            if (isApplicationItem && (scriptLanguage === 'HTML' || scriptLanguage === 'XFD')) {
+              const formName = childNameMatch[1];
+              const formRoot = `/Applications/${appCategory}/${parentName}/${scriptLanguage === 'HTML' ? 'HTMLForms' : 'XFDForms'}`;
+              const formLanguage = languageMatch?.[1] || this.sessionInfo?.langid || 'ENG';
+              const formParts = scriptLanguage === 'HTML'
+                ? [
+                    { suffix: 'XML', label: 'XML', type: 'HTMLFORMXML', language: formLanguage },
+                    { suffix: 'CodeBehind', label: 'Code Behind', type: 'HTMLFORMCODE', language: formLanguage },
+                    { suffix: 'Guide', label: 'Guide', type: 'HTMLFORMGUIDE', language: formLanguage },
+                    { suffix: 'Resources', label: 'Resources', type: 'HTMLFORMRESOURCES', language: formLanguage }
+                  ]
+                : [
+                    { suffix: 'XML', label: 'XML', type: 'XFDFORMXML', language: formLanguage },
+                    { suffix: 'CodeBehind', label: 'Code Behind', type: 'XFDFORMCODE', language: formLanguage },
+                    { suffix: 'Resources', label: 'Resources', type: 'XFDFORMRESOURCES', language: formLanguage }
+                  ];
+
+              for (const part of formParts) {
+                items.push({
+                  ...commonItem,
+                  id: `${childIdMatch?.[1] || formName}:${part.type}`,
+                  name: `${formName} [${part.label}]`,
+                  type: part.type,
+                  uri: `${formRoot}/${part.suffix}/${formName}`,
+                  language: part.language,
+                  scriptLanguage
+                });
+              }
+              continue;
+            }
+
+            items.push({
+              ...commonItem,
+              id: childIdMatch?.[1] || childNameMatch[1],
+              name: childNameMatch[1],
+              type: normalizedType,
+              uri: childIdMatch?.[1] || '',
+              language: scriptLanguage || languageMatch?.[1] || undefined,
+              scriptLanguage: scriptLanguage || undefined
             });
           }
         }
@@ -547,22 +626,156 @@ export class EnterpriseService implements IEnterpriseService {
   }
 
   /**
-   * Export checked out items as a package and return the filename
+   * Export checked out items as an SDP package and download it.
+   *
+   * STARLIMS_DEVTOOLS_API.DevToolsExportPackage is executed through the
+   * established SCM_API.RunScript endpoint and returns a file name with base64
+   * SDP content. The result is validated to be a ZIP before it is downloaded.
+   *
+   * When `items` is provided (item GUIDs / CHILDIDs) only those items are
+   * included in the package.
    */
-  async exportPackage(): Promise<{ success: boolean; fileName?: string; error?: string }> {
+  async exportPackage(items?: string[], history = false, languages: string[] = []): Promise<{ success: boolean; fileName?: string; blob?: Blob; error?: string }> {
     try {
-      const data = await this.apiRequest<any>('ExportPackage', {
-        method: 'GET'
+      const invocation = await this.apiRequest<any>('RunScript', {
+        method: 'POST',
+        body: JSON.stringify({
+          URI: '/ServerScripts/STARLIMS_DEVTOOLS_API/DevToolsExportPackage',
+          Parameters: [items?.join(',') || '', history, languages.join(',')]
+        })
       });
+      const data = invocation?.data;
 
-      if (data?.success === true) {
-        return { success: true, fileName: data.data };
+      if (!data || data.success !== true) {
+        const message = data?.data ? String(data.data) : 'Export failed: server did not return success';
+        return { success: false, error: message };
       }
-      return { success: false, error: data?.data || 'Export failed' };
+
+      const payload = data.data as unknown;
+
+      if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        const direct = payload as { fileName?: unknown; content?: unknown };
+        if (typeof direct.fileName === 'string' && typeof direct.content === 'string') {
+          const bytes = this.base64ToBytes(direct.content);
+          if (!this.isZipBytes(bytes)) {
+            return { success: false, error: `Export succeeded, but returned content is not a valid SDP/ZIP file (${direct.fileName})` };
+          }
+          return { success: true, fileName: direct.fileName, blob: this.bytesToBlob(bytes) };
+        }
+      }
+
+      return { success: false, error: 'Export failed: unexpected server response' };
     } catch (error) {
       console.error('Failed to export package:', getErrorMessage(error));
       return { success: false, error: getErrorMessage(error) };
     }
+  }
+
+  /** Load the check-in user drop-down used by the simplified SCM window. */
+  async getSCMUsers(): Promise<string[]> {
+    try {
+      const data = await this.apiRequest<any>('RunScript', {
+        method: 'POST',
+        body: JSON.stringify({ URI: '/ServerScripts/STARLIMS_DEVTOOLS_API/DevToolsGetSCMUsers' })
+      });
+      const users = data?.data?.users;
+      if (Array.isArray(users)) {
+        return users.map((user: unknown) => String(user || '').trim()).filter(Boolean);
+      }
+    } catch (error) {
+      console.error('Failed to get SCM users:', getErrorMessage(error));
+    }
+
+    const currentUser = this.config?.user?.trim();
+    return currentUser ? [currentUser] : [];
+  }
+
+  /** Find the items checked in by a user during an inclusive date range. */
+  async getCheckInHistory(filter: { user: string; dateFrom: string; dateTo: string }): Promise<SCMItem[]> {
+    const data = await this.apiRequest<any>('RunScript', {
+      method: 'POST',
+      body: JSON.stringify({
+        URI: '/ServerScripts/STARLIMS_DEVTOOLS_API/DevToolsGetCheckInHistory',
+        Parameters: [filter.user, filter.dateFrom, filter.dateTo]
+      })
+    });
+    if (!data) {
+      throw new Error('STARLIMS check-in history request failed or timed out.');
+    }
+    if (data.success === false) {
+      throw new Error(String(data.error || data.data || 'Source Control Manager query failed.'));
+    }
+    const payload = data?.data;
+    if (payload?.success === false) {
+      throw new Error(String(payload.error || 'Source Control Manager query failed.'));
+    }
+    const items = payload?.items;
+    if (!Array.isArray(items)) {
+      throw new Error('STARLIMS check-in history returned an invalid response.');
+    }
+
+    return items.map((item: any) => ({
+      itemType: String(item.itemType || ''),
+      catName: String(item.catName || ''),
+      appName: String(item.appName || ''),
+      itemName: String(item.itemName || ''),
+      itemId: String(item.itemId || ''),
+      uri: String(item.uri || ''),
+      state: 'History',
+      isCheckedOut: false,
+      checkedInBy: String(item.checkedInBy || ''),
+      checkedInDate: String(item.checkedInDate || ''),
+      versionId: String(item.versionId || '')
+    }));
+  }
+
+  /** Decode a base64 string into bytes (renderer has no Node Buffer). */
+  private base64ToBytes(base64: string): Uint8Array {
+    if (typeof Buffer !== 'undefined' && typeof Buffer.from === 'function') {
+      return new Uint8Array(Buffer.from(base64, 'base64'));
+    }
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  /** Wrap bytes in a Blob with an ArrayBuffer-backed view (TS-safe BlobPart). */
+  private bytesToBlob(bytes: Uint8Array): Blob {
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    return new Blob([copy.buffer as ArrayBuffer]);
+  }
+
+  /** SDP packages are ZIP containers: validate the PK magic number. */
+  private isZipBytes(bytes: Uint8Array): boolean {
+    if (bytes.length < 4) return false;
+    return bytes[0] === 0x50 && bytes[1] === 0x4b &&
+      (bytes[2] === 0x03 || bytes[2] === 0x05 || bytes[2] === 0x07) &&
+      (bytes[3] === 0x04 || bytes[3] === 0x06 || bytes[3] === 0x08);
+  }
+
+  private bytesToPreview(bytes: Uint8Array): string {
+    try {
+      return new TextDecoder().decode(bytes.slice(0, 500)).trim();
+    } catch {
+      return '';
+    }
+  }
+
+  /** Turn verbose ASP.NET customErrors pages into a short actionable message. */
+  private summarizeHttpError(text: string, status: number, statusText: string): string {
+    const title = text.match(/<title>([\s\S]*?)<\/title>/i)?.[1];
+    const heading = text.match(/<h2[^>]*>[\s\S]*?<i>([\s\S]*?)<\/i>[\s\S]*?<\/h2>/i)?.[1];
+    const candidate = heading || title;
+    if (candidate) {
+      const message = candidate.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim();
+      if (message) return `${status} ${statusText}: ${message}`;
+    }
+    const plain = text.replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim();
+    return plain.slice(0, 500) || `${status} ${statusText}`;
   }
 
   /**
@@ -574,21 +787,38 @@ export class EnterpriseService implements IEnterpriseService {
     }
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
+      const bootstrapUrl = `${this.baseUrl}/SCM_API.ImportPackage.${this.urlSuffix}`;
+      const sessions = await this.getServerSessions();
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/octet-stream',
+        'STARLIMSUser': this.config.user || '',
+        'STARLIMSPass': this.password
+      };
+      if (sessions?.aspnetSessionId) headers['aspnet-sessionid'] = sessions.aspnetSessionId;
+      if (sessions?.starlimsSessionId) headers['starlims-sessionid'] = sessions.starlimsSessionId;
+      if (sessions?.langid) headers['langid'] = sessions.langid;
 
-      const url = `${this.baseUrl}/SCM_API.ImportPackage.${this.urlSuffix}`;
-      const response = await fetch(url, {
+      const request = {
         method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'STARLIMSUser': this.config.user || '',
-          'STARLIMSPass': this.password
-        },
-        body: formData
+        headers,
+        bodyBase64: this.arrayBufferToBase64(await file.arrayBuffer())
+      } as const;
+      // Binary uploads must use the original SCM_API endpoint. Calling a
+      // custom *.lims endpoint directly is rejected by STARLIMS 12.6.2 with
+      // "Cache error: No cache item id provided" before the script executes.
+      const response = await this.httpRequest({
+        url: bootstrapUrl,
+        ...request
       });
 
-      const data = await response.json();
+      const text = response.data;
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        return { success: false, error: this.summarizeHttpError(text, response.status, response.statusText) };
+      }
       if (data?.success === true) {
         return { success: true, log: data.data };
       }
@@ -600,36 +830,365 @@ export class EnterpriseService implements IEnterpriseService {
   }
 
   /**
-   * Download an SDP package file from the server
+   * Get the version history of an item from LIMSSOURCECONTROL
+   * (mirrors the official Source Control Manager dsGetHistory data source).
+   * Requires the SCM_API GetItemHistory endpoint (shipped in scm_api patch).
    */
-  async downloadPackage(fileName: string): Promise<{ success: boolean; data?: Blob; error?: string }> {
-    if (!this.sessionInfo || !this.config) {
-      return { success: false, error: 'Not connected to STARLIMS' };
+  async getItemHistory(uri: string): Promise<ItemHistoryEntry[]> {
+    try {
+      const data = await this.apiRequest<any>(`GetItemHistory?URI=${encodeURIComponent(uri)}`, {
+        method: 'GET'
+      });
+      return this.parseHistoryEntries(data);
+    } catch (error) {
+      console.error('Failed to get item history:', getErrorMessage(error));
+      return [];
+    }
+  }
+
+  /**
+   * Get the labels attached to an item from VERSIONSLABELS / VERSIONSLABELS_ITEMS
+   * (mirrors the official Source Control Manager dsGetLabelsForItem data source).
+   * Requires the SCM_API GetItemLabels endpoint (shipped in scm_api patch).
+   */
+  async getItemLabels(uri: string): Promise<ItemLabelEntry[]> {
+    try {
+      const data = await this.apiRequest<any>(`GetItemLabels?URI=${encodeURIComponent(uri)}`, {
+        method: 'GET'
+      });
+      return this.parseLabelEntries(data);
+    } catch (error) {
+      console.error('Failed to get item labels:', getErrorMessage(error));
+      return [];
+    }
+  }
+
+  /**
+   * Read the code documents of a specific version from LIMSSOURCECONTROL
+   * (mirrors the official scGetCodeFromLimsSourceControl script).
+   * Requires the SCM_API GetItemVersionCode endpoint (shipped in scm_api patch).
+   */
+  async getItemVersionCode(versionId: string): Promise<ItemVersionCode | null> {
+    try {
+      const data = await this.apiRequest<any>(`GetItemVersionCode?VERSIONID=${encodeURIComponent(versionId)}`, {
+        method: 'GET'
+      });
+      if (!data || data.success !== true) return null;
+      const row = data.data as Record<string, unknown> | undefined;
+      if (!row || typeof row !== 'object') return null;
+      return {
+        code: typeof row.CODEDOCUMENT === 'string' ? row.CODEDOCUMENT : '',
+        xfdDocument: typeof row.XFDDOCUMENT === 'string' ? row.XFDDOCUMENT : '',
+        resourceDocument: typeof row.RESOURCEDOCUMENT === 'string' ? row.RESOURCEDOCUMENT : '',
+        versionId: typeof row.VERSIONID === 'string' ? row.VERSIONID : versionId
+      };
+    } catch (error) {
+      console.error('Failed to get item version code:', getErrorMessage(error));
+      return null;
+    }
+  }
+
+  /**
+   * Load the whole enterprise tree at once. Returns every item
+   * (forms, server/client scripts, data sources, tables) with its
+   * uri, type, language, guid and checkout state.
+   */
+  async getAllItems(): Promise<EnterpriseItem[]> {
+    try {
+      const data = await this.apiRequest<any>('GetAllItems', { method: 'GET' });
+      if (data?.data?.items && Array.isArray(data.data.items) && data.data.items.length > 0) {
+        return data.data.items.map((item: any) => {
+          const uri = item.uri || '';
+          const uriName = uri.split('/').filter(Boolean).pop() || '';
+          return {
+          id: item.uri || item.name || '',
+          // Older SCM_API.GetAllItems versions returned the whole URI in
+          // `name`.  The Enterprise/SCM trees should always show the leaf
+          // display name, never the complete script path.
+          name: uriName || item.name || '',
+          type: item.type || 'UNKNOWN',
+          uri,
+          hasChildren: false,
+          isCheckedOut: !!item.checkedOutBy,
+          checkedOutBy: item.checkedOutBy || undefined,
+          language: item.language || '',
+          guid: item.guid || undefined
+          };
+        });
+      }
+      return [];
+    } catch (error) {
+      console.error('Failed to get all items:', getErrorMessage(error));
+      return [];
+    }
+  }
+
+  /**
+   * Load every Source Control item with its checkout state.
+   * Mirrors the official SCM dsGetItemsFromSearch data source.
+   * Requires the SCM_API GetSCMItems endpoint (shipped in scm_api patch).
+   */
+  async getSCMItems(filter?: {
+    itemName?: string; types?: string[]; checkedOutOnly?: boolean;
+    checkOutBy?: string; checkInBy?: string;
+    checkOutDateFrom?: string; checkOutDateTo?: string;
+    checkInDateFrom?: string; checkInDateTo?: string;
+    factoryMajor?: string; factoryMinor?: string; factoryBuild?: string;
+    dealerMajor?: string; dealerMinor?: string; dealerBuild?: string;
+    clientMajor?: string; clientMinor?: string; clientBuild?: string;
+    textType?: string; textValue?: string;
+  }): Promise<SCMItem[]> {
+    try {
+      const params = new URLSearchParams();
+      if (filter) {
+        Object.entries(filter).forEach(([key, value]) => {
+          if (value === undefined || value === null || value === '') return;
+          if (Array.isArray(value)) {
+            if (value.length > 0) params.set(key, value.join(','));
+          } else if (value === true) {
+            params.set(key, 'true');
+          } else if (typeof value === 'string') {
+            params.set(key, value);
+          }
+        });
+      }
+      const qs = params.toString();
+      const endpoint = qs ? `GetSCMItems?${qs}` : 'GetSCMItems';
+      const data = await this.apiRequest<any>(endpoint, { method: 'GET' });
+      if (data?.data?.items && Array.isArray(data.data.items) && data.data.items.length > 0) {
+        return data.data.items.map((item: any) => ({
+          itemType: item.itemType || '',
+          catName: item.catName || '',
+          appName: item.appName || '',
+          itemName: item.itemName || '',
+          itemId: item.itemId || '',
+          uri: item.uri || '',
+          state: item.state || '',
+          isCheckedOut: !!item.isCheckedOut,
+          checkedOutBy: item.checkedOutBy || undefined,
+          checkedOutDate: item.checkedOutDate || undefined,
+          checkedInBy: item.checkedInBy || undefined,
+          checkedInDate: item.checkedInDate || undefined,
+          factoryVersion: item.factoryVersion || undefined,
+          dealerVersion: item.dealerVersion || undefined,
+          clientVersion: item.clientVersion || undefined,
+          reason: item.reason || undefined,
+          versionId: item.versionId || undefined
+        }));
+      }
+      // GetSCMItems is an optional history extension.  Keep the native SCM
+      // export tree useful on servers that only have the standard DevTools
+      // SCM_API package by falling back to GetAllItems.
+      return this.getSCMItemsFallback(filter);
+    } catch (error) {
+      console.error('Failed to get SCM items:', getErrorMessage(error));
+      return this.getSCMItemsFallback(filter);
+    }
+  }
+
+  private async getSCMItemsFallback(filter?: {
+    itemName?: string; types?: string[]; checkedOutOnly?: boolean;
+    checkOutBy?: string; checkInBy?: string;
+    checkOutDateFrom?: string; checkOutDateTo?: string;
+    checkInDateFrom?: string; checkInDateTo?: string;
+    factoryMajor?: string; factoryMinor?: string; factoryBuild?: string;
+    dealerMajor?: string; dealerMinor?: string; dealerBuild?: string;
+    clientMajor?: string; clientMinor?: string; clientBuild?: string;
+    textType?: string; textValue?: string;
+  }): Promise<SCMItem[]> {
+    const source = await this.getAllItems();
+    const seen = new Set<string>();
+    const mapped: SCMItem[] = [];
+    const typeMap: Record<string, string> = {
+      HTMLFORMXML: 'APP_FRM', HTMLFORMCODE: 'APP_FRM', HTMLFORMGUIDE: 'APP_FRM', HTMLFORMRESOURCES: 'APP_FRM',
+      XFDFORMXML: 'APP_FRM', XFDFORMCODE: 'APP_FRM', XFDFORMRESOURCES: 'APP_FRM',
+      APPSS: 'APP_SSC', APPCS: 'APP_CS', APPDS: 'APP_DS',
+      SS: 'SSC', CS: 'CSC', DS: 'DS', TABLE: 'TBL'
+    };
+
+    for (const item of source) {
+      const itemType = typeMap[item.type] || item.type;
+      const parts = (item.uri || '').split('/').filter(Boolean);
+      const isApplication = parts[0] === 'Applications';
+      const itemId = item.guid || item.id;
+      // A form appears as XML/Code Behind/Guide/Resources in GetAllItems, but
+      // an SDP contains the form once with all of its documents.
+      const dedupeKey = `${itemType}:${itemId}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+
+      mapped.push({
+        itemType,
+        catName: isApplication ? (parts[1] || '') : (parts[1] || ''),
+        appName: isApplication ? (parts[2] || '') : '',
+        itemName: parts[parts.length - 1] || item.name,
+        itemId,
+        uri: item.uri || '',
+        state: item.isCheckedOut ? 'CheckedOut' : 'Current',
+        isCheckedOut: !!item.isCheckedOut,
+        checkedOutBy: item.checkedOutBy
+      });
     }
 
+    const name = filter?.itemName?.trim().toLowerCase();
+    const types = filter?.types || [];
+    return mapped.filter(item => {
+      if (name && !item.itemName.toLowerCase().includes(name)) return false;
+      if (types.length > 0 && !types.includes(item.itemType)) return false;
+      if (filter?.checkedOutOnly && !item.isCheckedOut) return false;
+      if (filter?.checkOutBy && !String(item.checkedOutBy || '').toLowerCase().includes(filter.checkOutBy.toLowerCase())) return false;
+      return true;
+    });
+  }
+
+  /**
+   * Export selected enterprise items (live / checked-in state) as an SDP
+   * package for deployment to another STARLIMS environment.
+   * Mirrors the official SCM "Send to Package Manager" flow.
+   * Requires the SCM_API ExportItems endpoint (shipped in scm_api patch).
+   */
+  async exportItems(uris: string[]): Promise<{ success: boolean; fileName?: string; blob?: Blob; error?: string }> {
+    if (!uris || uris.length === 0) {
+      return { success: false, error: 'No items selected for export' };
+    }
     try {
-      // The SDP file is stored on the server at GlbImpExpPath
-      // We need to use a different endpoint to download it
-      const url = `${this.baseUrl}/SCM_API.DownloadPackage.${this.urlSuffix}?fileName=${encodeURIComponent(fileName)}`;
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/octet-stream',
-          'STARLIMSUser': this.config.user || '',
-          'STARLIMSPass': this.password
-        }
-      });
-
-      if (response.ok) {
-        const blob = await response.blob();
-        return { success: true, data: blob };
+      const endpoint = `ExportItems?items=${encodeURIComponent(uris.join(','))}`;
+      const data = await this.apiRequest<any>(endpoint, { method: 'GET' });
+      if (!data || data.success !== true) {
+        const message = data?.data ? String(data.data) : 'Export failed: server did not return success';
+        return { success: false, error: message };
       }
-      return { success: false, error: `Download failed: ${response.status}` };
+      const payload = data.data as unknown;
+      if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        const direct = payload as { fileName?: unknown; content?: unknown };
+        if (typeof direct.fileName === 'string' && typeof direct.content === 'string') {
+          const bytes = this.base64ToBytes(direct.content);
+          if (!this.isZipBytes(bytes)) {
+            return { success: false, error: `Export succeeded, but returned content is not a valid SDP/ZIP file (${direct.fileName})` };
+          }
+          return { success: true, fileName: direct.fileName, blob: this.bytesToBlob(bytes) };
+        }
+      }
+      return { success: false, error: 'Export failed: unexpected server response' };
     } catch (error) {
-      console.error('Failed to download package:', getErrorMessage(error));
+      console.error('Failed to export items:', getErrorMessage(error));
       return { success: false, error: getErrorMessage(error) };
     }
+  }
+
+  /**
+   * Recover an old version into the current version.
+   * Mirrors the official Source Control Manager scRecoverOldVersion script:
+   * copies the version documents into a new version and updates the live
+   * item tables (LIMSXFDFORMS/LIMSSERVERSCRIPTS/LIMSDATASOURCES/...).
+   * This is a write operation; the UI must confirm with the user first.
+   * Requires the SCM_API RecoverVersion endpoint (shipped in scm_api patch).
+   */
+  async recoverVersion(uri: string, versionId: string, reason?: string): Promise<{ success: boolean; message?: string; error?: string }> {
+    try {
+      const params = new URLSearchParams({ URI: uri, VERSIONID: versionId });
+      if (reason) params.set('Reason', reason);
+      const data = await this.apiRequest<any>(`RecoverVersion?${params.toString()}`, {
+        method: 'GET'
+      });
+      if (!data) {
+        return { success: false, error: 'RecoverVersion: no response from server' };
+      }
+      if (data.success === true) {
+        return { success: true, message: typeof data.data === 'string' ? data.data : 'Version recovered' };
+      }
+      return { success: false, error: typeof data.data === 'string' ? data.data : 'Version recovery failed' };
+    } catch (error) {
+      console.error('Failed to recover version:', getErrorMessage(error));
+      return { success: false, error: getErrorMessage(error) };
+    }
+  }
+
+  /**
+   * Create a version label and attach it to an item/version (write operation).
+   * Requires the SCM_API CreateLabel endpoint (shipped in scm_api patch).
+   */
+  async createLabel(uri: string, labelTitle: string, labelDesc?: string): Promise<{ success: boolean; message?: string; error?: string }> {
+    try {
+      const params = new URLSearchParams({ URI: uri, labelTitle });
+      if (labelDesc) params.set('labelDesc', labelDesc);
+      const data = await this.apiRequest<any>(`CreateLabel?${params.toString()}`, {
+        method: 'GET'
+      });
+      if (!data) {
+        return { success: false, error: 'CreateLabel: no response from server' };
+      }
+      if (data.success === true) {
+        return { success: true, message: typeof data.data === 'string' ? data.data : 'Label created' };
+      }
+      return { success: false, error: typeof data.data === 'string' ? data.data : 'Label creation failed' };
+    } catch (error) {
+      console.error('Failed to create label:', getErrorMessage(error));
+      return { success: false, error: getErrorMessage(error) };
+    }
+  }
+
+  /** Normalize history rows coming back from GetItemHistory (rows or row list). */
+  private parseHistoryEntries(data: any): ItemHistoryEntry[] {
+    try {
+      const rows = this.extractRows(data);
+      return rows.map((row: any) => ({
+        itemType: this.rowString(row, 'ITEM_TYPE'),
+        itemId: this.rowString(row, 'ITEM_ID'),
+        status: this.rowString(row, 'STATUS'),
+        done: this.rowString(row, 'DONE'),
+        checkedOutBy: this.rowString(row, 'CHECKEDOUTBY'),
+        checkedOutDate: this.rowString(row, 'CHECKEDOUTDATE'),
+        checkedInBy: this.rowString(row, 'CHECKEDINBY'),
+        checkedInDate: this.rowString(row, 'CHECKEDINDATE'),
+        reasonForCheckout: this.rowString(row, 'REASONFORCHECKOUT'),
+        lsCorigRec: this.rowString(row, 'LSCORIGREC'),
+        factory: this.rowString(row, 'FACTORY'),
+        dealer: this.rowString(row, 'DEALER'),
+        client: this.rowString(row, 'CLIENT'),
+        versionId: this.rowString(row, 'VERSIONID'),
+        scriptLanguage: this.rowString(row, 'SCRIPTLANGUAGE'),
+        isCurrentCheckout: this.rowString(row, 'DONE') === '0' || this.rowString(row, 'DONE') === 'false'
+      }));
+    } catch (error) {
+      console.error('Failed to parse history entries:', error);
+      return [];
+    }
+  }
+
+  /** Normalize label rows coming back from GetItemLabels. */
+  private parseLabelEntries(data: any): ItemLabelEntry[] {
+    try {
+      const rows = this.extractRows(data);
+      return rows.map((row: any) => ({
+        labelTitle: this.rowString(row, 'LABEL_TITLE'),
+        labelDesc: this.rowString(row, 'LABEL_DESC'),
+        createdBy: this.rowString(row, 'CREATED_BY'),
+        createdDate: this.rowString(row, 'CREATED_DT'),
+        itemVersionId: this.rowString(row, 'ITEM_VERSIONID')
+      }));
+    } catch (error) {
+      console.error('Failed to parse label entries:', error);
+      return [];
+    }
+  }
+
+  /** Pull a flat row list out of the various response shapes. */
+  private extractRows(data: any): any[] {
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data.data)) return data.data;
+    if (Array.isArray(data.data?.rows)) return data.data.rows;
+    if (Array.isArray(data.data?.results)) return data.data.results;
+    if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
+      return [data.data];
+    }
+    return [];
+  }
+
+  private rowString(row: any, key: string): string {
+    if (!row || row[key] === undefined || row[key] === null) return '';
+    return String(row[key]);
   }
 
   /**
@@ -905,13 +1464,13 @@ export class EnterpriseService implements IEnterpriseService {
   /**
    * Run a script
    */
-  async runScript(uri: string): Promise<ScriptResult> {
+  async runScript(uri: string, parameters: unknown[] = []): Promise<ScriptResult> {
     const startTime = Date.now();
 
     try {
       const data = await this.apiRequest<any>('RunScript', {
         method: 'POST',
-        body: JSON.stringify({ URI: uri })
+        body: JSON.stringify({ URI: uri, Parameters: parameters })
       });
 
       return {
@@ -1264,7 +1823,8 @@ export class EnterpriseService implements IEnterpriseService {
       // Build URL with query parameters matching VS Code plugin
       let url = `Search?itemName=${encodeURIComponent(itemName)}&exactMatch=${exactMatch || false}`;
       if (itemType) {
-        url += `&itemType=${encodeURIComponent(itemType)}`;
+        const normalizedType = this.normalizeSearchItemType(itemType);
+        url += `&itemType=${encodeURIComponent(normalizedType)}`;
       }
 
       console.log('Search request URL:', url);
@@ -1303,22 +1863,48 @@ export class EnterpriseService implements IEnterpriseService {
    */
   async globalSearch(searchString: string, itemTypes?: string[]): Promise<SearchResult> {
     try {
-      const data = await this.apiRequest<any>('GlobalSearch', {
-        method: 'POST',
-        body: JSON.stringify({
-          search: searchString,
-          itemTypes: itemTypes?.join(',') || 'SS,CS,DS'
-        })
-      });
+      const types = itemTypes?.length ? itemTypes.join(',') : 'ALL';
+      const data = await this.apiRequest<any>(
+        `GlobalSearch?searchString=${encodeURIComponent(searchString)}&itemTypes=${encodeURIComponent(types)}`,
+        { method: 'GET' }
+      );
 
-      const items = data?.data ? this.parseEnterpriseItems(data.data) : [];
+      const rawItems = Array.isArray(data?.data?.items)
+        ? data.data.items
+        : Array.isArray(data?.data)
+          ? data.data
+          : [];
+      const items = this.parseEnterpriseItems(rawItems);
       return {
         items,
-        totalCount: data?.totalCount || items.length
+        totalCount: data?.data?.totalCount || data?.totalCount || items.length
       };
     } catch (error) {
       console.error('Failed to global search:', getErrorMessage(error));
       return { items: [], totalCount: 0 };
+    }
+  }
+
+  private normalizeSearchItemType(itemType: string): string {
+    switch (itemType.trim().toUpperCase()) {
+      case 'HTMLFORMXML':
+      case 'XFDFORMXML':
+      case 'PHONEFORMXML':
+      case 'TABLETFORMXML':
+        return 'FORMXML';
+      case 'HTMLFORMCODE':
+      case 'XFDFORMCODE':
+      case 'PHONEFORMCODE':
+      case 'TABLETFORMCODE':
+        return 'FORMCODEBEHIND';
+      case 'APPSS':
+        return 'SS';
+      case 'APPCS':
+        return 'CS';
+      case 'APPDS':
+        return 'DS';
+      default:
+        return itemType;
     }
   }
 
@@ -1411,16 +1997,26 @@ export class EnterpriseService implements IEnterpriseService {
    * Get available languages
    */
   async getLanguages(): Promise<string[]> {
+    const options = await this.getLanguageOptions();
+    return options.map(option => option.id);
+  }
+
+  /** Get language ids and display names for form export. */
+  async getLanguageOptions(): Promise<LanguageOption[]> {
     try {
       const data = await this.apiRequest<any>('GetLanguages');
 
       if (data?.data && Array.isArray(data.data)) {
-        return data.data.map((lang: any) => lang.id || lang);
+        return data.data.map((lang: any) => {
+          if (Array.isArray(lang)) return { id: String(lang[0] || ''), name: String(lang[1] || lang[0] || '') };
+          const id = String(lang.LANGID || lang.langid || lang.id || '');
+          return { id, name: String(lang.LANGUAGE || lang.language || lang.name || id) };
+        }).filter((lang: LanguageOption) => Boolean(lang.id));
       }
-      return ['ENG']; // Default
+      return [{ id: 'ENG', name: 'English' }];
     } catch (error) {
       console.error('Failed to get languages:', getErrorMessage(error));
-      return ['ENG'];
+      return [{ id: 'ENG', name: 'English' }];
     }
   }
 
@@ -1443,12 +2039,16 @@ export class EnterpriseService implements IEnterpriseService {
   /**
    * Get server log for current user
    */
-  async getServerLog(): Promise<string> {
-    if (!this.config?.user) {
+  async getServerLog(user?: string): Promise<string> {
+    const logUser = (user || this.config?.user || '').trim();
+    if (!logUser) {
       return '';
     }
+    if (/[\\/\0]/.test(logUser)) {
+      throw new Error('Invalid STARLIMS log user.');
+    }
     try {
-      const logUri = `/ServerLogs/${this.config.user}.log`;
+      const logUri = `/ServerLogs/${logUser}.log`;
       // Use apiRequest directly since log is plain text, not JSON
       const data = await this.apiRequest<any>(`GetCode?URI=${encodeURIComponent(logUri)}&UserLang=${this.sessionInfo?.langid || 'ENG'}`, {
         method: 'GET'

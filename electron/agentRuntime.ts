@@ -1,11 +1,42 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
-import type { AgentApprovalDecision, AgentEvent, AgentProvider, AgentRuntimeStatus, AgentStartResult } from '../src/types/agent';
+import type { AgentApprovalDecision, AgentEvent, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, ExternalMcpServers } from '../src/types/agent';
+import { withLocalMcpNoProxy } from './localMcpEnv';
 
 type JsonRpcId = number | string;
 type JsonObject = Record<string, any>;
 type Emit = (event: AgentEvent) => void;
+
+function safeMcpName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^_+|_+$/g, '') || 'external';
+}
+
+function tomlString(value: string): string { return JSON.stringify(value); }
+
+function externalCodexMcpArgs(servers: ExternalMcpServers): string[] {
+  const args: string[] = [];
+  for (const [rawName, server] of Object.entries(servers)) {
+    if (server.enabled === false) continue;
+    const name = safeMcpName(rawName);
+    if (server.transport === 'stdio' && server.command) {
+      args.push('-c', `mcp_servers.${name}.command=${tomlString(server.command)}`);
+      if (server.args?.length) args.push('-c', `mcp_servers.${name}.args=${JSON.stringify(server.args)}`);
+      if (server.env && Object.keys(server.env).length) {
+        const env = Object.entries(server.env).map(([key, value]) => `${tomlString(key)} = ${tomlString(value)}`).join(', ');
+        args.push('-c', `mcp_servers.${name}.env={ ${env} }`);
+      }
+    } else if (server.url) {
+      args.push('-c', `mcp_servers.${name}.url=${tomlString(server.url)}`);
+      if (server.headers && Object.keys(server.headers).length) {
+        const headers = Object.entries(server.headers).map(([key, value]) => `${tomlString(key)} = ${tomlString(value)}`).join(', ');
+        args.push('-c', `mcp_servers.${name}.http_headers={ ${headers} }`);
+      }
+    }
+    args.push('-c', `mcp_servers.${name}.required=false`);
+  }
+  return args;
+}
 
 function stringify(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -24,6 +55,7 @@ export class CodexAppServerRuntime {
   private starting?: Promise<void>;
   private nextId = 1;
   private threadId?: string;
+  private threadModel?: string;
   private activeTurnId?: string;
   private readonly pending = new Map<JsonRpcId, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   private readonly approvals = new Map<string, { rpcId: JsonRpcId; method: string; params: JsonObject }>();
@@ -33,7 +65,8 @@ export class CodexAppServerRuntime {
     private readonly mcpUrl: () => string,
     private readonly cwd: () => string,
     private readonly getVersion: () => string,
-    private readonly emit: Emit
+    private readonly emit: Emit,
+    private readonly externalMcpServers: () => ExternalMcpServers = () => ({})
   ) {}
 
   async status(): Promise<AgentRuntimeStatus> {
@@ -54,17 +87,36 @@ export class CodexAppServerRuntime {
     });
   }
 
-  async send(prompt: string): Promise<AgentStartResult> {
+  async models(): Promise<AgentModelOption[]> {
     await this.ensureStarted();
+    const result = await this.request('model/list', { limit: 100 });
+    return (Array.isArray(result?.data) ? result.data : [])
+      .filter((model: JsonObject) => !model.hidden && typeof model.model === 'string')
+      .map((model: JsonObject) => ({
+        id: model.model,
+        name: model.displayName || model.model,
+        description: model.description || undefined,
+        isDefault: !!model.isDefault
+      }));
+  }
+
+  async send(prompt: string, model?: string): Promise<AgentStartResult> {
+    await this.ensureStarted();
+    const requestedModel = model?.trim() || undefined;
+    if (this.threadId && this.threadModel !== requestedModel) {
+      await this.newSession();
+    }
     if (!this.threadId) {
       const result = await this.request('thread/start', {
         cwd: this.cwd(),
         approvalPolicy: 'on-request',
         sandbox: 'workspace-write',
         serviceName: 'starlims-devtools',
-        developerInstructions: 'You are the coding agent inside STARLIMS DevTools. Use the required starlims MCP server for remote STARLIMS data and changes. Never claim a remote operation succeeded unless the MCP tool confirms it.'
+        developerInstructions: 'You are the coding agent inside STARLIMS DevTools. Use the required starlims MCP server for remote STARLIMS data and changes. Never claim a remote operation succeeded unless the MCP tool confirms it.',
+        ...(requestedModel ? { model: requestedModel } : {})
       });
       this.threadId = result.thread.id;
+      this.threadModel = requestedModel;
       this.emit({ provider: 'codex', type: 'session', sessionId: this.threadId, title: 'Codex App Server connected' });
     }
     const result = await this.request('turn/start', {
@@ -83,6 +135,7 @@ export class CodexAppServerRuntime {
   async newSession(): Promise<void> {
     await this.interrupt().catch(() => undefined);
     this.threadId = undefined;
+    this.threadModel = undefined;
     this.activeTurnId = undefined;
   }
 
@@ -120,12 +173,13 @@ export class CodexAppServerRuntime {
     const args = [
       'app-server',
       '-c', `mcp_servers.starlims.url=${this.mcpUrl()}`,
-      '-c', 'mcp_servers.starlims.required=true'
+      '-c', 'mcp_servers.starlims.required=true',
+      ...externalCodexMcpArgs(this.externalMcpServers())
     ];
     const child = spawn(command, args, {
       shell: command.toLowerCase().endsWith('.cmd'),
       windowsHide: true,
-      env: { ...process.env }
+      env: withLocalMcpNoProxy()
     });
     this.child = child;
     createInterface({ input: child.stdout }).on('line', (line) => this.handleLine(line));
@@ -240,7 +294,9 @@ export class CodexAppServerRuntime {
       return;
     }
     if (method === 'error' || method === 'warning') {
-      this.emit({ ...base, type: method === 'error' ? 'error' : 'status', text: params.message || stringify(params) });
+      const retrying = method === 'error' && Boolean(params.willRetry || params.error?.willRetry || /reconnecting/i.test(String(params.message || params.error?.message || '')));
+      const raw = params.message || params.error?.message || stringify(params);
+      this.emit({ ...base, type: method === 'error' && !retrying ? 'error' : 'status', text: retrying ? `Codex connection was interrupted; ${raw}` : raw });
     }
   }
 
@@ -383,18 +439,23 @@ export class AgentRuntimeManager {
   readonly codex: CodexAppServerRuntime;
   readonly claude: ClaudeAgentRuntime;
 
-  constructor(options: { codexCommand: () => string; mcpUrl: () => string; cwd: () => string; getVersion: () => string; emit: Emit }) {
-    this.codex = new CodexAppServerRuntime(options.codexCommand, options.mcpUrl, options.cwd, options.getVersion, options.emit);
+  constructor(options: { codexCommand: () => string; mcpUrl: () => string; externalMcpServers: () => ExternalMcpServers; cwd: () => string; getVersion: () => string; emit: Emit }) {
+    this.codex = new CodexAppServerRuntime(options.codexCommand, options.mcpUrl, options.cwd, options.getVersion, options.emit, options.externalMcpServers);
     this.claude = new ClaudeAgentRuntime(options.mcpUrl, options.cwd, options.getVersion, options.emit);
   }
 
-  async statuses(openCodeStatus: () => Promise<AgentRuntimeStatus>): Promise<Record<AgentProvider, AgentRuntimeStatus>> {
+  async statuses(openCodeStatus: () => Promise<AgentRuntimeStatus>): Promise<Partial<Record<AgentProvider, AgentRuntimeStatus>>> {
     const [codex, claude, opencode] = await Promise.all([this.codex.status(), this.claude.status(), openCodeStatus()]);
     return { codex, claude, opencode };
   }
 
-  send(provider: AgentProvider, prompt: string): Promise<AgentStartResult> {
-    if (provider === 'codex') return this.codex.send(prompt);
+  models(provider: AgentProvider): Promise<AgentModelOption[]> {
+    if (provider === 'codex') return this.codex.models();
+    return Promise.resolve([]);
+  }
+
+  send(provider: AgentProvider, prompt: string, model?: string): Promise<AgentStartResult> {
+    if (provider === 'codex') return this.codex.send(prompt, model);
     if (provider === 'claude') return this.claude.send(prompt);
     throw new Error('OpenCode remains in CLI compatibility mode.');
   }

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">STARLIMS DevTools mark, reversed</title>
+  <desc id="desc">An abstract S surrounding a three-node AI inference path.</desc>
+  <g fill="#fff">
+    <path d="M512 76 828 286 648 432 510 304 392 392v168L220 470V248z"/>
+    <path d="M804 548v270L510 1004 220 828l174-142 116 86 142-116V548z"/>
+  </g>
+  <path d="M390 390 658 658" fill="none" stroke="#fff" stroke-width="28" stroke-linecap="round"/>
+  <g>
+    <circle cx="390" cy="390" r="55" fill="#090a0c"/>
+    <circle cx="390" cy="390" r="34" fill="#fff"/>
+    <circle cx="658" cy="658" r="55" fill="#090a0c"/>
+    <circle cx="658" cy="658" r="34" fill="#fff"/>
+    <rect x="480" y="480" width="72" height="72" rx="4" fill="#fff"/>
+  </g>
+</svg>

@@ -1,16 +1,19 @@
 import { useState, useEffect } from 'react';
 import { useServerStore, ServerConfig } from '../../stores/serverStore';
 import { normalizeStarlimsUrl } from '../../services/miscUtils';
+import { useI18n } from '../../i18n';
+import { AppBrandIcon } from '../AppBrandIcon';
 
 interface ServerSelectorProps {
   onConnect: () => void;
 }
 
 export function ServerSelector({ onConnect }: ServerSelectorProps) {
+  const { language, toggleLanguage, t } = useI18n();
   const {
     servers, addServer, updateServer, removeServer, selectServer,
     currentServer, setError, error, setPassword,
-    password, isConnecting, connect
+    password, isConnecting, connect, setRememberPassword: setRememberPasswordInStore
   } = useServerStore();
 
   const [showAddForm, setShowAddForm] = useState(false);
@@ -28,6 +31,22 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
     urlSuffix: 'lims'
   });
 
+  const loadSavedPassword = async (serverName: string): Promise<string> => {
+    if (!window.electronAPI) return '';
+    const secretKey = `password_${serverName}`;
+    const savedSecret = await window.electronAPI.secretsGet(secretKey);
+    if (savedSecret) return savedSecret;
+
+    // Migrate passwords saved by earlier versions from the general config store.
+    const legacyPassword = await window.electronAPI.storeGet(secretKey);
+    if (legacyPassword) {
+      await window.electronAPI.secretsSet(secretKey, legacyPassword);
+      await window.electronAPI.storeDelete(secretKey);
+      return legacyPassword;
+    }
+    return '';
+  };
+
   // Load servers and saved password on mount
   useEffect(() => {
     const loadServers = async () => {
@@ -40,17 +59,16 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
         if (selectedServer) {
           useServerStore.getState().selectServer(selectedServer);
           // Load saved password for the selected server
-          const savedPassword = await window.electronAPI.storeGet(`password_${selectedServer}`);
+          const savedPassword = await loadSavedPassword(selectedServer);
           if (savedPassword) {
             useServerStore.getState().setPassword(savedPassword);
             useServerStore.getState().setRememberPassword(true);
-            setRememberPassword(true); // Also update local state for checkbox
-            useServerStore.getState().setShowPasswordInput(true);
+            setRememberPassword(true);
+            setShowPasswordInput(true);
           } else {
             useServerStore.getState().setPassword('');
             useServerStore.getState().setRememberPassword(false);
-            setRememberPassword(false); // Also update local state for checkbox
-            useServerStore.getState().setShowPasswordInput(true);
+            setRememberPassword(false);
           }
         }
       }
@@ -76,7 +94,7 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
 
   const handleSaveServer = async () => {
     if (!formData.name.trim() || !formData.url.trim()) {
-      setError('Name and URL are required');
+      setError(t('server.error.required'));
       return;
     }
 
@@ -84,7 +102,7 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
     try {
       normalizedUrl = normalizeStarlimsUrl(formData.url);
     } catch {
-      setError('Invalid URL format');
+      setError(t('server.error.invalidUrl'));
       return;
     }
 
@@ -98,19 +116,20 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
 
     if (editingServerName) {
       const savedPassword = editingServerName !== server.name && window.electronAPI
-        ? await window.electronAPI.storeGet(`password_${editingServerName}`)
+        ? await loadSavedPassword(editingServerName)
         : null;
       if (!updateServer(editingServerName, server)) {
-        setError(`A server named '${server.name}' already exists`);
+        setError(t('server.error.duplicate', { name: server.name }));
         return;
       }
       if (editingServerName !== server.name && window.electronAPI) {
-        if (savedPassword) await window.electronAPI.storeSet(`password_${server.name}`, savedPassword);
+        if (savedPassword) await window.electronAPI.secretsSet(`password_${server.name}`, savedPassword);
+        await window.electronAPI.secretsDelete(`password_${editingServerName}`);
         await window.electronAPI.storeDelete(`password_${editingServerName}`);
       }
     } else {
       if (servers.some((item) => item.name === server.name)) {
-        setError(`A server named '${server.name}' already exists`);
+        setError(t('server.error.duplicate', { name: server.name }));
         return;
       }
       addServer(server);
@@ -122,6 +141,7 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
 
   const handleDeleteServer = async (name: string) => {
     removeServer(name);
+    await window.electronAPI?.secretsDelete(`password_${name}`);
     await window.electronAPI?.storeDelete(`password_${name}`);
   };
 
@@ -139,16 +159,18 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
 
     // Load saved password if exists
     if (window.electronAPI) {
-      const savedPassword = await window.electronAPI.storeGet(`password_${server.name}`);
+      const savedPassword = await loadSavedPassword(server.name);
       console.log('Saved password found:', savedPassword ? 'yes (length=' + savedPassword.length + ')' : 'no');
       if (savedPassword) {
         setPassword(savedPassword);
         setRememberPassword(true);
+        setRememberPasswordInStore(true);
         // Auto-fill password but don't auto-connect
         setShowPasswordInput(true);
       } else {
         setPassword('');
         setRememberPassword(false);
+        setRememberPasswordInStore(false);
         setShowPasswordInput(true);
       }
     } else {
@@ -160,15 +182,17 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
   const handleClearPassword = async () => {
     if (currentServer && window.electronAPI) {
       await window.electronAPI.storeDelete(`password_${currentServer.name}`);
+      await window.electronAPI.secretsDelete(`password_${currentServer.name}`);
       setPassword('');
       setRememberPassword(false);
+      setRememberPasswordInStore(false);
       console.log('Password cleared for:', currentServer.name);
     }
   };
 
   const handleConnectClick = () => {
     if (!currentServer) {
-      setError('Please select a server');
+      setError(t('server.error.select'));
       return;
     }
     setShowPasswordInput(true);
@@ -176,23 +200,13 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
 
   const handlePasswordConnect = async () => {
     if (!password) {
-      setError('Password is required');
+      setError(t('server.error.password'));
       return;
     }
 
+    setRememberPasswordInStore(rememberPassword);
     const success = await connect();
     if (success) {
-      // Save or delete password based on remember checkbox
-      if (window.electronAPI && currentServer) {
-        console.log('Saving password, rememberPassword:', rememberPassword, 'password length:', password.length);
-        if (rememberPassword) {
-          await window.electronAPI.storeSet(`password_${currentServer.name}`, password);
-          console.log('Password saved for:', currentServer.name);
-        } else {
-          await window.electronAPI.storeDelete(`password_${currentServer.name}`);
-          console.log('Password deleted for:', currentServer.name);
-        }
-      }
       setShowPasswordInput(false);
       onConnect();
     }
@@ -210,10 +224,10 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
         {/* Header */}
         <div className="bg-slate-100 dark:bg-slate-800 px-6 py-4 border-b border-slate-200 dark:border-slate-700">
           <h1 className="text-xl font-semibold text-slate-700 dark:text-white flex items-center gap-3">
-            <span className="text-2xl">🔷</span>
+            <AppBrandIcon className="h-8 w-8" />
             STARLIMS DevTools
           </h1>
-          <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">Connect to your STARLIMS server</p>
+          <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">{t('server.subtitle')}</p>
         </div>
 
         {/* Content */}
@@ -229,12 +243,12 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
               {/* Server list */}
               <div className="mb-4">
                 <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">
-                  Select Server
+                  {t('server.select')}
                 </label>
                 <div className="space-y-2 max-h-60 overflow-y-auto">
                   {servers.length === 0 ? (
                     <div className="text-slate-400 dark:text-slate-500 text-sm py-4 text-center">
-                      No servers configured
+                      {t('server.noneConfigured')}
                     </div>
                   ) : (
                     servers.map(server => (
@@ -252,23 +266,23 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
                             <div className="font-medium text-slate-700 dark:text-white">{server.name}</div>
                             <div className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-48">{server.url}</div>
                             {server.user && (
-                              <div className="text-xs text-slate-400 dark:text-slate-500">User: {server.user}</div>
+                              <div className="text-xs text-slate-400 dark:text-slate-500">{t('server.userLabel', { user: server.user })}</div>
                             )}
                           </div>
                           <div className="flex items-center gap-1">
                             <button
-                              className="p-1 text-slate-400 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded"
+                              className="icon-button hover:text-blue-600 dark:hover:text-blue-400"
                               onClick={(e) => { e.stopPropagation(); handleEditServer(server); }}
-                              title="Edit server"
+                              title={t('server.edit')}
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                               </svg>
                             </button>
                             <button
-                              className="p-1 text-slate-400 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 rounded"
+                              className="icon-button hover:text-red-600 dark:hover:text-red-400"
                               onClick={(e) => { e.stopPropagation(); void handleDeleteServer(server.name); }}
-                              title="Delete server"
+                              title={t('server.delete')}
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -286,53 +300,53 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
               {showAddForm ? (
                 <div className="space-y-4 p-4 bg-slate-50 dark:bg-slate-700/50 rounded border border-slate-200 dark:border-slate-600 mb-4">
                   <h3 className="text-sm font-medium text-slate-700 dark:text-white">
-                    {editingServerName ? 'Edit Server' : 'Add New Server'}
+                    {editingServerName ? t('server.edit') : t('server.addNew')}
                   </h3>
                   <div>
-                    <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Server Name</label>
+                    <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">{t('server.name')}</label>
                     <input
                       type="text"
                       name="name"
                       value={formData.name}
                       onChange={handleInputChange}
                       className="input"
-                      placeholder="Production Server"
+                      placeholder={t('server.namePlaceholder')}
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">STARLIMS URL</label>
+                    <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">{t('server.url')}</label>
                     <input
                       type="text"
                       name="url"
                       value={formData.url}
                       onChange={handleInputChange}
                       className="input"
-                      placeholder="https://my.starlims.server.com/STARLIMS/"
+                      placeholder={t('server.urlPlaceholder')}
                     />
                     <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                      Application root URL; a pasted starthtml.lims URL is normalized automatically.
+                      {t('server.rootUrlHint')}
                     </p>
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Username (optional)</label>
+                    <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">{t('server.user')}</label>
                     <input
                       type="text"
                       name="user"
                       value={formData.user}
                       onChange={handleInputChange}
                       className="input"
-                      placeholder="ADMIN"
+                      placeholder={t('server.userPlaceholder')}
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">URL Suffix</label>
+                    <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">{t('server.urlSuffix')}</label>
                     <input
                       type="text"
                       name="urlSuffix"
                       value={formData.urlSuffix}
                       onChange={handleInputChange}
                       className="input"
-                      placeholder="lims"
+                      placeholder={t('server.urlSuffixPlaceholder')}
                     />
                   </div>
                   <div className="flex gap-2">
@@ -340,13 +354,13 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
                       className="btn btn-primary flex-1"
                       onClick={() => void handleSaveServer()}
                     >
-                      {editingServerName ? 'Save Changes' : 'Add Server'}
+                      {editingServerName ? t('server.saveChanges') : t('server.add')}
                     </button>
                     <button
                       className="btn btn-secondary"
                       onClick={() => { resetServerForm(); setError(null); }}
                     >
-                      Cancel
+                      {t('common.cancel')}
                     </button>
                   </div>
                 </div>
@@ -363,7 +377,7 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                     </svg>
-                    Add Server
+                    {t('server.add')}
                   </span>
                 </button>
               )}
@@ -374,7 +388,7 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
                 onClick={handleConnectClick}
                 disabled={!currentServer}
               >
-                Connect to STARLIMS
+                {t('server.connect')}
               </button>
             </>
           ) : (
@@ -384,13 +398,13 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
                 <div className="text-sm text-slate-700 dark:text-white font-medium">{currentServer?.name}</div>
                 <div className="text-xs text-slate-500 dark:text-slate-400">{currentServer?.url}</div>
                 {currentServer?.user && (
-                  <div className="text-xs text-slate-400 dark:text-slate-500 mt-1">User: {currentServer.user}</div>
+                  <div className="text-xs text-slate-400 dark:text-slate-500 mt-1">{t('server.userLabel', { user: currentServer.user })}</div>
                 )}
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">
-                  Enter Password
+                  {t('server.enterPassword')}
                 </label>
                 <div className="relative">
                   <input
@@ -399,14 +413,14 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
                     onChange={handlePasswordChange}
                     onKeyDown={handleKeyDown}
                     className="input pr-10"
-                    placeholder="Password"
+                    placeholder={t('server.password')}
                     autoFocus
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                    title={showPassword ? 'Hide password' : 'Show password'}
+                    className="icon-button absolute right-1 top-1/2 -translate-y-1/2"
+                    title={showPassword ? t('server.hidePassword') : t('server.showPassword')}
                   >
                     {showPassword ? (
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -428,7 +442,7 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
                   onClick={handleClearPassword}
                   className="text-xs text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 underline"
                 >
-                  Clear saved password
+                  {t('server.clearPassword')}
                 </button>
               )}
 
@@ -437,11 +451,14 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
                   type="checkbox"
                   id="rememberPassword"
                   checked={rememberPassword}
-                  onChange={(e) => setRememberPassword(e.target.checked)}
+                  onChange={(e) => {
+                    setRememberPassword(e.target.checked);
+                    setRememberPasswordInStore(e.target.checked);
+                  }}
                   className="w-4 h-4 rounded bg-white dark:bg-slate-700 border-slate-300 dark:border-slate-600 text-blue-600 dark:text-blue-500 focus:ring-blue-500"
                 />
                 <label htmlFor="rememberPassword" className="text-sm text-slate-600 dark:text-slate-400">
-                  Remember password
+                  {t('server.rememberPassword')}
                 </label>
               </div>
 
@@ -457,9 +474,9 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                       </svg>
-                      Connecting...
+                      {t('server.connecting')}
                     </span>
-                  ) : 'Connect'}
+                  ) : t('server.connect')}
                 </button>
                 <button
                   className="btn btn-secondary py-3"
@@ -468,7 +485,7 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
                     setError(null);
                   }}
                 >
-                  Back
+                  {t('server.back')}
                 </button>
               </div>
             </div>
@@ -476,10 +493,18 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 bg-slate-100 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 text-center">
+        <div className="px-6 py-3 bg-slate-100 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3">
           <p className="text-xs text-slate-500 dark:text-slate-500">
-            {appVersion ? `Version ${appVersion} | ` : ''}Cross-platform STARLIMS Development Tools
+            {appVersion ? `${t('app.version', { version: appVersion })} | ` : ''}{t('app.productDescription')}
           </p>
+          <button
+            type="button"
+            onClick={toggleLanguage}
+            className="px-2 py-0.5 text-xs font-medium rounded border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+            title={t('common.language')}
+          >
+            {language === 'zh' ? 'EN' : '中文'}
+          </button>
         </div>
       </div>
     </div>

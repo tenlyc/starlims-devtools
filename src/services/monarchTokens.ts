@@ -279,6 +279,29 @@ export const slsqlLanguage: monaco.languages.IMonarchLanguage = {
   }
 };
 
+export const starlimsLogLanguage: monaco.languages.IMonarchLanguage = {
+  defaultToken: 'log.text',
+  tokenizer: {
+    root: [
+      [/\*{3,}(Error|Exception)\*{3,}/i, 'log.error'],
+      [/\b(Server Error|Script not found|Exception|Error|Failed|Failure)\b/i, 'log.error'],
+      [/\*{3,}User message\*{3,}/i, 'log.user'],
+      [/\b\d{8}\b/, 'log.date'],
+      [/\b\d{2}:\d{2}:\d{2}\b/, 'log.time'],
+      [/\b\d+\.\d+\.\d+\b/, 'log.version'],
+      [/\b(?:ServerScript|ClientScript|DataSource)\.[A-Za-z0-9_.$]+(?:\([^)]*\))?/i, 'log.script'],
+      [/\bline:\s*\d+\b/i, 'log.line'],
+      [/\bw3wp\([^)]*\)/i, 'log.process'],
+      [/\b(?:WIN|LINUX)-[A-Za-z0-9_-]+\b/i, 'log.machine'],
+      [/--.*$/, 'comment'],
+      [/'(?:''|[^'])*'/, 'string.quoted.single'],
+      [/\b(?:SELECT|FROM|WHERE|JOIN|INNER|LEFT|RIGHT|OUTER|ON|AND|OR|AS|ORDER|BY|GROUP|HAVING|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CASE|WHEN|THEN|ELSE|END|UNION|ALL|DISTINCT|TOP)\b/i, 'keyword'],
+      [/\b\d+(?:\.\d+)?\b/, 'constant.numeric'],
+      [/\b[A-Z][A-Z0-9_]*(?=\s*=)/, 'variable.predefined']
+    ]
+  }
+};
+
 // Define custom dark theme for STARLIMS
 export function defineThemes(editorMonaco?: typeof monaco) {
   const m = editorMonaco || monaco;
@@ -310,19 +333,33 @@ export function defineThemes(editorMonaco?: typeof monaco) {
       { token: 'identifier', foreground: 'D4D4D4' },
       { token: 'delimiter', foreground: 'D4D4D4' },
       { token: 'delimiter.bracket', foreground: 'D4D4D4' },
+      { token: 'log.text', foreground: 'D4D4D4' },
+      { token: 'log.date', foreground: 'DCDCAA', fontStyle: 'bold' },
+      { token: 'log.time', foreground: '6A9955' },
+      { token: 'log.version', foreground: 'DCDCAA' },
+      { token: 'log.script', foreground: 'DCDCAA' },
+      { token: 'log.line', foreground: '4EC9B0' },
+      { token: 'log.process', foreground: 'CE9178' },
+      { token: 'log.machine', foreground: '9CDCFE' },
+      { token: 'log.user', foreground: '6A9955', fontStyle: 'bold' },
+      { token: 'log.error', foreground: 'F48771', fontStyle: 'bold' },
     ],
     colors: {
       'editor.background': '#1E1E1E',
       'editor.foreground': '#D4D4D4',
-      'editor.lineHighlightBackground': '#2D2D30',
+      'editor.lineHighlightBackground': '#2A2D2E',
       'editor.selectionBackground': '#264F78',
       'editor.inactiveSelectionBackground': '#3A3D41',
       'editorCursor.foreground': '#AEAFAD',
       'editorLineNumber.foreground': '#858585',
       'editorLineNumber.activeForeground': '#C6C6C6',
-      'editorIndentGuide.background': '#404040',
-      'editorIndentGuide.activeBackground': '#707070',
+      'editorIndentGuide.background1': '#404040',
+      'editorIndentGuide.activeBackground1': '#707070',
       'editor.selectionHighlightBackground': '#ADD6FF26',
+      'editorGutter.background': '#1E1E1E',
+      'editorOverviewRuler.border': '#1E1E1E',
+      'minimap.background': '#1E1E1E',
+      'scrollbar.shadow': '#00000000',
     }
   });
 
@@ -352,6 +389,16 @@ export function defineThemes(editorMonaco?: typeof monaco) {
       { token: 'identifier', foreground: '001188' },
       { token: 'delimiter', foreground: '000000' },
       { token: 'delimiter.bracket', foreground: '000000' },
+      { token: 'log.text', foreground: '1F1F1F' },
+      { token: 'log.date', foreground: '795E26', fontStyle: 'bold' },
+      { token: 'log.time', foreground: '008000' },
+      { token: 'log.version', foreground: '795E26' },
+      { token: 'log.script', foreground: '795E26' },
+      { token: 'log.line', foreground: '267F99' },
+      { token: 'log.process', foreground: 'A31515' },
+      { token: 'log.machine', foreground: '001188' },
+      { token: 'log.user', foreground: '008000', fontStyle: 'bold' },
+      { token: 'log.error', foreground: 'CD3131', fontStyle: 'bold' },
     ],
     colors: {
       'editor.background': '#FFFFFF',
@@ -541,6 +588,13 @@ export function registerLanguages(editorMonaco?: typeof monaco) {
     aliases: ['SLSQL', 'STARLIMS SQL', 'DataSource']
   });
   m.languages.setMonarchTokensProvider('slsql', slsqlLanguage);
+
+  m.languages.register({
+    id: 'starlimslog',
+    extensions: ['.log'],
+    aliases: ['STARLIMS Log', 'Server Log']
+  });
+  m.languages.setMonarchTokensProvider('starlimslog', starlimsLogLanguage);
 
   // Define SLSQL theme colors
   m.languages.setLanguageConfiguration('slsql', {

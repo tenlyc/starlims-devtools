@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { buildCliPrompt, useAiContextStore } from '../../services/aiContextStore';
-import type { AgentApprovalDecision, AgentEvent, AgentItemKind, AgentProvider, AgentRuntimeStatus } from '../../types/agent';
+import { useOutputLogStore } from '../../services/outputLogStore';
+import { getEnterpriseService } from '../../services/enterpriseService';
+import { editorStore } from '../../stores/editorStore';
+import type { AgentApprovalDecision, AgentEvent, AgentItemKind, AgentModelOption, AgentProvider, AgentRuntimeStatus, GenericAgentConfig } from '../../types/agent';
+import type { EnterpriseItem } from '../../services/iEnterpriseService';
+import { useI18n } from '../../i18n';
 
 type MessageEntry = {
   entryType: 'message';
@@ -37,18 +42,117 @@ type TimelineEntry = MessageEntry | ActivityEntry | ApprovalEntry;
 type ProviderConversation = { entries: TimelineEntry[]; running: boolean; sequence: number };
 type Conversations = Record<AgentProvider, ProviderConversation>;
 type McpStatus = { running: boolean; url: string; port: number; error?: string };
+type ScriptMentionCandidate = {
+  id: string;
+  name: string;
+  uri: string;
+  type: string;
+  language?: string;
+  content?: string;
+  source: 'editor' | 'enterprise';
+};
+type SavedConversation = {
+  id: string;
+  provider: AgentProvider;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  entries: TimelineEntry[];
+};
+type LocalAgentRules = {
+  enabled: boolean;
+  name: string;
+  content: string;
+  updatedAt: number;
+};
+type ConversationMode = 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
+type GenericAgentProfile = GenericAgentConfig & { id: string; name: string };
 
-const PROVIDERS: Array<{ id: AgentProvider; label: string; mark: string }> = [
-  { id: 'codex', label: 'Codex', mark: 'CX' }
+const HISTORY_STORE_KEY = 'agentConversationHistory.v1';
+const MODEL_STORE_KEY = 'agentSelectedModel.v1';
+const GENERIC_CONFIG_STORE_KEY = 'genericAgentConfig.v1';
+const GENERIC_PROFILES_STORE_KEY = 'genericAgentProfiles.v2';
+const GENERIC_API_KEY_SECRET = 'generic-agent-api-key';
+const AGENT_RULES_STORE_KEY = 'agentWorkspaceInstructions.v1';
+const AGENT_MODE_STORE_KEY = 'agentConversationMode.v1';
+
+const MODE_INSTRUCTIONS: Record<ConversationMode, string> = {
+  agent: 'Agent mode: complete the request end-to-end. Inspect, use tools, edit, and verify as needed within the permissions granted by the user.',
+  plan: 'Plan mode: inspect and reason using read-only operations, then provide a concrete implementation plan. Do not edit files or invoke state-changing tools.',
+  debug: 'Debug mode: reproduce or inspect the issue, gather evidence, identify the root cause, and verify conclusions. Implement the smallest safe fix only when the user request includes fixing it.',
+  multitask: 'Multitask mode: decompose independent work into parallel workstreams where possible, coordinate their results, and deliver one verified outcome.',
+  ask: 'Ask mode: answer and explain using read-only inspection only. Do not edit files, change external state, or invoke state-changing tools.'
+};
+
+function normalizeModelList(...lists: Array<Array<string | undefined> | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of lists.flatMap((list) => list || [])) {
+    const model = value?.trim();
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    result.push(model);
+  }
+  return result;
+}
+
+function profileSecretKey(id: string): string {
+  return `generic-agent-api-key:${id}`;
+}
+
+function createGenericProfile(name = 'OpenAI-compatible'): GenericAgentProfile {
+  return {
+    id: crypto.randomUUID(), name, baseUrl: 'https://api.openai.com/v1', apiKey: '',
+    model: '', models: [], maxToolRounds: 16
+  };
+}
+
+function profileNameFromUrl(baseUrl: string): string {
+  try { return new URL(baseUrl).hostname || 'OpenAI-compatible'; }
+  catch { return 'OpenAI-compatible'; }
+}
+
+const PROVIDERS: Array<{ id: AgentProvider; mark: string }> = [
+  { id: 'codex', mark: 'CX' },
+  { id: 'generic', mark: 'AI' }
 ];
 const kindMark: Record<AgentItemKind, string> = { mcp: 'MCP', command: '>_', file: 'Δ', reasoning: '◌', plan: '≡', other: '•' };
+
+type ToolbarIconButtonProps = {
+  title: string;
+  onClick: () => void;
+  children: ReactNode;
+  indicator?: boolean;
+};
+
+function ToolbarIconButton({ title, onClick, children, indicator = false }: ToolbarIconButtonProps) {
+  return (
+    <button
+      type="button"
+      className="icon-button relative"
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+    >
+      {children}
+      {indicator && <span className="absolute right-1 top-1 h-2 w-2 rounded-full border border-white bg-emerald-500 dark:border-[#1b1b1b] dark:bg-[#3fb950]" />}
+    </button>
+  );
+}
+
+const ToolbarIcons = {
+  settings: <svg viewBox="0 0 24 24" className="h-[17px] w-[17px]" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" fill="none" stroke="currentColor" strokeWidth="1.8" /><path d="m19.4 15 .1 2-2.1 2.1-2-.5-1.4.8-.6 2h-3l-.6-2-1.4-.8-2 .5L4.4 17l.5-2-1-1.5L2 13v-3l2-.6.8-1.4-.5-2L6.4 4l2 .5L10 3.6l.5-1.9h3l.6 2 1.4.8 2-.5 2.1 2.1-.5 2 .8 1.4 2 .6v3l-2 .6-.5 1.3Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" /></svg>,
+  customize: <svg viewBox="0 0 24 24" className="h-[17px] w-[17px]" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1" fill="none" stroke="currentColor" strokeWidth="1.7" /><rect x="13.5" y="3.5" width="7" height="7" rx="1" fill="none" stroke="currentColor" strokeWidth="1.7" /><rect x="3.5" y="13.5" width="7" height="7" rx="1" fill="none" stroke="currentColor" strokeWidth="1.7" /><path d="M17 13.5v7M13.5 17h7" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>,
+  history: <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" aria-hidden="true"><path d="M4 6v5h5M4.8 10a8 8 0 1 1 .7 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /><path d="M12 7.5V12l3 1.8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+  plus: <svg viewBox="0 0 24 24" className="h-[19px] w-[19px]" aria-hidden="true"><path d="M12 4v16M4 12h16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+};
 
 function emptyConversation(): ProviderConversation {
   return { entries: [], running: false, sequence: 0 };
 }
 
 function initialConversations(): Conversations {
-  return { codex: emptyConversation(), claude: emptyConversation(), opencode: emptyConversation() };
+  return { codex: emptyConversation(), claude: emptyConversation(), opencode: emptyConversation(), generic: emptyConversation() };
 }
 
 function stripAnsi(value: string): string {
@@ -56,6 +160,53 @@ function stripAnsi(value: string): string {
   const controlSequenceIntroducer = String.fromCharCode(155);
   const ansiPattern = new RegExp(`(?:${escape}\\[|${controlSequenceIntroducer})[0-?]*[ -/]*[@-~]`, 'g');
   return value.replace(ansiPattern, '');
+}
+
+function mentionDisplayName(candidate: ScriptMentionCandidate): string {
+  const leaf = (candidate.name || candidate.uri).split(/[\\/]/).filter(Boolean).pop() || candidate.name;
+  if (/\.[a-z0-9]+$/i.test(leaf)) return leaf;
+  const type = candidate.type.toUpperCase();
+  if (type.includes('CODE') || type.includes('CLIENT')) return `${leaf}.js`;
+  if (type.includes('GUIDE')) return `${leaf}.json`;
+  if (type.includes('XML') || type.includes('RESOURCE')) return `${leaf}.xml`;
+  return `${leaf}.ssl`;
+}
+
+function mentionParentPath(candidate: ScriptMentionCandidate): string {
+  const parts = candidate.uri.split('/').filter(Boolean);
+  const parent = parts.slice(0, -1);
+  if (parent.length === 0) return '';
+  return `…/${parent.slice(-2).join('/')}`;
+}
+
+function mentionFileMark(candidate: ScriptMentionCandidate): string {
+  const name = mentionDisplayName(candidate).toLowerCase();
+  if (name.endsWith('.js')) return 'JS';
+  if (name.endsWith('.json')) return '{}';
+  if (name.endsWith('.xml')) return 'XML';
+  return '▱';
+}
+
+function contextDisplayName(item: { name: string; uri: string; source: 'checkout' | 'editor' | 'file' }): string {
+  const rawName = item.name || item.uri;
+  const parts = rawName.split(/[\\/]/).filter(Boolean);
+  let leaf = parts.at(-1) || rawName;
+  if (/^(?:xml|code\s*behind|codebehind|guide|resources)$/i.test(leaf) && parts.length > 1) {
+    leaf = parts.at(-2) || leaf;
+  }
+  if (item.source !== 'file') {
+    leaf = leaf.replace(/\s*\[(?:XML|Code Behind|Guide|Resources)\]\s*$/i, '');
+  }
+  try {
+    return decodeURIComponent(leaf);
+  } catch {
+    return leaf;
+  }
+}
+
+function conversationTitle(entries: TimelineEntry[]): string {
+  const first = entries.find((entry): entry is MessageEntry => entry.entryType === 'message' && entry.role === 'user');
+  return first?.content.replace(/\s+/g, ' ').trim().slice(0, 48) || 'Agent conversation';
 }
 
 function replaceOrAppend(entries: TimelineEntry[], entry: TimelineEntry): TimelineEntry[] {
@@ -153,19 +304,54 @@ function MarkdownMessage({ content }: { content: string }) {
 }
 
 export function MCPPanel() {
+  const { t } = useI18n();
   const [provider, setProvider] = useState<AgentProvider>('codex');
   const [statuses, setStatuses] = useState<Partial<Record<AgentProvider, AgentRuntimeStatus>>>({});
   const [mcp, setMcp] = useState<McpStatus | null>(null);
   const [conversations, setConversations] = useState<Conversations>(initialConversations);
   const [input, setInput] = useState('');
   const [showConnection, setShowConnection] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionResults, setMentionResults] = useState<ScriptMentionCandidate[]>([]);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [models, setModels] = useState<AgentModelOption[]>([]);
+  const [selectedModel, setSelectedModel] = useState('');
+  const [conversationMode, setConversationMode] = useState<ConversationMode>('agent');
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<SavedConversation[]>([]);
+  const [sessionIds, setSessionIds] = useState<Record<AgentProvider, string>>(() => ({ codex: crypto.randomUUID(), claude: crypto.randomUUID(), opencode: crypto.randomUUID(), generic: crypto.randomUUID() }));
+  const [replayHistory, setReplayHistory] = useState(false);
+  const [showGenericSettings, setShowGenericSettings] = useState(false);
+  const [genericProfiles, setGenericProfiles] = useState<GenericAgentProfile[]>(() => [createGenericProfile()]);
+  const [activeGenericProfileId, setActiveGenericProfileId] = useState(() => genericProfiles[0].id);
+  const [genericModels, setGenericModels] = useState<string[]>([]);
+  const [genericModelDraft, setGenericModelDraft] = useState('');
+  const [genericTestMessage, setGenericTestMessage] = useState('');
+  const [agentRules, setAgentRules] = useState<LocalAgentRules>({ enabled: false, name: '', content: '', updatedAt: 0 });
   const contexts = useAiContextStore((state) => state.items);
+  const addAiContext = useAiContextStore((state) => state.addItem);
   const removeContext = useAiContextStore((state) => state.removeItem);
   const clearContexts = useAiContextStore((state) => state.clear);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const conversation = conversations[provider];
   const { entries, running } = conversation;
+  const genericConfig = genericProfiles.find((profile) => profile.id === activeGenericProfileId) || genericProfiles[0];
+  const genericModelChoices = genericProfiles.flatMap((profile) => normalizeModelList(profile.models, [profile.model]).map((model) => ({
+    value: `${profile.id}|${encodeURIComponent(model)}`,
+    profileId: profile.id,
+    profileName: profile.name,
+    model
+  })));
+  const genericModelSelection = `${activeGenericProfileId}|${encodeURIComponent(genericConfig.model || '')}`;
+  const setGenericConfig = (updater: GenericAgentConfig | ((current: GenericAgentConfig) => GenericAgentConfig)) => {
+    setGenericProfiles((profiles) => profiles.map((profile) => {
+      if (profile.id !== activeGenericProfileId) return profile;
+      const next = typeof updater === 'function' ? updater(profile) : updater;
+      return { ...profile, ...next };
+    }));
+  };
 
   useEffect(() => {
     const refresh = async () => {
@@ -174,7 +360,7 @@ export function MCPPanel() {
         window.electronAPI.agentGetStatuses().catch(() => ({} as Record<AgentProvider, AgentRuntimeStatus>)),
         window.electronAPI.mcpGetStatus().catch(() => null)
       ]);
-      setStatuses(agentStatuses);
+      setStatuses((current) => ({ ...current, ...agentStatuses }));
       setMcp(mcpStatus);
     };
     void refresh();
@@ -182,7 +368,128 @@ export function MCPPanel() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    const onRulesChanged = (event: Event) => setAgentRules((event as CustomEvent<LocalAgentRules>).detail);
+    window.addEventListener('ai-rules:changed', onRulesChanged);
+    return () => window.removeEventListener('ai-rules:changed', onRulesChanged);
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    void window.electronAPI.storeGet(AGENT_RULES_STORE_KEY).then((saved) => {
+      if (!saved || typeof saved !== 'object') return;
+      setAgentRules({
+        enabled: saved.enabled !== false && typeof saved.content === 'string' && Boolean(saved.content.trim()),
+        name: typeof saved.name === 'string' ? saved.name : 'AGENTS.md',
+        content: typeof saved.content === 'string' ? saved.content : '',
+        updatedAt: typeof saved.updatedAt === 'number' ? saved.updatedAt : 0
+      });
+    }).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    void (async () => {
+      const savedProfiles = await window.electronAPI!.storeGet(GENERIC_PROFILES_STORE_KEY).catch(() => null);
+      let profiles: GenericAgentProfile[] = [];
+      let activeId = '';
+      if (Array.isArray(savedProfiles?.profiles) && savedProfiles.profiles.length > 0) {
+        activeId = typeof savedProfiles.activeProfileId === 'string' ? savedProfiles.activeProfileId : '';
+        profiles = await Promise.all(savedProfiles.profiles.map(async (saved: any) => {
+          const id = typeof saved.id === 'string' && saved.id ? saved.id : crypto.randomUUID();
+          const model = typeof saved.model === 'string' ? saved.model : '';
+          const models = normalizeModelList(Array.isArray(saved.models) ? saved.models : [], [model]);
+          return {
+            id,
+            name: typeof saved.name === 'string' && saved.name.trim() ? saved.name.trim() : profileNameFromUrl(String(saved.baseUrl || '')),
+            baseUrl: typeof saved.baseUrl === 'string' ? saved.baseUrl : 'https://api.openai.com/v1',
+            apiKey: await window.electronAPI!.secretsGet(profileSecretKey(id)).catch(() => '') || '',
+            model: models.includes(model) ? model : (models[0] || ''), models,
+            maxToolRounds: typeof saved.maxToolRounds === 'number' ? Math.min(64, Math.max(1, Math.floor(saved.maxToolRounds))) : 16
+          };
+        }));
+      } else {
+        const [saved, apiKey] = await Promise.all([
+          window.electronAPI!.storeGet(GENERIC_CONFIG_STORE_KEY).catch(() => null),
+          window.electronAPI!.secretsGet(GENERIC_API_KEY_SECRET).catch(() => '')
+        ]);
+        const model = typeof saved?.model === 'string' ? saved.model : '';
+        const models = normalizeModelList(Array.isArray(saved?.models) ? saved.models : [], [model]);
+        const baseUrl = typeof saved?.baseUrl === 'string' ? saved.baseUrl : 'https://api.openai.com/v1';
+        const migrated = createGenericProfile(profileNameFromUrl(baseUrl));
+        profiles = [{ ...migrated, baseUrl, apiKey: typeof apiKey === 'string' ? apiKey : '', model: models.includes(model) ? model : (models[0] || ''), models, maxToolRounds: typeof saved?.maxToolRounds === 'number' ? Math.min(64, Math.max(1, Math.floor(saved.maxToolRounds))) : 16 }];
+        activeId = migrated.id;
+      }
+      const active = profiles.find((profile) => profile.id === activeId) || profiles[0];
+      setGenericProfiles(profiles);
+      setActiveGenericProfileId(active.id);
+      setStatuses((current) => ({ ...current, generic: {
+        available: Boolean(active.baseUrl && active.model && active.apiKey), runtime: 'api',
+        version: 'OpenAI-compatible API', detail: `${active.name} · ${active.baseUrl}`
+      } }));
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    void Promise.all([
+      window.electronAPI.agentGetModels('codex').catch(() => [] as AgentModelOption[]),
+      window.electronAPI.storeGet(HISTORY_STORE_KEY).catch(() => []),
+      window.electronAPI.storeGet(MODEL_STORE_KEY).catch(() => ''),
+      window.electronAPI.storeGet(AGENT_MODE_STORE_KEY).catch(() => 'agent')
+    ]).then(([availableModels, savedHistory, savedModel, savedMode]) => {
+      setModels(availableModels);
+      setHistory(Array.isArray(savedHistory) ? savedHistory : []);
+      const fallback = availableModels.find((model) => model.isDefault)?.id || availableModels[0]?.id || '';
+      setSelectedModel(typeof savedModel === 'string' && availableModels.some((model) => model.id === savedModel) ? savedModel : fallback);
+      if (typeof savedMode === 'string' && savedMode in MODE_INSTRUCTIONS) setConversationMode(savedMode as ConversationMode);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI || !selectedModel) return;
+    void window.electronAPI.storeSet(MODEL_STORE_KEY, selectedModel);
+  }, [selectedModel]);
+
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    void window.electronAPI.storeSet(AGENT_MODE_STORE_KEY, conversationMode);
+  }, [conversationMode]);
+
+  useEffect(() => {
+    const current = conversations[provider];
+    if (!window.electronAPI || current.entries.length === 0) return;
+    const timer = window.setTimeout(() => {
+      const safeEntries = current.entries.filter((entry) => entry.entryType !== 'approval');
+      const id = sessionIds[provider];
+      setHistory((saved) => {
+        const existing = saved.find((item) => item.id === id);
+        const record: SavedConversation = {
+          id, provider, title: conversationTitle(safeEntries),
+          createdAt: existing?.createdAt || Date.now(), updatedAt: Date.now(), entries: safeEntries
+        };
+        const next = [record, ...saved.filter((item) => item.id !== id)].slice(0, 50);
+        void window.electronAPI.storeSet(HISTORY_STORE_KEY, next);
+        return next;
+      });
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [conversations, provider, sessionIds]);
+
   useEffect(() => window.electronAPI?.onAgentEvent((event) => {
+    if (['session', 'status', 'item', 'approval', 'done', 'error'].includes(event.type)) {
+      const level = event.type === 'error' || (event.type === 'item' && event.status === 'failed')
+        ? 'error'
+        : event.type === 'approval'
+          ? 'warning'
+          : event.type === 'done' || (event.type === 'item' && event.status === 'completed')
+            ? 'success'
+            : 'info';
+      useOutputLogStore.getState().addEntry({
+        channel: 'ai-runtime', level, source: `${event.provider} Agent`,
+        message: event.text || event.title || event.status || event.type
+      });
+    }
     setConversations((current) => ({
       ...current,
       [event.provider]: applyAgentEvent(current[event.provider], event)
@@ -192,8 +499,49 @@ export function MCPPanel() {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [provider, entries, running]);
   useEffect(() => { if (contexts.length) inputRef.current?.focus(); }, [contexts.length]);
 
+  useEffect(() => {
+    if (mentionQuery === null) return;
+    const normalized = mentionQuery.trim().toLowerCase();
+    const openCandidates: ScriptMentionCandidate[] = editorStore.getState().openFiles
+      .filter((file) => !normalized || `${file.name} ${file.uri}`.toLowerCase().includes(normalized))
+      .map((file) => ({
+        id: file.uri, name: file.name, uri: file.uri, type: file.type,
+        language: file.language, content: file.content, source: 'editor' as const
+      }));
+    setMentionResults(openCandidates.slice(0, 8));
+    setMentionIndex(0);
+    if (normalized.length < 2) {
+      setMentionLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setMentionLoading(true);
+    const timer = window.setTimeout(async () => {
+      const result = await getEnterpriseService().search(normalized).catch(() => ({ items: [], totalCount: 0 }));
+      if (cancelled) return;
+      const remoteCandidates = result.items
+        .filter((item: EnterpriseItem) => !!item.uri && !item.hasChildren)
+        .map((item: EnterpriseItem): ScriptMentionCandidate => ({
+          id: item.uri!, name: item.name, uri: item.uri!, type: item.type,
+          language: item.language, source: 'enterprise'
+        }));
+      const merged = [...openCandidates, ...remoteCandidates].filter((candidate, index, all) =>
+        all.findIndex((item) => item.uri === candidate.uri) === index
+      );
+      setMentionResults(merged.slice(0, 12));
+      setMentionIndex(0);
+      setMentionLoading(false);
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [mentionQuery]);
+
+  const providerLabel = (target: AgentProvider) => target === 'codex' ? 'Codex' : target === 'generic' ? t('agent.genericTab') : target;
   const activeStatus = statuses[provider];
-  const title = useMemo(() => PROVIDERS.find((item) => item.id === provider)?.label || provider, [provider]);
+  const title = providerLabel(provider);
 
   const updateConversation = (target: AgentProvider, update: (current: ProviderConversation) => ProviderConversation) => {
     setConversations((current) => ({ ...current, [target]: update(current[target]) }));
@@ -204,30 +552,232 @@ export function MCPPanel() {
     if (!question || running || !activeStatus?.available || !window.electronAPI) return;
     const selectedProvider = provider;
     const userMessage: MessageEntry = { entryType: 'message', id: crypto.randomUUID(), role: 'user', content: question, provider: selectedProvider };
-    const history = selectedProvider === 'opencode'
+    const promptHistory = selectedProvider === 'opencode' || selectedProvider === 'generic' || replayHistory
       ? entries.filter((entry): entry is MessageEntry => entry.entryType === 'message' && !entry.error).map(({ role, content }) => ({ role, content }))
       : [];
-    const prompt = buildCliPrompt(question, contexts, history, mcp?.url || 'http://127.0.0.1:3002/mcp');
+    const prompt = buildCliPrompt(
+      question,
+      contexts,
+      promptHistory,
+      mcp?.url || 'http://127.0.0.1:3102/mcp',
+      agentRules.enabled ? agentRules.content : '',
+      MODE_INSTRUCTIONS[conversationMode]
+    );
     updateConversation(selectedProvider, (current) => ({ ...current, entries: [...current.entries, userMessage], running: true, sequence: current.sequence + 1 }));
     setInput('');
     try {
-      if (selectedProvider === 'opencode') {
+      if (selectedProvider === 'generic') {
+        await window.electronAPI.genericAgentStart(genericConfig, prompt);
+      } else if (selectedProvider === 'opencode') {
         const output = await window.electronAPI.cliExecute(selectedProvider, prompt);
         const message: MessageEntry = { entryType: 'message', id: crypto.randomUUID(), role: 'assistant', provider: selectedProvider, content: stripAnsi(output) };
         updateConversation(selectedProvider, (current) => ({ ...current, running: false, entries: [...current.entries, message] }));
       } else {
-        await window.electronAPI.agentStart(selectedProvider, prompt);
+        await window.electronAPI.agentStart(selectedProvider, prompt, selectedProvider === 'codex' ? selectedModel : undefined);
       }
+      setReplayHistory(false);
     } catch (error) {
       const message: MessageEntry = { entryType: 'message', id: crypto.randomUUID(), role: 'assistant', provider: selectedProvider, error: true, content: error instanceof Error ? error.message : String(error) };
       updateConversation(selectedProvider, (current) => ({ ...current, running: false, entries: [...current.entries, message] }));
     }
   };
 
+  const updateMentionFromInput = (value: string, caret: number) => {
+    const beforeCaret = value.slice(0, caret);
+    const match = beforeCaret.match(/(?:^|\s|\(|\[)@([^@\s]*)$/);
+    setMentionQuery(match ? match[1] : null);
+  };
+
+  const chooseMention = async (candidate: ScriptMentionCandidate) => {
+    const field = inputRef.current;
+    const caret = field?.selectionStart ?? input.length;
+    const beforeCaret = input.slice(0, caret);
+    const match = beforeCaret.match(/(?:^|\s|\(|\[)@([^@\s]*)$/);
+    const triggerStart = match ? caret - match[1].length - 1 : caret;
+    const nextInput = `${input.slice(0, triggerStart)}${input.slice(caret)}`;
+    setInput(nextInput);
+    setMentionQuery(null);
+    try {
+      const content = candidate.content ?? await getEnterpriseService().getItemCode(candidate.uri, candidate.language);
+      addAiContext({
+        id: candidate.uri, name: candidate.name, uri: candidate.uri,
+        type: candidate.type, content, source: candidate.source === 'editor' ? 'editor' : 'checkout'
+      });
+    } catch (error) {
+      useOutputLogStore.getState().addEntry({
+        channel: 'ai-runtime', level: 'error', source: 'AI Context',
+        message: `Failed to reference ${candidate.name}: ${error instanceof Error ? error.message : String(error)}`
+      });
+    }
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(triggerStart, triggerStart);
+    });
+  };
+
+  const openMentionPicker = () => {
+    const field = inputRef.current;
+    const caret = field?.selectionStart ?? input.length;
+    const nextInput = `${input.slice(0, caret)}@${input.slice(caret)}`;
+    setInput(nextInput);
+    setMentionQuery('');
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(caret + 1, caret + 1);
+    });
+  };
+
   const newConversation = async () => {
     const selectedProvider = provider;
-    if (selectedProvider !== 'opencode') await window.electronAPI?.agentNewSession(selectedProvider).catch(() => undefined);
+    if (selectedProvider === 'generic') await window.electronAPI?.genericAgentNewSession().catch(() => undefined);
+    else if (selectedProvider !== 'opencode') await window.electronAPI?.agentNewSession(selectedProvider).catch(() => undefined);
     updateConversation(selectedProvider, () => emptyConversation());
+    setSessionIds((current) => ({ ...current, [selectedProvider]: crypto.randomUUID() }));
+    setReplayHistory(false);
+  };
+
+  const attachFiles = async () => {
+    if (!window.electronAPI) return;
+    try {
+      const files = await window.electronAPI.agentSelectFiles();
+      files.forEach((file) => addAiContext({
+        id: file.id, name: file.name, uri: file.path, type: 'File', content: file.content, source: 'file'
+      }));
+    } catch (error) {
+      useOutputLogStore.getState().addEntry({
+        channel: 'ai-runtime', level: 'error', source: 'AI Attachment',
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  };
+
+  const openCustomize = () => editorStore.getState().openFile({
+    uri: 'starlims-devtools://customize', name: t('customize.title'), type: 'CUSTOMIZE', content: ''
+  });
+
+  const openSavedConversation = async (saved: SavedConversation) => {
+    setProvider(saved.provider);
+    setConversations((current) => ({
+      ...current,
+      [saved.provider]: { entries: saved.entries, running: false, sequence: 0 }
+    }));
+    setSessionIds((current) => ({ ...current, [saved.provider]: saved.id }));
+    if (saved.provider === 'generic') await window.electronAPI?.genericAgentNewSession().catch(() => undefined);
+    else if (saved.provider !== 'opencode') await window.electronAPI?.agentNewSession(saved.provider).catch(() => undefined);
+    setReplayHistory(true);
+    setShowHistory(false);
+  };
+
+  const saveGenericSettings = async () => {
+    if (!window.electronAPI) return;
+    const configuredModels = normalizeModelList(genericConfig.models, [genericConfig.model]);
+    const selectedModel = configuredModels.includes(genericConfig.model.trim()) ? genericConfig.model.trim() : (configuredModels[0] || '');
+    const clean = { baseUrl: genericConfig.baseUrl.trim().replace(/\/+$/, ''), model: selectedModel, models: configuredModels, maxToolRounds: Math.min(64, Math.max(1, Math.floor(genericConfig.maxToolRounds || 16))) };
+    const nextProfiles = genericProfiles.map((profile) => profile.id === activeGenericProfileId ? { ...profile, ...clean, name: profile.name.trim() || profileNameFromUrl(clean.baseUrl) } : profile);
+    await Promise.all([
+      window.electronAPI.storeSet(GENERIC_PROFILES_STORE_KEY, {
+        activeProfileId: activeGenericProfileId,
+        profiles: nextProfiles.map(({ apiKey: _apiKey, ...profile }) => profile)
+      }),
+      ...nextProfiles.map((profile) => window.electronAPI!.secretsSet(profileSecretKey(profile.id), profile.apiKey))
+    ]);
+    const available = Boolean(clean.baseUrl && clean.model && genericConfig.apiKey);
+    setGenericProfiles(nextProfiles);
+    const active = nextProfiles.find((profile) => profile.id === activeGenericProfileId)!;
+    setStatuses((current) => ({ ...current, generic: { available, runtime: 'api', version: 'OpenAI-compatible API', detail: `${active.name} · ${clean.baseUrl}` } }));
+    setShowGenericSettings(false);
+  };
+
+  const testGenericConnection = async () => {
+    setGenericTestMessage(t('agent.genericTesting'));
+    try {
+      const available = await window.electronAPI!.genericAgentListModels(genericConfig);
+      setGenericModels(available);
+      setGenericConfig((current) => {
+        const configuredModels = normalizeModelList(current.models, available, [current.model]);
+        return { ...current, models: configuredModels, model: current.model || configuredModels[0] || '' };
+      });
+      setGenericTestMessage(t('agent.genericTestSuccess', { count: available.length }));
+    } catch (error) {
+      setGenericTestMessage(t('agent.genericTestFailed', { error: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+
+  const addGenericModel = () => {
+    const additions = genericModelDraft.split(/[\n,]/).map((model) => model.trim()).filter(Boolean);
+    if (additions.length === 0) return;
+    setGenericConfig((current) => {
+      const configuredModels = normalizeModelList(current.models, additions, [current.model]);
+      return { ...current, models: configuredModels, model: current.model || configuredModels[0] || '' };
+    });
+    setGenericModelDraft('');
+  };
+
+  const removeGenericModel = (model: string) => {
+    setGenericConfig((current) => {
+      const configuredModels = (current.models || []).filter((candidate) => candidate !== model);
+      return { ...current, models: configuredModels, model: current.model === model ? (configuredModels[0] || '') : current.model };
+    });
+  };
+
+  const selectGenericProfile = (id: string) => {
+    const selected = genericProfiles.find((profile) => profile.id === id);
+    if (!selected) return;
+    setActiveGenericProfileId(id);
+    setGenericModels([]);
+    setGenericTestMessage('');
+    setStatuses((current) => ({ ...current, generic: {
+      available: Boolean(selected.baseUrl && selected.model && selected.apiKey), runtime: 'api',
+      version: 'OpenAI-compatible API', detail: `${selected.name} · ${selected.baseUrl}`
+    } }));
+    if (!window.electronAPI) return;
+    void window.electronAPI.storeGet(GENERIC_PROFILES_STORE_KEY).then((saved) => saved && window.electronAPI!.storeSet(GENERIC_PROFILES_STORE_KEY, { ...saved, activeProfileId: id })).catch(() => undefined);
+  };
+
+  const selectGenericProfileModel = (value: string) => {
+    const separator = value.indexOf('|');
+    if (separator < 0) return;
+    const profileId = value.slice(0, separator);
+    const model = decodeURIComponent(value.slice(separator + 1));
+    const selected = genericProfiles.find((profile) => profile.id === profileId);
+    if (!selected) return;
+    setGenericProfiles((profiles) => profiles.map((profile) => profile.id === profileId ? { ...profile, model } : profile));
+    setActiveGenericProfileId(profileId);
+    setGenericModels([]);
+    setGenericTestMessage('');
+    setStatuses((current) => ({ ...current, generic: {
+      available: Boolean(selected.baseUrl && model && selected.apiKey), runtime: 'api',
+      version: 'OpenAI-compatible API', detail: `${selected.name} · ${selected.baseUrl}`
+    } }));
+    if (!window.electronAPI) return;
+    void window.electronAPI.storeGet(GENERIC_PROFILES_STORE_KEY).then((saved) => {
+      if (!saved || !Array.isArray(saved.profiles)) return;
+      return window.electronAPI!.storeSet(GENERIC_PROFILES_STORE_KEY, {
+        ...saved, activeProfileId: profileId,
+        profiles: saved.profiles.map((profile: any) => profile.id === profileId ? { ...profile, model, models: normalizeModelList(profile.models, [model]) } : profile)
+      });
+    }).catch(() => undefined);
+  };
+
+  const addGenericProfile = () => {
+    const profile = createGenericProfile(t('agent.newPlatform'));
+    setGenericProfiles((current) => [...current, profile]);
+    setActiveGenericProfileId(profile.id);
+    setGenericModels([]);
+    setGenericTestMessage('');
+  };
+
+  const removeGenericProfile = async () => {
+    if (genericProfiles.length <= 1 || !confirm(t('agent.deletePlatformConfirm', { name: genericConfig.name }))) return;
+    const remaining = genericProfiles.filter((profile) => profile.id !== activeGenericProfileId);
+    const next = remaining[0];
+    setGenericProfiles(remaining);
+    setActiveGenericProfileId(next.id);
+    await window.electronAPI?.secretsDelete(profileSecretKey(activeGenericProfileId)).catch(() => undefined);
+    setStatuses((current) => ({ ...current, generic: {
+      available: Boolean(next.baseUrl && next.model && next.apiKey), runtime: 'api',
+      version: 'OpenAI-compatible API', detail: `${next.name} · ${next.baseUrl}`
+    } }));
   };
 
   const answerApproval = async (approval: ApprovalEntry, decision: AgentApprovalDecision) => {
@@ -245,52 +795,116 @@ export function MCPPanel() {
   };
 
   return (
-    <div className="h-full flex flex-col bg-white text-slate-700 dark:bg-[#181818] dark:text-[#cccccc]">
-      <div className="h-9 flex items-center border-b border-slate-300 bg-slate-100 dark:border-[#2b2b2b] dark:bg-[#1b1b1b]">
-        <div className="px-3 text-[11px] uppercase tracking-wide text-slate-500 dark:text-[#8b8b8b]">Agent</div>
+    <div className="relative h-full flex flex-col bg-[#f3f3f3] text-slate-700 dark:bg-[#181818] dark:text-[#cccccc]">
+      <div className="flex h-11 items-center border-b border-[#d4d4d4] bg-[#f3f3f3] dark:border-[#2b2b2b] dark:bg-[#1b1b1b]">
+        <div className="px-3 text-[11px] uppercase tracking-wide text-slate-500 dark:text-[#8b8b8b]">{t('agent.title')}</div>
         <div className="flex-1 flex h-full">
-          {PROVIDERS.map((item) => <button key={item.id} onClick={() => setProvider(item.id)} className={`relative px-3 text-xs transition-colors ${provider === item.id ? 'bg-white text-slate-900 dark:bg-[#202020] dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-[#929292] dark:hover:text-[#dddddd]'}`} title={[statuses[item.id]?.version, statuses[item.id]?.command, statuses[item.id]?.detail].filter(Boolean).join('\n') || `${item.label} runtime`}>
-            {item.label}<span className={`absolute right-1.5 top-1.5 w-1.5 h-1.5 rounded-full ${statuses[item.id]?.available ? 'bg-emerald-500 dark:bg-[#3fb950]' : 'bg-slate-400 dark:bg-[#555]'}`} />
+          {PROVIDERS.map((item) => <button key={item.id} onClick={() => setProvider(item.id)} className={`relative px-3 text-xs transition-colors ${provider === item.id ? 'bg-white text-slate-900 dark:bg-[#202020] dark:text-white' : 'text-slate-500 hover:bg-[#e8e8e8] hover:text-slate-900 dark:text-[#929292] dark:hover:bg-transparent dark:hover:text-[#dddddd]'}`} title={[statuses[item.id]?.version, statuses[item.id]?.command, statuses[item.id]?.detail].filter(Boolean).join('\n') || `${providerLabel(item.id)} runtime`}>
+            {providerLabel(item.id)}<span className={`absolute right-1.5 top-1.5 w-1.5 h-1.5 rounded-full ${statuses[item.id]?.available ? 'bg-emerald-500 dark:bg-[#3fb950]' : 'bg-slate-400 dark:bg-[#555]'}`} />
             {provider === item.id && <span className="absolute left-0 right-0 top-0 h-px bg-[#4daafc]" />}
           </button>)}
         </div>
-        <button className="px-2 text-slate-500 hover:text-slate-900 dark:text-[#8b8b8b] dark:hover:text-white" title={`New ${title} conversation`} onClick={() => void newConversation()}>＋</button>
+        <div className="flex shrink-0 items-center gap-0.5 px-1">
+          {provider === 'generic' && <ToolbarIconButton title={t('agent.genericSettings')} onClick={() => setShowGenericSettings(true)}>{ToolbarIcons.settings}</ToolbarIconButton>}
+          <ToolbarIconButton title={t('customize.title')} onClick={openCustomize} indicator={agentRules.enabled}>{ToolbarIcons.customize}</ToolbarIconButton>
+          <ToolbarIconButton title={t('agent.history')} onClick={() => setShowHistory(true)}>{ToolbarIcons.history}</ToolbarIconButton>
+          <ToolbarIconButton title={t('agent.newConversation', { name: title })} onClick={() => void newConversation()}>{ToolbarIcons.plus}</ToolbarIconButton>
+        </div>
       </div>
 
-      <div className="px-3 py-2 border-b border-slate-200 text-[11px] flex items-center justify-between bg-slate-50 dark:border-[#292929] dark:bg-[#191919]">
-        <div className="flex items-center gap-2 min-w-0"><span className={`w-1.5 h-1.5 rounded-full ${activeStatus?.available ? 'bg-emerald-500 dark:bg-[#3fb950]' : 'bg-slate-400 dark:bg-[#666]'}`} /><span className="truncate" title={activeStatus?.detail}>{activeStatus?.available ? `${title} ${activeStatus.runtime === 'app-server' ? 'App Server' : activeStatus.runtime === 'agent-sdk' ? 'Agent SDK' : 'CLI'} ready` : `${title} runtime unavailable`}</span></div>
+      {showHistory && <div className="absolute inset-0 z-50 flex flex-col bg-white dark:bg-[#181818]">
+        <div className="flex h-11 items-center gap-2 border-b border-slate-300 px-2 dark:border-[#2b2b2b]"><button className="icon-button text-xl" title={t('common.back')} onClick={() => setShowHistory(false)}>‹</button><span className="flex-1 text-xs font-medium">{t('agent.history')}</span></div>
+        <div className="flex-1 overflow-auto p-2">{history.length === 0 ? <div className="py-10 text-center text-xs text-slate-500 dark:text-[#777]">{t('agent.historyEmpty')}</div> : history.map((saved) => <button key={saved.id} onClick={() => void openSavedConversation(saved)} className="mb-1.5 block w-full rounded border border-slate-200 px-3 py-2 text-left hover:bg-slate-100 dark:border-[#303030] dark:hover:bg-[#252526]"><span className="block truncate text-xs text-slate-800 dark:text-[#d4d4d4]">{saved.title}</span><span className="mt-1 flex justify-between text-[10px] text-slate-500 dark:text-[#777]"><span>{saved.provider}</span><span>{new Date(saved.updatedAt).toLocaleString()}</span></span></button>)}</div>
+      </div>}
+
+      {showGenericSettings && <div className="absolute inset-0 z-50 flex flex-col bg-white dark:bg-[#181818]">
+        <div className="flex h-11 items-center gap-2 border-b border-slate-300 px-2 dark:border-[#2b2b2b]"><button className="icon-button text-xl" title={t('common.back')} onClick={() => setShowGenericSettings(false)}>‹</button><span className="flex-1 text-xs font-medium">{t('agent.genericSettings')}</span></div>
+        <div className="flex-1 space-y-4 overflow-auto p-4 text-xs">
+          <div className="space-y-2"><span className="block text-slate-600 dark:text-[#bbb]">{t('agent.platform')}</span><div className="flex gap-2"><select value={activeGenericProfileId} onChange={(event) => selectGenericProfile(event.target.value)} className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-2.5 py-2 outline-none focus:border-blue-500 dark:border-[#444] dark:bg-[#202020]">{genericProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select><button type="button" onClick={addGenericProfile} className="icon-button border border-slate-300 text-lg dark:border-[#444]" title={t('agent.addPlatform')}>＋</button><button type="button" disabled={genericProfiles.length <= 1} onClick={() => void removeGenericProfile()} className="icon-button border border-slate-300 text-base text-slate-500 disabled:opacity-30 dark:border-[#444]" title={t('agent.deletePlatform')}>−</button></div></div>
+          <label className="block"><span className="mb-1.5 block text-slate-600 dark:text-[#bbb]">{t('agent.platformName')}</span><input value={genericConfig.name} onChange={(event) => setGenericProfiles((profiles) => profiles.map((profile) => profile.id === activeGenericProfileId ? { ...profile, name: event.target.value } : profile))} placeholder={t('agent.platformNamePlaceholder')} className="w-full rounded border border-slate-300 bg-white px-2.5 py-2 outline-none focus:border-blue-500 dark:border-[#444] dark:bg-[#202020]" /></label>
+          <label className="block"><span className="mb-1.5 block text-slate-600 dark:text-[#bbb]">Base URL</span><input value={genericConfig.baseUrl} onChange={(event) => setGenericConfig((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.openai.com/v1" className="w-full rounded border border-slate-300 bg-white px-2.5 py-2 outline-none focus:border-blue-500 dark:border-[#444] dark:bg-[#202020]" /></label>
+          <label className="block"><span className="mb-1.5 block text-slate-600 dark:text-[#bbb]">API Key</span><input type="password" value={genericConfig.apiKey} onChange={(event) => setGenericConfig((current) => ({ ...current, apiKey: event.target.value }))} placeholder="sk-..." className="w-full rounded border border-slate-300 bg-white px-2.5 py-2 outline-none focus:border-blue-500 dark:border-[#444] dark:bg-[#202020]" /></label>
+          <label className="block"><span className="mb-1.5 block text-slate-600 dark:text-[#bbb]">{t('agent.defaultModel')}</span><select value={genericConfig.model} onChange={(event) => setGenericConfig((current) => ({ ...current, model: event.target.value }))} className="w-full rounded border border-slate-300 bg-white px-2.5 py-2 outline-none focus:border-blue-500 dark:border-[#444] dark:bg-[#202020]"><option value="" disabled>{t('agent.selectModel')}</option>{normalizeModelList(genericConfig.models, [genericConfig.model]).map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
+          <div className="space-y-2"><span className="block text-slate-600 dark:text-[#bbb]">{t('agent.modelList')}</span><div className="flex gap-2"><input list="generic-agent-models" value={genericModelDraft} onChange={(event) => setGenericModelDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addGenericModel(); } }} placeholder={t('agent.modelPlaceholder')} className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-2.5 py-2 outline-none focus:border-blue-500 dark:border-[#444] dark:bg-[#202020]" /><datalist id="generic-agent-models">{genericModels.map((model) => <option key={model} value={model} />)}</datalist><button type="button" onClick={addGenericModel} className="rounded border border-slate-300 px-3 text-lg hover:bg-slate-100 dark:border-[#444] dark:hover:bg-[#252526]" title={t('agent.addModel')}>＋</button></div><div className="flex max-h-36 flex-wrap gap-1.5 overflow-auto">{normalizeModelList(genericConfig.models, [genericConfig.model]).map((model) => <span key={model} className={`inline-flex max-w-full items-center gap-1 rounded border px-2 py-1 ${model === genericConfig.model ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-[#173047] dark:text-[#75beff]' : 'border-slate-300 dark:border-[#444]'}`}><button type="button" className="max-w-[240px] truncate" onClick={() => setGenericConfig((current) => ({ ...current, model }))} title={model}>{model}</button><button type="button" onClick={() => removeGenericModel(model)} className="text-base leading-none text-slate-400 hover:text-red-500" title={t('common.delete')}>×</button></span>)}</div></div>
+          <label className="block"><span className="mb-1.5 flex items-center justify-between text-slate-600 dark:text-[#bbb]"><span>{t('agent.maxToolRounds')}</span><span className="text-[10px] text-slate-400 dark:text-[#777]">{t('agent.maxToolRoundsRange')}</span></span><input type="number" min={1} max={64} step={1} value={genericConfig.maxToolRounds || 16} onChange={(event) => setGenericConfig((current) => ({ ...current, maxToolRounds: Math.min(64, Math.max(1, Number(event.target.value) || 1)) }))} className="w-full rounded border border-slate-300 bg-white px-2.5 py-2 outline-none focus:border-blue-500 dark:border-[#444] dark:bg-[#202020]" /><span className="mt-1.5 block text-[10px] leading-4 text-slate-400 dark:text-[#777]">{t('agent.maxToolRoundsHint')}</span></label>
+          <div className="rounded border border-slate-200 bg-slate-50 p-2.5 text-[11px] leading-5 text-slate-500 dark:border-[#303030] dark:bg-[#202020] dark:text-[#888]">{t('agent.genericHint')}</div>
+          {genericTestMessage && <div className="break-words text-[11px] text-slate-600 dark:text-[#aaa]">{genericTestMessage}</div>}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-slate-300 p-3 dark:border-[#2b2b2b]"><button className="rounded border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-100 dark:border-[#444] dark:hover:bg-[#252526]" onClick={() => void testGenericConnection()}>{t('agent.testConnection')}</button><button disabled={!genericConfig.baseUrl.trim() || !genericConfig.apiKey.trim() || normalizeModelList(genericConfig.models, [genericConfig.model]).length === 0} className="rounded bg-blue-600 px-3 py-1.5 text-xs text-white disabled:bg-slate-400 dark:bg-[#0e639c] dark:disabled:bg-[#333]" onClick={() => void saveGenericSettings()}>{t('common.save')}</button></div>
+      </div>}
+
+      <div className="px-3 py-2 border-b border-[#d4d4d4] text-[11px] flex items-center justify-between bg-[#f3f3f3] dark:border-[#292929] dark:bg-[#191919]">
+        <div className="flex items-center gap-2 min-w-0"><span className={`w-1.5 h-1.5 rounded-full ${activeStatus?.available ? 'bg-emerald-500 dark:bg-[#3fb950]' : 'bg-slate-400 dark:bg-[#666]'}`} /><span className="truncate" title={activeStatus?.detail}>{activeStatus?.available ? t('agent.ready', { name: `${title} ${activeStatus.runtime === 'app-server' ? 'App Server' : activeStatus.runtime === 'agent-sdk' ? 'Agent SDK' : activeStatus.runtime === 'api' ? 'API' : 'CLI'}` }) : t('agent.unavailable', { name: title })}</span></div>
         <button className="text-slate-500 hover:text-blue-600 dark:text-[#8b8b8b] dark:hover:text-[#4daafc]" onClick={() => setShowConnection((value) => !value)}>MCP {mcp?.running ? '●' : '○'}</button>
       </div>
 
       {showConnection && <div className="px-3 py-2 border-b border-slate-200 bg-slate-100 text-[11px] space-y-1 dark:border-[#292929] dark:bg-[#111]">
-        <div className="flex justify-between"><span className="text-slate-500 dark:text-[#888]">STARLIMS MCP</span><span className={mcp?.running ? 'text-emerald-600 dark:text-[#3fb950]' : 'text-red-600 dark:text-[#f85149]'}>{mcp?.running ? 'RUNNING' : 'OFFLINE'}</span></div>
-        <button className="block w-full truncate text-left font-mono text-blue-600 dark:text-[#4daafc]" title="Copy endpoint" onClick={() => void navigator.clipboard.writeText(mcp?.url || '')}>{mcp?.url}</button>
-        <div className="text-slate-500 dark:text-[#777]">Codex App Server uses this required STARLIMS MCP endpoint.</div>
+        <div className="flex justify-between"><span className="text-slate-500 dark:text-[#888]">STARLIMS MCP</span><span className={mcp?.running ? 'text-emerald-600 dark:text-[#3fb950]' : 'text-red-600 dark:text-[#f85149]'}>{mcp?.running ? t('agent.running') : t('agent.offline')}</span></div>
+        <button className="block w-full truncate text-left font-mono text-blue-600 dark:text-[#4daafc]" title={t('agent.copyEndpoint')} onClick={() => void navigator.clipboard.writeText(mcp?.url || '')}>{mcp?.url}</button>
+        <div className="text-slate-500 dark:text-[#777]">{t('agent.endpointHint')}</div>
       </div>}
 
-      <div className="flex-1 overflow-auto bg-white px-3 py-3 font-mono text-xs leading-5 dark:bg-[#181818]">
-        {entries.length === 0 && <div className="h-full flex flex-col items-center justify-center px-5 text-center text-slate-500 dark:text-[#777]"><div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 text-slate-600 dark:border-[#333] dark:text-[#bbb]">{PROVIDERS.find((item) => item.id === provider)?.mark}</div><div className="mb-1 text-slate-700 dark:text-[#bbb]">Ask {title} about STARLIMS</div><div className="text-[11px] leading-4">Each AI keeps its own conversation. Right-click a script or the editor to add context.</div></div>}
+      <div className="flex-1 overflow-auto bg-[#f3f3f3] px-3 py-3 font-mono text-xs leading-5 dark:bg-[#181818]">
+        {entries.length === 0 && <div className="h-full flex flex-col items-center justify-center px-5 text-center text-slate-500 dark:text-[#777]"><div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 text-slate-600 dark:border-[#333] dark:text-[#bbb]">{PROVIDERS.find((item) => item.id === provider)?.mark}</div><div className="mb-1 text-slate-700 dark:text-[#bbb]">{t('agent.askTitle', { name: title })}</div><div className="text-[11px] leading-4">{t('agent.askHint')}</div></div>}
 
         {entries.map((entry) => {
-          if (entry.entryType === 'message') return <div key={entry.id} className="mb-4"><div className={`mb-1 text-[10px] uppercase tracking-wider ${entry.role === 'user' ? 'text-blue-600 dark:text-[#4daafc]' : entry.error ? 'text-red-600 dark:text-[#f85149]' : 'text-emerald-600 dark:text-[#3fb950]'}`}>{entry.role === 'user' ? 'You' : entry.error ? `${entry.provider} error` : entry.provider}</div>{entry.role === 'assistant' && !entry.error ? <MarkdownMessage content={entry.content} /> : <div className={`whitespace-pre-wrap break-words font-sans text-[13px] leading-6 ${entry.error ? 'text-red-700 dark:text-[#f0a09a]' : 'text-slate-800 dark:text-[#d4d4d4]'}`}>{entry.content}</div>}</div>;
+          if (entry.entryType === 'message') {
+            const assistantName = entry.provider === 'generic' ? (genericConfig.model || providerLabel(entry.provider)) : providerLabel(entry.provider);
+            return <div key={entry.id} className="mb-4"><div className={`mb-1 text-[10px] uppercase tracking-wider ${entry.role === 'user' ? 'text-blue-600 dark:text-[#4daafc]' : entry.error ? 'text-red-600 dark:text-[#f85149]' : 'text-emerald-600 dark:text-[#3fb950]'}`}>{entry.role === 'user' ? t('agent.you') : entry.error ? t('agent.error', { name: assistantName }) : assistantName}</div>{entry.role === 'assistant' && !entry.error ? <MarkdownMessage content={entry.content} /> : <div className={`whitespace-pre-wrap break-words font-sans text-[13px] leading-6 ${entry.error ? 'text-red-700 dark:text-[#f0a09a]' : 'text-slate-800 dark:text-[#d4d4d4]'}`}>{entry.content}</div>}</div>;
+          }
 
           if (entry.entryType === 'activity') return <details key={entry.id} className="mb-2 rounded border border-slate-200 bg-slate-50 dark:border-[#333] dark:bg-[#202020]" open={entry.status === 'running' || entry.status === 'failed'}>
             <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 text-[11px]"><span className="w-7 text-center text-blue-600 dark:text-[#4daafc]">{kindMark[entry.kind]}</span><span className="flex-1 truncate text-slate-700 dark:text-[#ccc]" title={entry.title}>{entry.title}</span><span className={entry.status === 'completed' ? 'text-emerald-600 dark:text-[#3fb950]' : entry.status === 'failed' || entry.status === 'declined' ? 'text-red-600 dark:text-[#f85149]' : 'text-amber-600 dark:text-[#d29922]'}>{entry.status}</span></summary>
             {(entry.detail || entry.output || entry.diff) && <div className="border-t border-slate-200 px-2 py-2 text-[10px] text-slate-600 dark:border-[#333] dark:text-[#aaa]">{entry.detail && <pre className="mb-2 whitespace-pre-wrap break-all">{entry.detail}</pre>}{entry.output && <pre className="mb-2 max-h-48 overflow-auto whitespace-pre-wrap break-all text-slate-800 dark:text-[#d4d4d4]">{entry.output}</pre>}{entry.diff && <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-emerald-700 dark:text-[#7ee787]">{entry.diff}</pre>}</div>}
           </details>;
 
-          return <div key={entry.id} className="mb-3 rounded border border-amber-300 bg-amber-50 p-2 text-[11px] dark:border-[#6e5b24] dark:bg-[#2b2517]"><div className="font-sans font-medium text-amber-900 dark:text-[#e3c66d]">{entry.title}</div>{entry.detail && <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-all text-amber-800 dark:text-[#c8b56a]">{entry.detail}</pre>}<div className="mt-2 flex gap-1.5 font-sans"><button className="rounded bg-blue-600 px-2 py-1 text-white" onClick={() => void answerApproval(entry, 'accept')}>Allow once</button>{entry.canAcceptForSession && <button className="rounded border border-blue-400 px-2 py-1 text-blue-700 dark:text-[#7dcfff]" onClick={() => void answerApproval(entry, 'acceptForSession')}>Allow session</button>}<button className="rounded border border-slate-300 px-2 py-1 text-slate-600 dark:border-[#555] dark:text-[#bbb]" onClick={() => void answerApproval(entry, 'decline')}>Decline</button></div></div>;
+          return <div key={entry.id} className="mb-3 rounded border border-amber-300 bg-amber-50 p-2 text-[11px] dark:border-[#6e5b24] dark:bg-[#2b2517]"><div className="font-sans font-medium text-amber-900 dark:text-[#e3c66d]">{entry.title}</div>{entry.detail && <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-all text-amber-800 dark:text-[#c8b56a]">{entry.detail}</pre>}<div className="mt-2 flex gap-1.5 font-sans"><button className="rounded bg-blue-600 px-2 py-1 text-white" onClick={() => void answerApproval(entry, 'accept')}>{t('agent.allowOnce')}</button>{entry.canAcceptForSession && <button className="rounded border border-blue-400 px-2 py-1 text-blue-700 dark:text-[#7dcfff]" onClick={() => void answerApproval(entry, 'acceptForSession')}>{t('agent.allowSession')}</button>}<button className="rounded border border-slate-300 px-2 py-1 text-slate-600 dark:border-[#555] dark:text-[#bbb]" onClick={() => void answerApproval(entry, 'decline')}>{t('agent.decline')}</button></div></div>;
         })}
 
-        {running && <div className="flex items-center gap-2 text-slate-500 dark:text-[#888]"><span className="agent-pulse">●</span>{title} is working… {provider !== 'opencode' && <button className="font-sans text-red-600 hover:underline dark:text-[#f85149]" onClick={() => void window.electronAPI?.agentInterrupt(provider)}>Stop</button>}</div>}
+        {running && <div className="flex items-center gap-2 text-slate-500 dark:text-[#888]"><span className="agent-pulse">●</span>{t('agent.working', { name: title })} {provider !== 'opencode' && <button className="font-sans text-red-600 hover:underline dark:text-[#f85149]" onClick={() => void (provider === 'generic' ? window.electronAPI?.genericAgentInterrupt() : window.electronAPI?.agentInterrupt(provider))}>{t('agent.stop')}</button>}</div>}
         <div ref={bottomRef} />
       </div>
 
-      <div className="border-t border-slate-300 bg-slate-100 p-2 dark:border-[#2b2b2b] dark:bg-[#1b1b1b]">
-        {contexts.length > 0 && <div className="flex flex-wrap gap-1.5 pb-2">{contexts.map((item) => <div key={item.id} className="max-w-full flex items-center gap-1 rounded border border-slate-300 bg-slate-200 px-2 py-1 text-[11px] text-slate-700 dark:border-[#3b3b3b] dark:bg-[#2a2d2e] dark:text-[#c5c5c5]" title={item.uri}><span className="text-blue-600 dark:text-[#4daafc]">@</span><span className="truncate max-w-[190px]">{item.name}</span><button className="text-slate-500 hover:text-slate-900 dark:text-[#777] dark:hover:text-white" onClick={() => removeContext(item.id)}>×</button></div>)}{contexts.length > 1 && <button className="text-[10px] text-slate-500 hover:text-slate-900 dark:text-[#777] dark:hover:text-white" onClick={clearContexts}>clear</button>}</div>}
+      <div className="relative border-t border-[#d4d4d4] bg-[#f3f3f3] p-2 dark:border-[#2b2b2b] dark:bg-[#1b1b1b]">
+        {mentionQuery !== null && <div className="absolute bottom-[calc(100%-2px)] left-2 right-2 z-30 max-h-64 overflow-auto rounded-md border border-slate-300 bg-white p-1 shadow-2xl dark:border-[#454545] dark:bg-[#2b2b2b]">
+          {mentionLoading && <div className="px-2 py-1 text-[10px] text-slate-500 dark:text-[#969696]">{t('common.loading')}</div>}
+          {mentionResults.length === 0 && !mentionLoading
+            ? <div className="px-3 py-4 text-center text-xs text-slate-500 dark:text-[#969696]">{t('agent.mentionEmpty')}</div>
+            : mentionResults.map((candidate, index) => <button
+              key={`${candidate.source}:${candidate.id}`}
+              type="button"
+              className={`flex h-8 w-full min-w-0 items-center gap-2 rounded px-2 text-left ${index === mentionIndex ? 'bg-blue-100 dark:bg-[#094771]' : 'hover:bg-slate-100 dark:hover:bg-[#37373d]'}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => void chooseMention(candidate)}
+              title={candidate.uri}
+            >
+              <span className={`w-5 shrink-0 text-center font-mono text-[11px] font-semibold ${mentionFileMark(candidate) === 'JS' ? 'text-yellow-500' : 'text-slate-500 dark:text-[#c5c5c5]'}`}>{mentionFileMark(candidate)}</span>
+              <span className="max-w-[68%] shrink-0 truncate text-xs leading-4 text-slate-800 dark:text-[#dddddd]">{mentionDisplayName(candidate)}</span>
+              <span className="min-w-0 flex-1 truncate text-right text-[10px] leading-4 text-slate-400 dark:text-[#858585]">{mentionParentPath(candidate)}</span>
+            </button>)}
+        </div>}
+        {contexts.length > 0 && <div className="flex flex-wrap gap-1.5 pb-2">{contexts.map((item) => <div key={item.id} className="max-w-full flex min-h-8 items-center gap-1 rounded border border-slate-300 bg-slate-200 py-0.5 pl-2 pr-0.5 text-[11px] text-slate-700 dark:border-[#3b3b3b] dark:bg-[#2a2d2e] dark:text-[#c5c5c5]" title={item.uri}><span className="text-blue-600 dark:text-[#4daafc]">{item.source === 'file' ? '📎' : '@'}</span><span className="max-w-[190px] truncate">{contextDisplayName(item)}</span><button className="icon-button h-7 w-7 text-base" title={t('common.close')} onClick={() => removeContext(item.id)}>×</button></div>)}{contexts.length > 1 && <button className="min-h-8 rounded px-2 text-xs text-slate-500 hover:bg-slate-200 hover:text-slate-900 dark:text-[#888] dark:hover:bg-[#2a2d2e] dark:hover:text-white" onClick={clearContexts}>{t('agent.clear')}</button>}</div>}
         <div className="rounded-md border border-slate-300 bg-white focus-within:border-blue-500 dark:border-[#3b3b3b] dark:bg-[#202020] dark:focus-within:border-[#555]">
-          <textarea ref={inputRef} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} rows={4} disabled={running} placeholder={`Ask ${title}…  @ scripts are attached above`} className="w-full resize-none bg-transparent px-3 py-2 text-xs leading-5 text-slate-900 placeholder-slate-400 outline-none dark:text-[#e1e1e1] dark:placeholder-[#666]" />
-          <div className="flex items-center justify-between px-2 pb-2 text-[10px] text-slate-500 dark:text-[#666]"><span>Enter to send · Shift+Enter for newline</span><button disabled={!input.trim() || running || !activeStatus?.available} onClick={() => void send()} className="h-6 w-6 rounded bg-blue-600 text-white disabled:bg-slate-300 disabled:text-slate-500 dark:bg-[#0e639c] dark:disabled:bg-[#333] dark:disabled:text-[#666]" title="Send">↑</button></div>
+          <textarea ref={inputRef} value={input} onChange={(event) => { setInput(event.target.value); updateMentionFromInput(event.target.value, event.target.selectionStart); }} onClick={(event) => updateMentionFromInput(event.currentTarget.value, event.currentTarget.selectionStart)} onKeyDown={(event) => {
+            if (mentionQuery !== null && mentionResults.length > 0) {
+              if (event.key === 'ArrowDown') { event.preventDefault(); setMentionIndex((index) => (index + 1) % mentionResults.length); return; }
+              if (event.key === 'ArrowUp') { event.preventDefault(); setMentionIndex((index) => (index - 1 + mentionResults.length) % mentionResults.length); return; }
+              if (event.key === 'Enter') { event.preventDefault(); void chooseMention(mentionResults[mentionIndex]); return; }
+            }
+            if (event.key === 'Escape' && mentionQuery !== null) { event.preventDefault(); setMentionQuery(null); return; }
+            if (event.key === 'Enter' && mentionQuery !== null) { event.preventDefault(); return; }
+            if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); }
+          }} rows={4} disabled={running} placeholder={t('agent.placeholder', { name: title })} className="w-full resize-none bg-transparent px-3 py-2 text-xs leading-5 text-slate-900 placeholder-slate-400 outline-none dark:text-[#e1e1e1] dark:placeholder-[#666]" />
+          <div className="flex items-center justify-between gap-2 px-2 pb-2 text-xs text-slate-500 dark:text-[#777]">
+            <div className="flex min-w-0 flex-1 items-center gap-1">
+              <button type="button" onClick={openMentionPicker} className="icon-button text-base font-semibold text-blue-600 dark:text-[#4daafc]" title={t('agent.mentionScripts')}>@</button>
+              <button type="button" onClick={() => void attachFiles()} className="icon-button text-base text-slate-600 dark:text-[#c5c5c5]" title={t('agent.attachFiles')}>📎</button>
+              <select value={conversationMode} onChange={(event) => setConversationMode(event.target.value as ConversationMode)} className="h-8 min-w-0 max-w-[96px] shrink truncate rounded-md border border-slate-300 bg-transparent px-1.5 text-xs text-slate-700 outline-none hover:bg-slate-100 dark:border-[#454545] dark:bg-[#202020] dark:text-[#c5c5c5] dark:hover:bg-[#2a2d2e]" title={t(`agent.mode.${conversationMode}`)} aria-label={t('agent.mode')}><option value="agent">∞ {t('agent.mode.agent')}</option><option value="plan">☷ {t('agent.mode.plan')}</option><option value="debug">✹ {t('agent.mode.debug')}</option><option value="multitask">◎ {t('agent.mode.multitask')}</option><option value="ask">□ {t('agent.mode.ask')}</option></select>
+              {provider === 'codex' && <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} disabled={models.length === 0} className="h-8 min-w-0 max-w-[160px] flex-1 truncate rounded-md border border-slate-300 bg-transparent px-1.5 text-xs text-slate-700 outline-none dark:border-[#454545] dark:bg-[#202020] dark:text-[#c5c5c5]" title={models.find((model) => model.id === selectedModel)?.description || t('agent.model')} aria-label={t('agent.model')}>{models.length === 0 && <option value="">{t('common.loading')}</option>}{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select>}
+              {provider === 'generic' && <select value={genericModelSelection} onChange={(event) => selectGenericProfileModel(event.target.value)} disabled={genericModelChoices.length === 0} className="h-8 min-w-0 max-w-[180px] flex-1 truncate rounded-md border border-slate-300 bg-transparent px-1.5 text-xs text-slate-700 outline-none dark:border-[#454545] dark:bg-[#202020] dark:text-[#c5c5c5]" title={`${genericConfig.name} · ${genericConfig.model || t('agent.configure')}`} aria-label={t('agent.model')}>{genericModelChoices.length === 0 && <option value={genericModelSelection}>{t('agent.configure')}</option>}{genericModelChoices.map((choice) => <option key={choice.value} value={choice.value}>{choice.model}</option>)}</select>}
+            </div>
+            <button disabled={!input.trim() || running || !activeStatus?.available} onClick={() => void send()} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-600 text-base font-medium text-white transition-colors hover:bg-blue-500 disabled:bg-slate-300 disabled:text-slate-500 dark:bg-[#0e639c] dark:hover:bg-[#1177bb] dark:disabled:bg-[#333] dark:disabled:text-[#666]" title={t('agent.send')}>↑</button>
+          </div>
         </div>
       </div>
     </div>

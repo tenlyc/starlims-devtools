@@ -1,0 +1,135 @@
+/******************************************************************************
+Description.. : Find checked-in items through the official Source Control Manager
+Author....... : STARLIMS DevTools
+*******************************************************************************/;
+:PARAMETERS sUser, sDateFrom, sDateTo;
+:DECLARE oData, oDataSet, oRow, oItem,
+	sXML, sType, sCat, sApp, sName, sItemId,
+	sURI, sFormFolder, sHistoryWhere, sHistorySQL, sDateExpr,
+	aParams, aItems, aHistory, i;
+
+sUser := AllTrim(LimsString(sUser));
+sDateFrom := AllTrim(LimsString(sDateFrom));
+sDateTo := AllTrim(LimsString(sDateTo));
+sUser := StrTran(sUser, "'", "''");
+sDateFrom := StrTran(sDateFrom, "'", "");
+sDateTo := StrTran(sDateTo, "'", "");
+
+/* Use exactly the same 30-parameter call made by
+   SourceControlMgmt.frmSourceControlMgmt.FillTreeviewFromSearch(). */;
+aParams := {
+	"", {}, "OR", {}, .F., "", "", "",
+	sUser, sDateFrom, sDateTo,
+	.F., "", "", "",
+	.F., "", "", "",
+	.F., "", "", "",
+	"", -1, -1, .F., "", "FULLMODULE", ""
+};
+
+:TRY;
+	sXML := RunDS("SourceControlMgmt.dsGetItemsFromSearch", aParams, "XML");
+:CATCH;
+	:RETURN CreateUDObject({
+		{"success", .F.},
+		{"error", "SourceControlMgmt.dsGetItemsFromSearch failed: " + GetLastSSLError():FullDescription}
+	});
+:ENDTRY;
+
+:IF !("<DataSet" $ sXML);
+	:RETURN CreateUDObject({
+		{"success", .F.},
+		{"error", "SourceControlMgmt.dsGetItemsFromSearch did not return an XML DataSet."}
+	});
+:ENDIF;
+
+oDataSet := DoProc("Enterprise_Server.DataSetSupport.DSFromString", {sXML});
+aItems := {};
+
+:IF PLATFORMA == "ORACLE";
+	sDateExpr := "TO_CHAR(H.CHECKEDINDATE, 'YYYY-MM-DD HH24:MI:SS')";
+:ELSE;
+	sDateExpr := "CONVERT(varchar(19), H.CHECKEDINDATE, 120)";
+:ENDIF;
+
+sHistoryWhere := "where H.CHECKEDINBY is not null ";
+:IF !Empty(sUser);
+	sHistoryWhere += "and upper(H.CHECKEDINBY)=upper('" + sUser + "') ";
+:ENDIF;
+:IF !Empty(sDateFrom);
+	:IF PLATFORMA == "ORACLE";
+		sHistoryWhere += "and H.CHECKEDINDATE >= TO_DATE('" + sDateFrom + " 00:00:00','YYYY-MM-DD HH24:MI:SS') ";
+	:ELSE;
+		sHistoryWhere += "and H.CHECKEDINDATE >= CONVERT(datetime,'" + sDateFrom + " 00:00:00',120) ";
+	:ENDIF;
+:ENDIF;
+:IF !Empty(sDateTo);
+	:IF PLATFORMA == "ORACLE";
+		sHistoryWhere += "and H.CHECKEDINDATE <= TO_DATE('" + sDateTo + " 23:59:59','YYYY-MM-DD HH24:MI:SS') ";
+	:ELSE;
+		sHistoryWhere += "and H.CHECKEDINDATE <= CONVERT(datetime,'" + sDateTo + " 23:59:59',120) ";
+	:ENDIF;
+:ENDIF;
+
+:IF oDataSet:Tables:Count > 0;
+	:FOR i := 0 :TO oDataSet:Tables[0]:Rows:Count - 1;
+		oRow := oDataSet:Tables[0]:Rows[i];
+		sType := LimsString(oRow["ITEM_TYPE"]);
+		sCat := LimsString(oRow["CAT_NAME"]);
+		sApp := LimsString(oRow["APP_NAME"]);
+		sName := LimsString(oRow["ITEM_NAME"]);
+		sItemId := LimsString(oRow["ITEM_ID"]);
+		sURI := "";
+
+		:BEGINCASE;
+			:CASE sType == "APP_FRM";
+				sFormFolder := IIf(Upper(LimsString(oRow["ITEM_LANGUAGE"])) == "HTML", "HTMLForms", "XFDForms");
+				sURI := "/Applications/" + sCat + "/" + sApp + "/" + sFormFolder + "/" + sName;
+				:EXITCASE;
+			:CASE sType == "APP_SSC";
+				sURI := "/Applications/" + sCat + "/" + sApp + "/ServerScripts/" + sName;
+				:EXITCASE;
+			:CASE sType == "APP_CS";
+				sURI := "/Applications/" + sCat + "/" + sApp + "/ClientScripts/" + sName;
+				:EXITCASE;
+			:CASE sType == "APP_DS";
+				sURI := "/Applications/" + sCat + "/" + sApp + "/DataSources/" + sName;
+				:EXITCASE;
+			:CASE sType == "SSC";
+				sURI := "/ServerScripts/" + sCat + "/" + sName;
+				:EXITCASE;
+			:CASE sType == "CSC";
+				sURI := "/ClientScripts/" + sCat + "/" + sName;
+				:EXITCASE;
+			:CASE sType == "DS";
+				sURI := "/DataSources/" + sCat + "/" + sName;
+				:EXITCASE;
+			:CASE sType == "TBL";
+				sURI := "/Tables/" + sCat + "/" + sName;
+				:EXITCASE;
+		:ENDCASE;
+
+		/* The official data source intentionally returns one row per live item.
+		   Look up only this matched item's latest check-in to enrich the export UI. */;
+		sHistorySQL := "select " + sDateExpr + " CHECKEDINDATE, H.VERSIONID " +
+			"from LIMSSOURCECONTROL H " + sHistoryWhere +
+			"and H.ITEMID='" + StrTran(sItemId, "'", "''") + "' " +
+			"order by H.CHECKEDINDATE desc";
+		aHistory := SQLExecute(sHistorySQL, "DICTIONARY");
+
+		:IF Len(aHistory) > 0;
+			oItem := CreateUDObject({
+				{"itemType", sType}, {"catName", sCat}, {"appName", sApp},
+				{"itemName", sName}, {"itemId", sItemId}, {"uri", sURI},
+				{"checkedInBy", sUser}, {"checkedInDate", aHistory[1][1]}, {"versionId", aHistory[1][2]}
+			});
+			AAdd(aItems, oItem);
+		:ENDIF;
+	:NEXT;
+:ENDIF;
+
+oData := CreateUDObject({
+	{"success", .T.},
+	{"items", aItems},
+	{"source", "SourceControlMgmt.dsGetItemsFromSearch"}
+});
+:RETURN oData;

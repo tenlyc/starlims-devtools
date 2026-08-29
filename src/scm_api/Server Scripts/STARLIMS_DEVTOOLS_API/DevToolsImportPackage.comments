@@ -1,0 +1,1 @@
+update limsSOURCECONTROL set REASONFORCHECKOUT = 'STARLIMS DevTools: import uploaded SDP through the Designer-compatible XML path.' where versionID = ?

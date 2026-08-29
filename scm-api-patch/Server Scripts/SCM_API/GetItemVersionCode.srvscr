@@ -1,0 +1,51 @@
+/********************************************************************************
+Description.. :	Read the code documents attached to a specific version from
+				LIMSSOURCECONTROL (mirrors the official Source Control Manager
+				scGetCodeFromLimsSourceControl server script).
+Parameters... :	- VERSIONID : version GUID
+Returns...... :	- { success, data: { CODEDOCUMENT, XFDDOCUMENT, RESOURCEDOCUMENT, VERSIONID } }
+Author....... :	STARLIMS DevTools
+Date......... : 2026-08-29
+********************************************************************************/;
+:DECLARE oResponse, sVersionID, sSQL, aSel;
+oResponse := CreateUDObject({
+	{"success", .T.},
+	{"data", NIL}
+});
+
+:IF !Request:QueryString:IsProperty("VERSIONID") .OR. Empty(Request:QueryString:VERSIONID);
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := "Missing required parameter: VERSIONID";
+	:RETURN oResponse;
+:ENDIF;
+sVersionID := Request:QueryString:VERSIONID;
+
+:TRY;
+	sSQL := "select CODEDOCUMENT, XFDDOCUMENT, RESOURCEDOCUMENT, VERSIONID " +
+			"from LIMSSOURCECONTROL " +
+			"where VERSIONID = '" + sVersionID + "' " +
+			"and DONE = 1";
+	aSel := SQLExecute(sSQL, "DICTIONARY");
+
+	:IF Empty(aSel);
+		oResponse:success := .F.;
+		oResponse:data := "Version not found: " + sVersionID;
+		:RETURN oResponse;
+	:ENDIF;
+
+	Response:StatusCode := 200;
+	oResponse:success := .T.;
+	oResponse:data := CreateUDObject({
+		{"CODEDOCUMENT", aSel[1,1]},
+		{"XFDDOCUMENT", aSel[1,2]},
+		{"RESOURCEDOCUMENT", aSel[1,3]},
+		{"VERSIONID", aSel[1,4]}
+	});
+	:RETURN oResponse;
+:CATCH;
+	Response:StatusCode := 500;
+	oResponse:success := .F.;
+	oResponse:data := "GetItemVersionCode error: " + ErrorMessage();
+	:RETURN oResponse;
+:ENDTRY;

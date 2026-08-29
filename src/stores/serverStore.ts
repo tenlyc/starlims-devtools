@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { EnterpriseService, getEnterpriseService } from '../services/enterpriseService';
+import { useOutputLogStore } from '../services/outputLogStore';
 
 export interface ServerConfig {
   name: string;
@@ -121,6 +122,10 @@ export const useServerStore = create<ServerState>((set, get) => ({
     }
 
     set({ isConnecting: true, error: null });
+    useOutputLogStore.getState().addEntry({
+      channel: 'starlims-operation', level: 'info', source: 'Connection',
+      message: `Connecting to ${currentServer.name} as ${currentServer.user || ''}`
+    });
 
     try {
       // Save selected server
@@ -140,18 +145,28 @@ export const useServerStore = create<ServerState>((set, get) => ({
         // Save or delete password based on remember checkbox
         if (window.electronAPI) {
           if (rememberPassword) {
-            await window.electronAPI.storeSet(`password_${currentServer.name}`, password);
+            await window.electronAPI.secretsSet(`password_${currentServer.name}`, password);
+            await window.electronAPI.storeDelete(`password_${currentServer.name}`);
           } else {
+            await window.electronAPI.secretsDelete(`password_${currentServer.name}`);
             await window.electronAPI.storeDelete(`password_${currentServer.name}`);
           }
         }
         set({ isConnected: true, isConnecting: false, error: null });
+        useOutputLogStore.getState().addEntry({
+          channel: 'starlims-operation', level: 'success', source: 'Connection',
+          message: `Connected to ${currentServer.name}`
+        });
         return true;
       } else {
         set({
           isConnected: false,
           isConnecting: false,
           error: 'Failed to connect to STARLIMS. Please check your credentials.'
+        });
+        useOutputLogStore.getState().addEntry({
+          channel: 'starlims-operation', level: 'error', source: 'Connection',
+          message: `Failed to connect to ${currentServer.name}`
         });
         return false;
       }
@@ -162,14 +177,23 @@ export const useServerStore = create<ServerState>((set, get) => ({
         isConnecting: false,
         error: err.message || 'Failed to connect to STARLIMS'
       });
+      useOutputLogStore.getState().addEntry({
+        channel: 'starlims-operation', level: 'error', source: 'Connection',
+        message: err.message || 'Failed to connect to STARLIMS'
+      });
       return false;
     }
   },
 
   disconnect: () => {
+    const serverName = get().currentServer?.name;
     const enterpriseService = getEnterpriseService();
     enterpriseService.disconnect();
     set({ isConnected: false, currentServer: null, error: null, password: '', rememberPassword: false, showPasswordInput: false });
+    useOutputLogStore.getState().addEntry({
+      channel: 'starlims-operation', level: 'info', source: 'Connection',
+      message: `Disconnected${serverName ? ` from ${serverName}` : ''}`
+    });
   }
 }));
 

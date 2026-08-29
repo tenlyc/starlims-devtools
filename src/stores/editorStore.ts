@@ -18,10 +18,17 @@ export interface EditorSettings {
   wordWrap: boolean;
 }
 
+export interface PendingEditorReveal {
+  uri: string;
+  line: number;
+  column: number;
+}
+
 interface EditorState {
   openFiles: OpenFile[];
   activeFileUri: string | null;
   editorSettings: EditorSettings;
+  pendingReveal: PendingEditorReveal | null;
 
   // Actions
   openFile: (file: OpenFile) => void;
@@ -37,6 +44,8 @@ interface EditorState {
   toggleWhitespace: () => void;
   toggleWordWrap: () => void;
   toggleMinimap: () => void;
+  revealLocation: (location: PendingEditorReveal) => void;
+  consumeReveal: () => void;
 }
 
 export const editorStore = create<EditorState>((set, get) => ({
@@ -49,6 +58,7 @@ export const editorStore = create<EditorState>((set, get) => ({
     showWhitespace: false,
     wordWrap: true,
   },
+  pendingReveal: null,
 
   openFile: (file: OpenFile) => {
     const { openFiles } = get();
@@ -157,4 +167,11 @@ export const editorStore = create<EditorState>((set, get) => ({
     const callback = (window as any).__editorSettingsCallback;
     if (callback) callback();
   },
+
+  revealLocation: (location) => set({
+    activeFileUri: location.uri,
+    pendingReveal: location
+  }),
+
+  consumeReveal: () => set({ pendingReveal: null }),
 }));

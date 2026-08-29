@@ -53,6 +53,11 @@ export interface ScriptResult {
   executionTime?: number;
 }
 
+export interface LanguageOption {
+  id: string;
+  name: string;
+}
+
 export interface QueryResult {
   success: boolean;
   columns: string[];
@@ -65,6 +70,72 @@ export interface QueryResult {
 export interface SearchResult {
   items: EnterpriseItem[];
   totalCount: number;
+}
+
+/** One row of the LIMSSOURCECONTROL history for an item (mirrors the official
+ *  Source Control Manager dsGetHistory data source). */
+export interface ItemHistoryEntry {
+  itemType: string;
+  itemId: string;
+  status: string;
+  done: boolean | string;
+  checkedOutBy: string;
+  checkedOutDate: string;
+  checkedInBy: string;
+  checkedInDate: string;
+  reasonForCheckout: string;
+  lsCorigRec: string;
+  factory: string;
+  dealer: string;
+  client: string;
+  versionId: string;
+  scriptLanguage: string;
+  /** true when the row still carries the checked-out code (DONE = 0) */
+  isCurrentCheckout?: boolean;
+}
+
+/** One row of VERSIONSLABELS / VERSIONSLABELS_ITEMS for an item. */
+export interface ItemLabelEntry {
+  labelTitle: string;
+  labelDesc: string;
+  createdBy: string;
+  createdDate: string;
+  itemVersionId: string;
+}
+
+/** The code documents attached to a specific version in LIMSSOURCECONTROL. */
+export interface ItemVersionCode {
+  code: string;
+  xfdDocument: string;
+  resourceDocument: string;
+  versionId: string;
+}
+
+/** One Source Control item row returned by GetSCMItems. */
+export interface SCMItem {
+  itemType: string;
+  catName: string;
+  appName: string;
+  itemName: string;
+  itemId: string;
+  uri: string;
+  state?: string;
+  isCheckedOut: boolean;
+  checkedOutBy?: string;
+  checkedOutDate?: string;
+  checkedInBy?: string;
+  checkedInDate?: string;
+  factoryVersion?: string;
+  dealerVersion?: string;
+  clientVersion?: string;
+  reason?: string;
+  versionId?: string;
+}
+
+export interface CheckInHistoryFilter {
+  user: string;
+  dateFrom: string;
+  dateTo: string;
 }
 
 export interface IEnterpriseService {
@@ -103,7 +174,7 @@ export interface IEnterpriseService {
   }): Promise<EnterpriseItem[]>;
 
   // Script execution
-  runScript(uri: string): Promise<ScriptResult>;
+  runScript(uri: string, parameters?: unknown[]): Promise<ScriptResult>;
   runDataSource(uri: string): Promise<ScriptResult>;
 
   // SQL Query execution
@@ -134,15 +205,51 @@ export interface IEnterpriseService {
 
   // Languages
   getLanguages(): Promise<string[]>;
+  getLanguageOptions(): Promise<LanguageOption[]>;
 
   // Log
   clearLog(): Promise<boolean>;
-  getServerLog(): Promise<string>;
+  getServerLog(user?: string): Promise<string>;
 
   // Package operations (Source Control Manager)
-  exportPackage(): Promise<{ success: boolean; fileName?: string; error?: string }>;
+  /** Export checked out items as an SDP package. Pass item GUIDs to export only
+   *  those items (requires the ExportPackage `items` parameter from the patch),
+   *  or omit to export all pending check-ins. */
+  exportPackage(items?: string[], history?: boolean, languages?: string[]): Promise<{ success: boolean; fileName?: string; blob?: Blob; error?: string }>;
+  /** Users that have completed Source Control check-ins. */
+  getSCMUsers(): Promise<string[]>;
+  /** Items checked in by one user during an inclusive date range. */
+  getCheckInHistory(filter: CheckInHistoryFilter): Promise<SCMItem[]>;
   importPackage(file: File): Promise<{ success: boolean; log?: string; error?: string }>;
-  downloadPackage(fileName: string): Promise<{ success: boolean; data?: Blob; error?: string }>;
+  /** Load the whole enterprise tree at once (all items with uri/type/guid). */
+  getAllItems(): Promise<EnterpriseItem[]>;
+  /** Load every Source Control item with its checkout state (mirrors the
+   *  official SCM dsGetItemsFromSearch). Requires the GetSCMItems endpoint. */
+  getSCMItems(filter?: {
+    itemName?: string; types?: string[]; checkedOutOnly?: boolean;
+    checkOutBy?: string; checkInBy?: string;
+    checkOutDateFrom?: string; checkOutDateTo?: string;
+    checkInDateFrom?: string; checkInDateTo?: string;
+    factoryMajor?: string; factoryMinor?: string; factoryBuild?: string;
+    dealerMajor?: string; dealerMinor?: string; dealerBuild?: string;
+    clientMajor?: string; clientMinor?: string; clientBuild?: string;
+    textType?: string; textValue?: string;
+  }): Promise<SCMItem[]>;
+  /** Export selected enterprise items (their live/checked-in state) as an SDP
+   *  package for deployment to another environment. Mirrors the official SCM
+   *  "Send to Package Manager" flow. Requires the ExportItems endpoint. */
+  exportItems(uris: string[]): Promise<{ success: boolean; fileName?: string; blob?: Blob; error?: string }>;
+
+  // Version history / labels (Source Control Manager deep features)
+  getItemHistory(uri: string): Promise<ItemHistoryEntry[]>;
+  getItemLabels(uri: string): Promise<ItemLabelEntry[]>;
+  getItemVersionCode(versionId: string): Promise<ItemVersionCode | null>;
+  /** Recover an old version into the current version (write operation).
+   *  Requires the SCM_API RecoverVersion endpoint (shipped in scm_api patch). */
+  recoverVersion(uri: string, versionId: string, reason?: string): Promise<{ success: boolean; message?: string; error?: string }>;
+  /** Create a version label and attach it to an item/version (write operation).
+   *  Requires the SCM_API CreateLabel endpoint (shipped in scm_api patch). */
+  createLabel(uri: string, labelTitle: string, labelDesc?: string): Promise<{ success: boolean; message?: string; error?: string }>;
 }
 
 export default IEnterpriseService;

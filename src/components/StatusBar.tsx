@@ -1,17 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useServerStore } from '../stores/serverStore';
 import { useThemeStore, Theme } from '../stores/themeStore';
+import { useI18n } from '../i18n';
 
-interface StatusBarProps {
-  onToggleSidebar: () => void;
-  onToggleMCP: () => void;
-  onToggleOutput: () => void;
-  onOpenSCMPackage: () => void;
-}
-
-export function StatusBar({ onToggleSidebar, onToggleMCP, onToggleOutput, onOpenSCMPackage }: StatusBarProps) {
-  const { currentServer, isConnected, isConnecting } = useServerStore();
+export function StatusBar() {
+  const { currentServer, isConnected, isConnecting, disconnect } = useServerStore();
   const { theme, resolvedTheme, setTheme } = useThemeStore();
+  const { language, toggleLanguage, t } = useI18n();
   const [gitBranch, setGitBranch] = useState<string>('');
   const [gitHasChanges, setGitHasChanges] = useState(false);
   const [gitIsRepo, setGitIsRepo] = useState(false);
@@ -76,14 +71,14 @@ export function StatusBar({ onToggleSidebar, onToggleMCP, onToggleOutput, onOpen
   }, []);
 
   return (
-    <div className="status-bar flex items-center justify-between text-slate-700 dark:text-[#bdbdbd] bg-slate-200 dark:bg-[#181818] border-t border-slate-300 dark:border-[#2b2b2b]">
+    <div className="status-bar flex items-center justify-between text-slate-700 dark:text-[#bdbdbd] bg-[#f3f3f3] dark:bg-[#181818] border-t border-[#d4d4d4] dark:border-[#2b2b2b]">
       {/* Left section */}
       <div className="flex items-center gap-4">
         {/* Connection status */}
         <div className="flex items-center gap-2">
           <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-slate-500'}`} />
           <span className="text-xs">
-            {isConnecting ? 'Connecting...' : isConnected ? 'Connected' : 'Disconnected'}
+            {isConnecting ? t('status.connecting') : isConnected ? t('status.connected') : t('status.disconnected')}
           </span>
         </div>
 
@@ -105,6 +100,23 @@ export function StatusBar({ onToggleSidebar, onToggleMCP, onToggleOutput, onOpen
           </>
         )}
 
+        {isConnected && (
+          <>
+            <span className="text-slate-400 dark:text-slate-600">|</span>
+            <button
+              type="button"
+              onClick={disconnect}
+              className="flex h-6 items-center gap-1 rounded px-1.5 text-xs text-slate-600 transition-colors hover:bg-slate-300 hover:text-red-700 dark:text-[#bdbdbd] dark:hover:bg-[#303030] dark:hover:text-red-400"
+              title={t('status.logoutHint')}
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                <path d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4M14 8l4 4-4 4M18 12H9" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span>{t('status.logout')}</span>
+            </button>
+          </>
+        )}
+
         {/* Git status */}
         {gitIsRepo && (
           <>
@@ -112,7 +124,7 @@ export function StatusBar({ onToggleSidebar, onToggleMCP, onToggleOutput, onOpen
             <div className="flex items-center gap-1">
               <span className="text-xs text-green-600 dark:text-green-400">⎇ {gitBranch}</span>
               {gitHasChanges && (
-                <span className="w-2 h-2 rounded-full bg-yellow-500" title="Uncommitted changes" />
+                <span className="w-2 h-2 rounded-full bg-yellow-500" title={t('status.uncommitted')} />
               )}
             </div>
           </>
@@ -120,55 +132,23 @@ export function StatusBar({ onToggleSidebar, onToggleMCP, onToggleOutput, onOpen
       </div>
 
       {/* Right section */}
-      <div className="flex items-center gap-4">
-        {/* Panel toggles */}
+      <div className="flex items-center gap-2">
+        {/* Language toggle */}
         <button
-          className="p-1 hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-          onClick={onToggleSidebar}
-          title="Toggle Sidebar"
+          className="px-1.5 py-0.5 text-xs font-medium hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+          onClick={toggleLanguage}
+          title={t('common.language')}
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-          </svg>
-        </button>
-
-        <button
-          className="p-1 hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-          onClick={onToggleMCP}
-          title="Toggle STARLIMS MCP Panel"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-          </svg>
-        </button>
-
-        <button
-          className="p-1 hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-          onClick={onToggleOutput}
-          title="Toggle Output Panel"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-          </svg>
-        </button>
-
-        <button
-          className="p-1 hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-          onClick={onOpenSCMPackage}
-          title="Source Control Manager - Package Manager"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
+          {language === 'zh' ? 'EN' : '中文'}
         </button>
 
         <span className="text-slate-400 dark:text-slate-600">|</span>
 
         {/* Theme toggle */}
         <button
-          className="p-1 hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+          className="icon-button h-7 w-7"
           onClick={cycleTheme}
-          title={`Theme: ${theme} (${resolvedTheme})`}
+          title={`${t('status.theme')}: ${theme} (${resolvedTheme})`}
         >
           <span className="text-sm">{getThemeIcon()}</span>
         </button>

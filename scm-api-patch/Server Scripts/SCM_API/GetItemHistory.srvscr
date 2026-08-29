@@ -1,0 +1,182 @@
+/********************************************************************************
+Description.. :	Return the version history of an item from LIMSSOURCECONTROL
+				(mirrors the official Source Control Manager dsGetHistory data
+				source shipped in the "Source Control Manager" application).
+Parameters... :	- URI : enterprise item URI (e.g. SS/Category/Name)
+Returns...... :	- { success, data: [ history rows ] }
+Author....... :	STARLIMS DevTools
+Date......... : 2026-08-29
+********************************************************************************/;
+:DECLARE oResponse, sURI, oUtils, oEnterpriseItem, sItemName, sItemType, sItemID,
+		 sLang, sSQL, aSel, sSQLCheckedOutDate, sSQLCheckedInDate, aRows, i, oRow,
+		 sGuidName, sHistType;
+oResponse := CreateUDObject({
+	{"success", .T.},
+	{"data", NIL}
+});
+
+:IF !Request:QueryString:IsProperty("URI") .OR. Empty(Request:QueryString:URI);
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := "Missing required parameter: URI";
+	:RETURN oResponse;
+:ENDIF;
+sURI := Request:QueryString:URI;
+
+:TRY;
+	oUtils := CreateUDObject("SCM_API.Utils", {});
+	oEnterpriseItem := oUtils:ParseURI(sURI);
+	sItemName := BuildArray(oEnterpriseItem:Name,, ".")[1];
+	sItemType := oEnterpriseItem:Type;
+
+	/* Map SCM_API item types to the history types used by the official SCM */;
+	:BEGINCASE;
+		:CASE sItemType == "HTMLFORMXML" .OR. sItemType == "HTMLFORMCODE" .OR. sItemType == "HTMLFORMGUIDE" .OR. sItemType == "HTMLFORMRESOURCES"
+			.OR. sItemType == "XFDFORMXML" .OR. sItemType == "XFDFORMCODE" .OR. sItemType == "XFDFORMRESOURCES";
+			sHistType := "APP_FRM";
+		:EXITCASE;
+		:CASE sItemType == "CS" .OR. sItemType == "APPCS";
+			sHistType := "CSC";
+		:EXITCASE;
+		:CASE sItemType == "SS" .OR. sItemType == "APPSS";
+			sHistType := "APP_SSC";
+		:EXITCASE;
+		:CASE sItemType == "DS" .OR. sItemType == "APPDS";
+			sHistType := "APP_DS";
+		:EXITCASE;
+		:OTHERWISE;
+			Response:StatusCode := 400;
+			oResponse:success := .F.;
+			oResponse:data := "Unsupported item type for history: " + sItemType;
+			:RETURN oResponse;
+	:ENDCASE;
+
+	/* Resolve the item GUID (server scripts / client scripts / data sources are
+	   addressed by category name, everything else by application name) */;
+	:BEGINCASE;
+		:CASE sItemType == "SS" .OR. sItemType == "CS" .OR. sItemType == "DS";
+			sGuidName := oEnterpriseItem:CategoryName + "." + sItemName;
+		:EXITCASE;
+		:OTHERWISE;
+			sGuidName := oEnterpriseItem:AppName + "." + sItemName;
+	:ENDCASE;
+	sItemID := oUtils:GetItemGUID(sGuidName, sItemType);
+
+	:IF Empty(sItemID);
+		oResponse:success := .F.;
+		oResponse:data := "Item not found: " + sURI;
+		:RETURN oResponse;
+	:ENDIF;
+
+	/* Determine the script language like the official SCM does */;
+	sLang := "";
+	:BEGINCASE;
+		:CASE sHistType == "APP_FRM" .OR. sHistType == "CSC";
+			sLang := "JSCRIPT";
+		:EXITCASE;
+		:CASE sHistType == "APP_SSC";
+			sLang := "STARLIMS";
+		:EXITCASE;
+		:CASE sHistType == "APP_DS";
+			aSel := SQLExecute("select SCRIPTLANGUAGE from LIMSDATASOURCES where DATASOURCEID = '" + sItemID + "'", "DICTIONARY");
+			:IF !Empty(aSel) .AND. !Empty(aSel[1,1]);
+				sLang := aSel[1,1];
+			:ELSE;
+				sLang := "SQL";
+			:ENDIF;
+		:EXITCASE;
+	:ENDCASE;
+
+	/* Platform specific date formatting */;
+	:BEGINCASE;
+		:CASE PLATFORMA == "ORACLE";
+			sSQLCheckedOutDate := "TO_CHAR(LSC.CHECKEDOUTDATE, 'YYYY-MM-DD HH24:MI:SS')";
+			sSQLCheckedInDate := "TO_CHAR(LSC.CHECKEDINDATE, 'YYYY-MM-DD HH24:MI:SS')";
+		:EXITCASE;
+		:OTHERWISE;
+			sSQLCheckedOutDate := "convert(varchar(19), LSC.CHECKEDOUTDATE, 120)";
+			sSQLCheckedInDate := "convert(varchar(19), LSC.CHECKEDINDATE, 120)";
+	:ENDCASE;
+
+	/* Version numbers are concatenations of major.minor.build */;
+	sSQL := "select '" + sHistType + "' ITEM_TYPE, '" + sItemID + "' ITEM_ID, 'History' STATUS, LSC.DONE, LSC.CHECKEDOUTBY, " +
+			sSQLCheckedOutDate + " CHECKEDOUTDATE, LSC.CHECKEDINBY, " + sSQLCheckedInDate + " CHECKEDINDATE, " +
+			"LSC.REASONFORCHECKOUT, LSC.ORIGREC LSCORIGREC, " +
+			DoProc("_BuildVersionConcat", {{"VER.MAJOR", "VER.MINOR", "VER.BUILD"}, "."}) + " as FACTORY, " +
+			DoProc("_BuildVersionConcat", {{"VER.DMAJOR", "VER.DMINOR", "VER.DBUILD"}, "."}) + " as DEALER, " +
+			DoProc("_BuildVersionConcat", {{"VER.CMAJOR", "VER.CMINOR", "VER.CBUILD"}, "."}) + " as CLIENT, " +
+			"VER.VERSIONID, '" + sLang + "' SCRIPTLANGUAGE " +
+			"from LIMSSOURCECONTROL LSC " +
+			"left outer join LIMSVERSIONS VER on VER.VERSIONID = LSC.VERSIONID " +
+			"where LSC.ITEMID = '" + sItemID + "' " +
+			"order by LSC.CHECKEDOUTDATE DESC, LSC.ORIGREC";
+
+	aSel := SQLExecute(sSQL, "DICTIONARY");
+
+	/* Convert the two-dimensional array into a JSON friendly row list */;
+	aRows := {};
+	:FOR i := 1 :TO Len(aSel);
+		oRow := CreateUDObject({
+			{"ITEM_TYPE", aSel[i,1]},
+			{"ITEM_ID", aSel[i,2]},
+			{"STATUS", aSel[i,3]},
+			{"DONE", aSel[i,4]},
+			{"CHECKEDOUTBY", aSel[i,5]},
+			{"CHECKEDOUTDATE", aSel[i,6]},
+			{"CHECKEDINBY", aSel[i,7]},
+			{"CHECKEDINDATE", aSel[i,8]},
+			{"REASONFORCHECKOUT", aSel[i,9]},
+			{"LSCORIGREC", aSel[i,10]},
+			{"FACTORY", aSel[i,11]},
+			{"DEALER", aSel[i,12]},
+			{"CLIENT", aSel[i,13]},
+			{"VERSIONID", aSel[i,14]},
+			{"SCRIPTLANGUAGE", aSel[i,15]}
+		});
+		AAdd(aRows, oRow);
+	:NEXT;
+
+	Response:StatusCode := 200;
+	oResponse:success := .T.;
+	oResponse:data := aRows;
+	:RETURN oResponse;
+:CATCH;
+	Response:StatusCode := 500;
+	oResponse:success := .F.;
+	oResponse:data := "GetItemHistory error: " + ErrorMessage();
+	:RETURN oResponse;
+:ENDTRY;
+
+/********************************************************************************
+Description.. :	Builds a SQL concatenation expression for version numbers
+				(mirrors SourceControlMgmt.scBuildConcatSQL without depending on
+				the official SCM application being deployed)
+				Pass a list of field names, the separator is inserted between
+				each field
+********************************************************************************/;
+:PROCEDURE _BuildVersionConcat;
+:PARAMETERS aFieldsList, sSeparator;
+:DEFAULT aFieldsList, {"FLD1", "FLD2", "FLD3"};
+:DEFAULT sSeparator, ".";
+:DECLARE i, sSQL;
+	sSQL := "";
+	i := 0;
+	:BEGINCASE;
+		:CASE PLATFORMA == "ORACLE";
+			:WHILE (i+=1) <= Len(aFieldsList);
+				sSQL := sSQL + LimsString(aFieldsList[i]);
+				:IF i < Len(aFieldsList);
+					sSQL := sSQL + " || '" + LimsString(sSeparator) + "' || ";
+				:ENDIF;
+			:ENDWHILE;
+		:EXITCASE;
+		:OTHERWISE;
+			:WHILE (i+=1) <= Len(aFieldsList);
+				sSQL := sSQL + "cast(" + LimsString(aFieldsList[i]) + " as varchar)";
+				:IF i < Len(aFieldsList);
+					sSQL := sSQL + " + '" + LimsString(sSeparator) + "' + ";
+				:ENDIF;
+			:ENDWHILE;
+	:ENDCASE;
+	:RETURN sSQL;
+:ENDPROC;

@@ -1,0 +1,1 @@
+update limsSOURCECONTROL set REASONFORCHECKOUT = 'STARLIMS DevTools: export selected check-in history items to SDP.' where versionID = ?

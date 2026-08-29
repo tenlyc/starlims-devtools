@@ -36,6 +36,9 @@ STARLIMS DevTools is a cross-platform desktop application built on Electron that
 | 脚本执行 | Script Execution | 直接在应用中运行服务器脚本和数据源 | Run server scripts and data sources directly |
 | 表单调试 | Form Debugging | 在系统浏览器中打开和调试 HTML 表单 | Open and debug HTML forms in the system browser |
 | 源码管理 | Source Control Manager | 导出和导入 SDP 包用于跨环境部署 | Export and import SDP packages for deployment across environments |
+| 多语言表单 | Multilingual Forms | HTML Form 按签出语言显示、编辑与导出 XML/Guide/Resources | Display, edit and export form documents by checked-out language |
+| 问题与日志 | Problems & Logs | 底部统一展示 SSL 诊断、输出、STARLIMS 日志与分级过滤 | Unified SSL diagnostics, output and categorized STARLIMS logs |
+| 跨平台桌面体验 | Cross-platform Desktop UX | Cursor 风格工作台、明暗主题、响应式面板与统一品牌图标 | Cursor-inspired workspace, light/dark themes, responsive panels and unified branding |
 
 ### 代码编辑器高级功能 | Code Editor Advanced Features
 
@@ -63,16 +66,25 @@ STARLIMS DevTools is a cross-platform desktop application built on Electron that
 
 SSL 文件会在输入后约 250ms 自动执行语法解析和风格检查。使用编辑器的“格式化文档”或 `Shift+Alt+F` 可运行上游 SSL 格式化器，包括内嵌 SQL 字符串格式化。编辑器同时支持局部符号定义/引用、重命名、文档高亮、参数内联提示、引用数量 CodeLens，以及针对风格诊断的快速修复和规则抑制操作。
 
-### STARLIMS MCP | AI Programming Integration
+### AI Agent 与 STARLIMS MCP | AI Agent & STARLIMS MCP
 
 | 功能 | Feature | 说明 | Description |
 |------|---------|------|-------------|
-| 本地 MCP 服务 | Local MCP Server | `http://127.0.0.1:3002/mcp` | Streamable HTTP，仅监听本机回环地址 |
-| AI 工具兼容 | AI Client Support | Codex、ChatGPT Desktop、Claude Code、Cursor、VS Code 等 | 客户端负责模型选择，DevTools 负责 STARLIMS 工具能力 |
+| 本地 MCP 服务 | Local MCP Server | `http://127.0.0.1:3102/mcp` | Streamable HTTP，仅监听本机回环地址；避开 starlimsvscode MCP 的 3002 和表单回调端口 3003–3099 |
+| Codex Agent | Codex Agent | Codex App Server 持久会话、流式回复、审批、停止与历史记录 | Persistent Codex App Server sessions with streaming, approvals, interruption and history |
+| 通用 Agent | Generic Agent | 配置多个 OpenAI-compatible 平台、API Key 与模型列表 | Configure multiple OpenAI-compatible providers, API keys and model lists |
+| 对话模式 | Conversation Modes | Agent、Plan、Debug、Multitask、Ask | Select a task-oriented conversation mode before sending |
+| 上下文引用 | Context References | 使用 `@` 引用已打开、签出或搜索到的 STARLIMS 脚本 | Attach open, checked-out or searched STARLIMS scripts with `@` |
+| 对话记录 | Conversation History | Codex 与通用 Agent 独立保存和恢复会话记录 | Separate persisted histories for Codex and Generic Agent |
+| 自定义规则 | Custom Rules | 导入或粘贴 Markdown 规则，约束当前用户的 AI 行为 | Import or paste Markdown rules for the current user's AI behavior |
+| 通用 MCP 配置 | External MCP Configuration | 在 Customize 中管理 HTTP、SSE、stdio MCP 服务 | Manage HTTP, SSE and stdio MCP servers from Customize |
+| AI 工具兼容 | AI Client Support | Codex、ChatGPT Desktop、Claude Code、Cursor、VS Code 等 | External clients can reuse the built-in STARLIMS tool service |
 | AI 编程闭环 | Agentic Workflow | 浏览、搜索、读取、签出、保存、检入、撤销签出、执行 | 复用 DevTools 当前登录的 STARLIMS 会话 |
 | 安全提示 | Safety | 写入和执行工具标记为非只读 | 建议客户端将写工具审批模式设为 `writes` |
 
-右侧 Agent Console 当前开放 Codex App Server 集成，启动时会自动注入当前 STARLIMS MCP endpoint。Codex 的回复、Reasoning、MCP 调用、命令、文件变更和审批会按发生顺序显示在统一时间线中，回复支持 Markdown/GFM 与代码块样式。Claude Code 与 OpenCode 的界面入口暂时隐藏，待后续完善后开放。可在签出列表或当前编辑器中右键选择“引用到 AI”，将完整脚本或编辑器选区作为 `@context` 附加到下一次提问。
+右侧 Agent Console 同时提供 Codex 与通用 Agent。Codex 启动时自动注入当前 STARLIMS MCP endpoint；通用 Agent 可保存多个服务平台及其模型列表，并将 API Key 单独存入本机密钥存储。回复、Reasoning、MCP 调用、命令、文件变更和审批按发生顺序显示在统一时间线中，支持 Markdown/GFM、代码块、脚本附件、模型选择和对话历史。可在签出列表或当前编辑器中右键选择“引用到 AI”，也可直接输入 `@` 搜索脚本并附加完整源码或编辑器选区。
+
+Customize 页面用于集中维护用户规则和外部 MCP。规则可以从本地 Markdown 文件导入或直接粘贴；外部 MCP 支持 HTTP、SSE 与跨平台 stdio 配置，并与内置 STARLIMS MCP 分开管理。
 
 ### 键盘快捷键 | Keyboard Shortcuts
 
@@ -184,37 +196,18 @@ Contributions are welcome! Please open an Issue or Pull Request on GitHub!
 
 ## 版本历史 | Release Notes
 
-### [1.6.0] - 2026-08-29
+### [1.6.2] - 2026-08-30
 
-- Agent Console 集成 Codex App Server，支持持久会话、流式回复、停止、审批和 STARLIMS MCP 工具调用
-- Reasoning、MCP、命令、文件变更与回复按事件顺序显示，Markdown/GFM 和代码块使用富文本样式
-- Claude Code 与 OpenCode 的入口暂时隐藏，保留底层实现供后续开发
-- 升级至 Electron 44、Vite 8 和 electron-builder 26，生产及完整依赖审计均无已知漏洞
-- 引入 Cursor 风格三栏工作台、签出脚本详情、右键引用脚本和多语言 Monaco 高亮
-- 同步 SSL 解析、诊断、格式化、导航、补全、参数提示、CodeLens 和快速修复能力
-
-### [1.5.0] - 2026-08-29
-
-- 增加 Cursor 风格工作台、Agent Console、脚本上下文引用和更清晰的签出列表
-
-### [1.4.0] - 2026-08-29
-
-- 增加服务器编辑与 URL 规范化，修复 STARLIMS 登录地址兼容问题
-
-### [1.3.0] - 2026-08-29
-
-- 增加 SSL 定义/引用/重命名、参数提示、CodeLens 和诊断快速修复
-
-### [1.2.0] - 2026-08-29
-
-- 迁移 SSL 解析器、139 个内置函数、实时诊断、格式化和编辑器语言能力
-
-### [1.1.0] - 2026-08-29
-
-- 使用本地 Streamable HTTP MCP 替换内置 AI 助手入口
-- MCP 工具复用当前 STARLIMS 会话，支持 AI 编程读写闭环
-- 同步 starlimsvscode 1.8.2 的 SCM_API 后端包
-- MCP 服务仅绑定 `127.0.0.1`，写工具可由客户端单独审批
+- 完成 Cursor 风格三栏工作台、响应式布局、统一明暗主题和 STARLIMS AI 品牌图标
+- 集成 Codex App Server 持久会话，以及支持多平台、多 API Key、多模型和工具轮次设置的通用 Agent
+- 增加 Agent/Plan/Debug/Multitask/Ask 模式、`@` 脚本引用、文件附件、会话历史、自定义 Markdown 规则和外部 MCP 管理
+- 内置本地 Streamable HTTP STARLIMS MCP，复用当前登录会话完成浏览、搜索、读取、签出、保存、检入、日志和执行操作
+- 增加底部 Problems/Output/STARLIMS Log 面板、日志用户筛选与信息/警告/错误分类
+- 签出树显示 HTML Form 的 XML、Code Behind、Guide、Resources、签出语言和签出用户，并保持固定文件顺序
+- 完成 SCM 查询、SDP 导入导出、多语言表单导出和源码管理界面的统一主题
+- 同步 SSL 解析器、139 个内置函数、实时诊断、格式化、导航、补全、参数提示、CodeLens 和快速修复
+- 增加服务器编辑、URL 规范化、安全密码存储、退出登录和跨平台 Codex/MCP 运行环境探测
+- 升级至 Electron 44、Vite 8 和 electron-builder 26
 
 ### [1.0.0] - 2026-04-12
 
