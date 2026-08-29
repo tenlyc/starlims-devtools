@@ -4,6 +4,7 @@ const tests = [
   'ssl-lsp-smoke-test.ts',
   'server-config-smoke-test.ts',
   'ai-context-smoke-test.ts',
+  'dependency-index-smoke-test.ts',
   'agent-runtime-smoke-test.ts',
   'agent-workspace-smoke-test.ts',
   'mcp-smoke-test.ts',

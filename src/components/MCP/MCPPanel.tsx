@@ -11,6 +11,7 @@ import type { AgentApprovalDecision, AgentEvent, AgentItemKind, AgentModelOption
 import type { EnterpriseItem } from '../../services/iEnterpriseService';
 import { useI18n } from '../../i18n';
 import { syncCheckedOutWorkspace } from '../../services/agentWorkspaceService';
+import { dependencyContextForPrompt, loadDependencyIndex } from '../../services/starlimsDependencyIndex';
 
 type MessageEntry = {
   entryType: 'message';
@@ -371,8 +372,16 @@ export function MCPPanel() {
 
   useEffect(() => {
     const onRulesChanged = (event: Event) => setAgentRules((event as CustomEvent<LocalAgentRules>).detail);
+    const onOpenGenericSettings = () => {
+      setProvider('generic');
+      setShowGenericSettings(true);
+    };
     window.addEventListener('ai-rules:changed', onRulesChanged);
-    return () => window.removeEventListener('ai-rules:changed', onRulesChanged);
+    window.addEventListener('ai:open-generic-settings', onOpenGenericSettings);
+    return () => {
+      window.removeEventListener('ai-rules:changed', onRulesChanged);
+      window.removeEventListener('ai:open-generic-settings', onOpenGenericSettings);
+    };
   }, []);
 
   useEffect(() => {
@@ -556,14 +565,6 @@ export function MCPPanel() {
     const promptHistory = selectedProvider === 'opencode' || selectedProvider === 'generic' || replayHistory
       ? entries.filter((entry): entry is MessageEntry => entry.entryType === 'message' && !entry.error).map(({ role, content }) => ({ role, content }))
       : [];
-    const prompt = buildCliPrompt(
-      question,
-      contexts,
-      promptHistory,
-      mcp?.url || 'http://127.0.0.1:3102/mcp',
-      agentRules.enabled ? agentRules.content : '',
-      MODE_INSTRUCTIONS[conversationMode]
-    );
     updateConversation(selectedProvider, (current) => ({ ...current, entries: [...current.entries, userMessage], running: true, sequence: current.sequence + 1 }));
     setInput('');
     try {
@@ -573,6 +574,17 @@ export function MCPPanel() {
           message: `Could not refresh checked-out files before this turn; using the existing workspace. ${error instanceof Error ? error.message : String(error)}`
         });
       });
+      const dependencyContext = dependencyContextForPrompt(await loadDependencyIndex(), contexts.map((context) => context.uri));
+      const prompt = buildCliPrompt(
+        question,
+        contexts,
+        promptHistory,
+        mcp?.url || 'http://127.0.0.1:3102/mcp',
+        agentRules.enabled ? agentRules.content : '',
+        MODE_INSTRUCTIONS[conversationMode],
+        undefined,
+        dependencyContext
+      );
       if (selectedProvider === 'generic') {
         await window.electronAPI.genericAgentStart({ ...genericConfig, toolPermissionPolicy: permissionPolicyForMode(conversationMode) }, prompt);
       } else if (selectedProvider === 'opencode') {
@@ -692,6 +704,10 @@ export function MCPPanel() {
     setGenericProfiles(nextProfiles);
     const active = nextProfiles.find((profile) => profile.id === activeGenericProfileId)!;
     setStatuses((current) => ({ ...current, generic: { available, runtime: 'api', version: 'OpenAI-compatible API', detail: `${active.name} · ${clean.baseUrl}` } }));
+    window.dispatchEvent(new CustomEvent('generic-profiles:changed', { detail: {
+      activeProfileId: activeGenericProfileId,
+      profiles: nextProfiles.map(({ apiKey: _apiKey, ...profile }) => profile)
+    } }));
     setShowGenericSettings(false);
   };
 

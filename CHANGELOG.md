@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] | 未发布
 
+### Added | 新增
+
+- 将 Customize 升级为 AI 能力中心，统一展示 Agent 工作区、模型配置、用户规则、MCP 与依赖索引
+- 同步当前用户签出项时自动分析 include、服务端脚本、数据源和表单引用，支持上下游影响与未解析引用查看
+- AI 对话按当前引用脚本注入预算受控的依赖事实，并明确与用户 `AGENTS.md`/`agent.md` 规则隔离
+
 ### Fixed | 修复
 
 - 修复 HTML Form 保存时误将文件类型作为 `UserLang` 的问题

@@ -83,6 +83,30 @@ export type AgentWorkspaceChange = Omit<AgentWorkspaceFile, 'content'> & {
   after: string;
 };
 
+export type AgentDependencyKind = 'include' | 'server-script' | 'data-source' | 'form';
+
+export type AgentDependencyNode = Omit<AgentWorkspaceFile, 'content' | 'checkedOutDate'> & {
+  id: string;
+  relativePath?: string;
+};
+
+export type AgentDependencyEdge = {
+  id: string;
+  sourceId: string;
+  targetId?: string;
+  reference: string;
+  kind: AgentDependencyKind;
+  line: number;
+  ambiguousTargetIds?: string[];
+};
+
+export type AgentDependencyIndex = {
+  version: 1;
+  generatedAt: string;
+  nodes: AgentDependencyNode[];
+  edges: AgentDependencyEdge[];
+};
+
 export type GenericAgentConfig = {
   baseUrl: string;
   apiKey: string;

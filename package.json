@@ -14,6 +14,7 @@
     "test:ssl": "tsx scripts/ssl-lsp-smoke-test.ts",
     "test:server-config": "tsx scripts/server-config-smoke-test.ts",
     "test:ai-context": "tsx scripts/ai-context-smoke-test.ts",
+    "test:dependency-index": "tsx scripts/dependency-index-smoke-test.ts",
     "test:agent-runtime": "tsx scripts/agent-runtime-smoke-test.ts",
     "test:agent-workspace": "tsx scripts/agent-workspace-smoke-test.ts",
     "test:editor-languages": "tsx scripts/editor-language-smoke-test.ts",

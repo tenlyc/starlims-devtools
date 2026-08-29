@@ -3,6 +3,7 @@ import type { EnterpriseItem } from './iEnterpriseService';
 import { getEnterpriseService } from './enterpriseService';
 import { editorStore } from '../stores/editorStore';
 import { SSLParser } from '../lsp/ssl/parser';
+import { buildDependencyIndex, saveDependencyIndex } from './starlimsDependencyIndex';
 
 const TYPE_MAP: Record<string, string> = {
   AppServerScript: 'APPSS',
@@ -79,6 +80,7 @@ export async function syncCheckedOutWorkspace(): Promise<AgentWorkspaceSyncResul
     if (file) files.push(file);
   }
   const result = await window.electronAPI.agentWorkspaceSyncFiles(files);
+  await saveDependencyIndex(buildDependencyIndex(files));
   window.dispatchEvent(new CustomEvent('agent-workspace:synced', { detail: result }));
   return result;
 }

@@ -1,15 +1,26 @@
 import { useEffect, useState } from 'react';
-import type { AgentWorkspaceChange, ExternalMcpServerConfig, ExternalMcpServers } from '../../types/agent';
+import type { AgentDependencyIndex, AgentDependencyNode, AgentWorkspaceChange, ExternalMcpServerConfig, ExternalMcpServers } from '../../types/agent';
 import { useI18n } from '../../i18n';
 import { applyWorkspaceChanges, getWorkspaceChanges, syncCheckedOutWorkspace } from '../../services/agentWorkspaceService';
 import { lineDiff } from '../../utils/lineDiff';
+import { loadDependencyIndex } from '../../services/starlimsDependencyIndex';
+import { GENERIC_PROFILES_STORE_KEY } from '../../services/genericAgentConfig';
+import { getEnterpriseService } from '../../services/enterpriseService';
+import { editorStore } from '../../stores/editorStore';
 
 const AGENT_RULES_STORE_KEY = 'agentWorkspaceInstructions.v1';
 const AGENT_WORKSPACE_ROOT_STORE_KEY = 'agentWorkspaceRoot.v1';
 type LocalAgentRules = { enabled: boolean; name: string; content: string; updatedAt: number };
 type McpDraft = { originalName: string | null; name: string; config: ExternalMcpServerConfig; envText: string; headersText: string };
+type CustomizeCategory = 'overview' | 'workspace' | 'models' | 'rules' | 'mcp' | 'index';
+type StoredGenericProfile = { id: string; name?: string; baseUrl?: string; model?: string; models?: string[] };
+type StoredGenericProfiles = { activeProfileId?: string; profiles?: StoredGenericProfile[] };
 
 const emptyRules: LocalAgentRules = { enabled: false, name: '', content: '', updatedAt: 0 };
+
+function DependencyList({ title, empty, edges }: { title: string; empty: string; edges: Array<{ id: string; label: string; meta: string; onClick?: () => void }> }) {
+  return <div className="mb-5"><h4 className="mb-2 text-xs font-medium text-slate-600 dark:text-[#aaa]">{title} <span className="text-slate-400">{edges.length}</span></h4>{edges.length === 0 ? <div className="rounded border border-dashed border-slate-200 px-3 py-5 text-center text-[11px] text-slate-500 dark:border-[#383838]">{empty}</div> : <div className="overflow-hidden rounded border border-slate-200 dark:border-[#383838]">{edges.map((edge) => <button key={edge.id} disabled={!edge.onClick} onClick={edge.onClick} className="block w-full border-b border-slate-100 px-3 py-2 text-left last:border-b-0 enabled:hover:bg-slate-50 disabled:cursor-default dark:border-[#303030] dark:enabled:hover:bg-[#252526]"><div className="truncate text-xs">{edge.label}</div><div className="mt-0.5 text-[10px] text-slate-500">{edge.meta}</div></button>)}</div>}</div>;
+}
 
 function jsonObject(value: string, label: string): Record<string, string> | undefined {
   if (!value.trim()) return undefined;
@@ -20,7 +31,7 @@ function jsonObject(value: string, label: string): Record<string, string> | unde
 
 export function CustomizePage() {
   const { t } = useI18n();
-  const [category, setCategory] = useState<'workspace' | 'rules' | 'mcp'>('workspace');
+  const [category, setCategory] = useState<CustomizeCategory>('overview');
   const [search, setSearch] = useState('');
   const [rules, setRules] = useState<LocalAgentRules>(emptyRules);
   const [mcpServers, setMcpServers] = useState<ExternalMcpServers>({});
@@ -31,6 +42,9 @@ export function CustomizePage() {
   const [selectedChanges, setSelectedChanges] = useState<Set<string>>(new Set());
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [dependencyIndex, setDependencyIndex] = useState<AgentDependencyIndex | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState('');
+  const [genericProfiles, setGenericProfiles] = useState<StoredGenericProfiles>({});
 
   const changeKey = (change: Pick<AgentWorkspaceChange, 'uri' | 'language'>) => `${change.uri}\n${change.language || ''}`;
 
@@ -47,10 +61,17 @@ export function CustomizePage() {
       window.electronAPI.storeGet(AGENT_RULES_STORE_KEY).catch(() => null),
       window.electronAPI.agentGetExternalMcpServers().catch(() => ({})),
       window.electronAPI.storeGet(AGENT_WORKSPACE_ROOT_STORE_KEY).catch(() => '')
-    ]).then(([savedRules, servers, savedWorkspaceRoot]) => {
+      , window.electronAPI.storeGet(GENERIC_PROFILES_STORE_KEY).catch(() => null)
+      , loadDependencyIndex()
+    ]).then(([savedRules, servers, savedWorkspaceRoot, savedProfiles, savedIndex]) => {
       if (savedRules && typeof savedRules === 'object') setRules({ ...emptyRules, ...savedRules });
       setMcpServers(servers || {});
       setWorkspaceRoot(typeof savedWorkspaceRoot === 'string' ? savedWorkspaceRoot : '');
+      if (savedProfiles && typeof savedProfiles === 'object') setGenericProfiles(savedProfiles as StoredGenericProfiles);
+      if (savedIndex) {
+        setDependencyIndex(savedIndex);
+        setSelectedNodeId((current) => current || savedIndex.nodes[0]?.id || '');
+      }
     });
     const onWorkspaceConfigured = (event: Event) => {
       const detail = (event as CustomEvent<{ path?: string }>).detail;
@@ -58,13 +79,23 @@ export function CustomizePage() {
       void refreshWorkspaceChanges();
     };
     const onWorkspaceUpdated = () => void refreshWorkspaceChanges();
+    const onIndexUpdated = (event: Event) => {
+      const index = (event as CustomEvent<AgentDependencyIndex>).detail;
+      setDependencyIndex(index);
+      setSelectedNodeId((current) => index.nodes.some((node) => node.id === current) ? current : (index.nodes[0]?.id || ''));
+    };
+    const onProfilesChanged = (event: Event) => setGenericProfiles((event as CustomEvent<StoredGenericProfiles>).detail);
     window.addEventListener('agent-workspace:configured', onWorkspaceConfigured);
     window.addEventListener('agent-workspace:synced', onWorkspaceUpdated);
     window.addEventListener('agent-workspace:applied', onWorkspaceUpdated);
+    window.addEventListener('agent-index:updated', onIndexUpdated);
+    window.addEventListener('generic-profiles:changed', onProfilesChanged);
     return () => {
       window.removeEventListener('agent-workspace:configured', onWorkspaceConfigured);
       window.removeEventListener('agent-workspace:synced', onWorkspaceUpdated);
       window.removeEventListener('agent-workspace:applied', onWorkspaceUpdated);
+      window.removeEventListener('agent-index:updated', onIndexUpdated);
+      window.removeEventListener('generic-profiles:changed', onProfilesChanged);
     };
   }, []);
 
@@ -181,19 +212,70 @@ export function CustomizePage() {
 
   const normalizedSearch = search.trim().toLowerCase();
   const filteredServers = Object.entries(mcpServers).filter(([name, config]) => !normalizedSearch || `${name} ${config.url || ''} ${config.command || ''}`.toLowerCase().includes(normalizedSearch));
+  const profiles = Array.isArray(genericProfiles.profiles) ? genericProfiles.profiles : [];
+  const filteredNodes = (dependencyIndex?.nodes || []).filter((node) => !normalizedSearch || `${node.name} ${node.uri} ${node.type} ${node.language || ''}`.toLowerCase().includes(normalizedSearch));
+  const selectedNode = dependencyIndex?.nodes.find((node) => node.id === selectedNodeId) || filteredNodes[0];
+  const nodeNames = new Map((dependencyIndex?.nodes || []).map((node) => [node.id, node.name]));
+  const outgoingEdges = selectedNode ? (dependencyIndex?.edges || []).filter((edge) => edge.sourceId === selectedNode.id) : [];
+  const incomingEdges = selectedNode ? (dependencyIndex?.edges || []).filter((edge) => edge.targetId === selectedNode.id) : [];
+  const unresolvedEdges = (dependencyIndex?.edges || []).filter((edge) => !edge.targetId && !edge.ambiguousTargetIds?.length);
+
+  const openModelSettings = () => {
+    window.dispatchEvent(new CustomEvent('ai:show'));
+    window.dispatchEvent(new CustomEvent('ai:open-generic-settings'));
+  };
+
+  const openIndexedNode = async (node: AgentDependencyNode) => {
+    try {
+      const content = await getEnterpriseService().getItemCode(node.uri, node.language);
+      editorStore.getState().openFile({ uri: node.uri, name: node.name, type: node.type, language: node.language, content });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
 
   return <div className="h-full overflow-auto bg-slate-50 text-slate-800 dark:bg-[#181818] dark:text-[#cccccc]">
     <div className="mx-auto max-w-5xl px-8 py-8">
       <div className="mb-5 flex items-center gap-3"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('customize.search')} className="h-9 flex-1 rounded-full border border-slate-300 bg-white px-4 text-sm outline-none focus:border-blue-500 dark:border-[#3b3b3b] dark:bg-[#202020]" /></div>
-      <div className="mb-8 flex items-center gap-2 border-b border-slate-200 pb-4 dark:border-[#2b2b2b]">
+      <div className="mb-8 flex flex-wrap items-center gap-2 border-b border-slate-200 pb-4 dark:border-[#2b2b2b]">
+        <button onClick={() => { setCategory('overview'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'overview' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.overview')}</button>
         <button onClick={() => { setCategory('workspace'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'workspace' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.workspace')}</button>
+        <button onClick={() => { setCategory('models'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'models' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.models')} <span className="text-slate-500">{profiles.length + 1}</span></button>
         <button onClick={() => { setCategory('mcp'); setMcpDraft(null); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'mcp' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>MCPs <span className="text-slate-500">{Object.keys(mcpServers).length + 1}</span></button>
         <button onClick={() => { setCategory('rules'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'rules' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.rules')} <span className="text-slate-500">{rules.content.trim() ? 1 : 0}</span></button>
+        <button onClick={() => { setCategory('index'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'index' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.index')} <span className="text-slate-500">{dependencyIndex?.nodes.length || 0}</span></button>
       </div>
 
       {message && <div className="mb-4 rounded border border-slate-300 bg-white px-3 py-2 text-xs dark:border-[#3b3b3b] dark:bg-[#202020]">{message}</div>}
 
-      {category === 'workspace' ? <section>
+      {category === 'overview' ? <section>
+        <div className="mb-5"><h2 className="text-lg font-semibold">{t('customize.centerTitle')}</h2><p className="mt-1 text-xs text-slate-500 dark:text-[#888]">{t('customize.centerHint')}</p></div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {[
+            { category: 'workspace' as CustomizeCategory, icon: '⌘', title: t('customize.workspace'), value: currentWorkspacePath ? `${workspaceChanges.length} ${t('customize.pendingChanges')}` : t('customize.notConfigured') },
+            { category: 'models' as CustomizeCategory, icon: 'AI', title: t('customize.models'), value: `${profiles.length + 1} ${t('customize.providers')}` },
+            { category: 'rules' as CustomizeCategory, icon: '⚡', title: t('customize.rules'), value: rules.enabled ? (rules.name || 'AGENTS.md') : t('customize.disabled') },
+            { category: 'mcp' as CustomizeCategory, icon: 'M', title: 'MCPs', value: `${Object.values(mcpServers).filter((server) => server.enabled !== false).length + 1} ${t('customize.enabled')}` },
+            { category: 'index' as CustomizeCategory, icon: '↗', title: t('customize.index'), value: `${dependencyIndex?.nodes.length || 0} ${t('customize.files')} · ${dependencyIndex?.edges.length || 0} ${t('customize.references')}` }
+          ].map((card) => <button key={card.category} onClick={() => setCategory(card.category)} className="min-h-28 rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:border-slate-400 hover:bg-slate-50 dark:border-[#303030] dark:bg-[#202020] dark:hover:border-[#666] dark:hover:bg-[#252526]"><div className="mb-3 flex h-8 w-8 items-center justify-center rounded bg-slate-100 text-xs font-semibold dark:bg-[#2b2b2b]">{card.icon}</div><div className="text-sm font-medium">{card.title}</div><div className="mt-1 truncate text-xs text-slate-500 dark:text-[#888]">{card.value}</div></button>)}
+        </div>
+      </section> : category === 'models' ? <section>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-medium">{t('customize.modelProfiles')}</h2><p className="mt-1 text-xs text-slate-500 dark:text-[#888]">{t('customize.modelsHint')}</p></div><button onClick={openModelSettings} className="min-h-9 rounded border border-slate-300 px-3 text-xs hover:bg-slate-100 dark:border-[#444] dark:hover:bg-[#252526]">{t('customize.configureModels')}</button></div>
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-[#303030] dark:bg-[#202020]">
+          <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-[#303030]"><div className="flex h-8 w-8 items-center justify-center rounded bg-slate-100 text-xs dark:bg-[#2b2b2b]">CX</div><div className="min-w-0 flex-1"><div className="text-sm">Codex</div><div className="text-xs text-slate-500 dark:text-[#888]">{t('customize.codexBuiltIn')}</div></div><span className="text-xs text-emerald-600">{t('customize.builtIn')}</span></div>
+          {profiles.filter((profile) => !normalizedSearch || `${profile.name || ''} ${profile.model || ''} ${profile.baseUrl || ''}`.toLowerCase().includes(normalizedSearch)).map((profile) => <div key={profile.id} className="flex items-center gap-3 border-b border-slate-200 px-4 py-3 last:border-b-0 dark:border-[#303030]"><div className="flex h-8 w-8 items-center justify-center rounded bg-slate-100 text-xs dark:bg-[#2b2b2b]">AI</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate text-sm">{profile.name || profile.model || t('customize.unnamedProfile')}</span>{profile.id === genericProfiles.activeProfileId && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">{t('customize.active')}</span>}</div><div className="truncate text-xs text-slate-500 dark:text-[#888]">{profile.model || t('customize.noModel')} · {(profile.models || []).length || (profile.model ? 1 : 0)} {t('customize.models')}</div></div></div>)}
+        </div>
+      </section> : category === 'index' ? <section>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-medium">{t('customize.indexTitle')}</h2><p className="mt-1 text-xs text-slate-500 dark:text-[#888]">{t('customize.indexHint')}</p></div><button disabled={workspaceBusy || !currentWorkspacePath} onClick={() => void syncWorkspace()} className="min-h-9 rounded border border-slate-300 px-3 text-xs disabled:opacity-40 dark:border-[#444]">{t('customize.rebuildIndex')}</button></div>
+        <div className="mb-3 flex flex-wrap gap-2 text-xs text-slate-500 dark:text-[#888]"><span>{dependencyIndex?.nodes.length || 0} {t('customize.files')}</span><span>·</span><span>{dependencyIndex?.edges.length || 0} {t('customize.references')}</span><span>·</span><span>{unresolvedEdges.length} {t('customize.unresolved')}</span>{dependencyIndex?.generatedAt && <><span>·</span><span>{new Date(dependencyIndex.generatedAt).toLocaleString()}</span></>}</div>
+        {!dependencyIndex ? <div className="rounded-lg border border-slate-200 bg-white px-4 py-12 text-center text-xs text-slate-500 dark:border-[#303030] dark:bg-[#202020]">{t('customize.indexEmpty')}</div> : <div className="grid min-h-[480px] overflow-hidden rounded-lg border border-slate-200 bg-white md:grid-cols-[minmax(220px,0.9fr)_minmax(320px,1.6fr)] dark:border-[#303030] dark:bg-[#202020]">
+          <div className="max-h-[620px] overflow-auto border-b border-slate-200 md:border-b-0 md:border-r dark:border-[#303030]">{filteredNodes.map((node) => { const incoming = dependencyIndex.edges.filter((edge) => edge.targetId === node.id).length; const outgoing = dependencyIndex.edges.filter((edge) => edge.sourceId === node.id).length; return <button key={node.id} onClick={() => setSelectedNodeId(node.id)} className={`block w-full border-b border-slate-100 px-3 py-2.5 text-left last:border-b-0 dark:border-[#2a2a2a] ${selectedNode?.id === node.id ? 'bg-slate-100 dark:bg-[#2a2d2e]' : 'hover:bg-slate-50 dark:hover:bg-[#252526]'}`}><div className="truncate text-xs font-medium">{node.name}{node.language ? ` · ${node.language}` : ''}</div><div className="mt-1 flex gap-3 text-[10px] text-slate-500"><span>← {incoming}</span><span>→ {outgoing}</span><span className="truncate">{node.type}</span></div></button>; })}</div>
+          <div className="min-w-0 p-4">{selectedNode ? <><div className="mb-4 flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate text-sm font-medium">{selectedNode.name}</h3><div className="mt-1 break-all text-[11px] text-slate-500">{selectedNode.uri}</div></div><button onClick={() => void openIndexedNode(selectedNode)} className="shrink-0 rounded border border-slate-300 px-3 py-1.5 text-xs dark:border-[#444]">{t('customize.openScript')}</button></div>
+            <DependencyList title={t('customize.dependsOn')} empty={t('customize.noDependencies')} edges={outgoingEdges.map((edge) => ({ id: edge.id, label: nodeNames.get(edge.targetId || '') || edge.reference, meta: `${edge.kind} · ${t('customize.line')} ${edge.line}${edge.targetId ? '' : ` · ${t('customize.unresolved')}`}`, onClick: edge.targetId ? () => setSelectedNodeId(edge.targetId || '') : undefined }))} />
+            <DependencyList title={t('customize.usedBy')} empty={t('customize.noDependents')} edges={incomingEdges.map((edge) => ({ id: edge.id, label: nodeNames.get(edge.sourceId) || edge.sourceId, meta: `${edge.kind} · ${t('customize.line')} ${edge.line}`, onClick: () => setSelectedNodeId(edge.sourceId) }))} />
+          </> : <div className="py-16 text-center text-xs text-slate-500">{t('customize.indexNoMatch')}</div>}</div>
+        </div>}
+      </section> : category === 'workspace' ? <section>
         <div className="mb-3"><h2 className="text-sm font-medium">{t('customize.workspaceTitle')}</h2><p className="mt-1 text-xs text-slate-500 dark:text-[#888]">{t('customize.workspaceHint')}</p></div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-[#303030] dark:bg-[#202020]">
           <label className="block text-xs"><span className="mb-1.5 block text-slate-500">{t('customize.workspaceRoot')}</span><div className="flex gap-2"><input value={workspaceRoot} onChange={(event) => setWorkspaceRoot(event.target.value)} placeholder={t('customize.workspaceDefault')} className="h-9 min-w-0 flex-1 rounded border border-slate-300 bg-transparent px-3 font-mono text-xs outline-none focus:border-blue-500 dark:border-[#444]" /><button onClick={() => void chooseWorkspaceRoot()} className="rounded border border-slate-300 px-3 text-xs hover:bg-slate-100 dark:border-[#444] dark:hover:bg-[#2a2d2e]">{t('customize.workspaceBrowse')}</button></div></label>

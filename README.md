@@ -76,8 +76,10 @@ SSL 文件会在输入后约 250ms 自动执行语法解析和风格检查。使
 | 对话模式 | Conversation Modes | Agent、Plan、Debug、Multitask、Ask | Select a task-oriented conversation mode before sending |
 | 上下文引用 | Context References | 使用 `@` 引用已打开、签出或搜索到的 STARLIMS 脚本 | Attach open, checked-out or searched STARLIMS scripts with `@` |
 | 对话记录 | Conversation History | Codex 与通用 Agent 独立保存和恢复会话记录 | Separate persisted histories for Codex and Generic Agent |
-| 自定义规则 | Custom Rules | 导入或粘贴 Markdown 规则，约束当前用户的 AI 行为 | Import or paste Markdown rules for the current user's AI behavior |
-| 通用 MCP 配置 | External MCP Configuration | 在 Customize 中管理 HTTP、SSE、stdio MCP 服务 | Manage HTTP, SSE and stdio MCP servers from Customize |
+| AI 能力中心 | AI Capability Center | 集中查看工作区、模型、规则、MCP 与脚本依赖索引 | Review workspaces, models, rules, MCPs and script dependencies in one place |
+| 自定义规则 | Custom Rules | 导入或粘贴 Markdown 规则，独立约束当前用户的 AI 行为 | Import or paste Markdown rules as an independent per-user AI constraint |
+| 通用 MCP 配置 | External MCP Configuration | 在 AI 能力中心管理 HTTP、SSE、stdio MCP 服务 | Manage HTTP, SSE and stdio MCP servers from the AI Capability Center |
+| 智能依赖索引 | Dependency Index | 分析签出脚本的 include、服务端脚本、数据源和表单引用及反向影响 | Analyze checked-out includes, server scripts, data sources, forms and reverse impact |
 | AI 工具兼容 | AI Client Support | Codex、ChatGPT Desktop、Claude Code、Cursor、VS Code 等 | External clients can reuse the built-in STARLIMS tool service |
 | AI 编程闭环 | Agentic Workflow | 浏览、搜索、读取、签出、保存、检入、撤销签出、执行 | 复用 DevTools 当前登录的 STARLIMS 会话 |
 | 工具权限 | Tool Permissions | Plan/Ask 强制只读；其他模式的写入、执行及未知外部 MCP 工具逐次确认 | Plan/Ask are enforced read-only; write, execution and unknown external MCP tools require confirmation |
@@ -87,9 +89,11 @@ SSL 文件会在输入后约 250ms 自动执行语法解析和风格检查。使
 
 右侧 Agent Console 同时提供 Codex 与通用 Agent。Codex 启动时自动注入当前 STARLIMS MCP endpoint；通用 Agent 可保存多个服务平台及其模型列表，并将 API Key 单独存入本机密钥存储。回复、Reasoning、MCP 调用、命令、文件变更和审批按发生顺序显示在统一时间线中，支持 Markdown/GFM、代码块、脚本附件、模型选择和对话历史。可在签出列表或当前编辑器中右键选择“引用到 AI”，也可直接输入 `@` 搜索脚本并附加完整源码或编辑器选区。
 
-Customize 页面用于集中维护用户规则和外部 MCP。规则可以从本地 Markdown 文件导入或直接粘贴；外部 MCP 支持 HTTP、SSE 与跨平台 stdio 配置，并与内置 STARLIMS MCP 分开管理。
+AI 能力中心用于集中查看 Agent 工作区、Codex 与通用模型配置、用户规则、外部 MCP 和签出脚本依赖。规则可以从本地 Markdown 文件导入或直接粘贴；它与自动生成的依赖事实严格分离，索引不会创建、覆盖或改写 `AGENTS.md`/`agent.md`。外部 MCP 支持 HTTP、SSE 与跨平台 stdio 配置，并与内置 STARLIMS MCP 分开管理。
 
 HTML Form 的语言会贯穿读取、签出、保存、检入与 MCP 调用，不再由文件类型代替。Agent 会在应用数据目录下按服务器和用户维护独立 Git 工作区，并把当前用户的全部签出脚本同步到 `items/`，供文件搜索、批量分析、修改和测试使用。本地工作副本与远端基线分开保存，自动同步不会覆盖 Agent 尚未审查的修改；在“Customize → 工作区”中可以查看逐文件 Diff、选择修改并确认写回。写回前会重新核对当前签出和远端内容，SSL 文件必须通过语法检查，保存后还会回读校验。行内补全直接复用当前通用 Agent 平台、模型和本机密钥，不再维护旧 AI 面板与第二套模型配置。
+
+每次同步签出项时还会重建轻量依赖索引。AI 对话只按当前 `@` 引用脚本选取相关的上下游关系，并在既有 token 预算内注入简短事实，不会把全部源码或整个索引塞进上下文；这些内容明确标记为参考数据，优先级低于用户导入的规则。
 
 ### 键盘快捷键 | Keyboard Shortcuts
 
