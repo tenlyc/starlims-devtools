@@ -10,7 +10,8 @@ Cross-platform STARLIMS Development Tools - A desktop application providing adva
 > This is an unofficial, unsupported tool for STARLIMS development. Use at your own risk.
 
 <img width="3822" height="2079" alt="image" src="https://github.com/user-attachments/assets/554a7c5c-64f2-42fe-ad77-91962f7085a4" />
-<img width="3818" height="2003" alt="image" src="https://github.com/user-attachments/assets/59c7ef0c-3c72-4852-aa2e-6d5a7191310d" />
+<img width="3818" height="1994" alt="image" src="https://github.com/user-attachments/assets/124fa94e-54a8-4088-9ed2-697b952825ae" />
+
 
 
 
