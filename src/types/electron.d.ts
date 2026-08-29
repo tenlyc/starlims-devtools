@@ -3,6 +3,7 @@
  */
 import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceChange, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, AgentWorkspaceSyncResult, ExternalMcpServers, GenericAgentConfig } from './agent';
 import type { DiagnosticLogEvent } from './diagnosticLog';
+import type { QualityTestRunResult } from './aiPlatform';
 
 export interface ElectronAPI {
   // STARLIMS MCP bridge
@@ -80,10 +81,13 @@ export interface ElectronAPI {
   agentSelectFiles: () => Promise<AgentFileAttachment[]>;
   agentGetExternalMcpServers: () => Promise<ExternalMcpServers>;
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => Promise<boolean>;
+  aiConfigImport: () => Promise<{ filePath: string; value: unknown } | null>;
+  aiConfigExport: (suggestedName: string, value: unknown) => Promise<string | null>;
   agentWorkspaceConfigure: (context: AgentWorkspaceContext) => Promise<AgentWorkspaceInfo>;
   agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => Promise<AgentWorkspaceSyncResult>;
   agentWorkspaceGetChanges: () => Promise<AgentWorkspaceChange[]>;
   agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'>>) => Promise<number>;
+  agentRunQualityTest: (command: string) => Promise<QualityTestRunResult & { cancelled?: boolean }>;
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
   agentNewSession: (provider: AgentProvider) => Promise<void>;
@@ -91,6 +95,7 @@ export interface ElectronAPI {
   onAgentEvent: (callback: (event: AgentEvent) => void) => () => void;
   genericAgentListModels: (config: Pick<GenericAgentConfig, 'baseUrl' | 'apiKey'>) => Promise<string[]>;
   genericAgentComplete: (config: GenericAgentConfig, prompt: string) => Promise<string>;
+  genericAgentTask: (config: GenericAgentConfig, system: string, prompt: string) => Promise<string>;
   genericAgentStart: (config: GenericAgentConfig, prompt: string) => Promise<AgentStartResult>;
   genericAgentInterrupt: () => Promise<void>;
   genericAgentNewSession: () => Promise<void>;

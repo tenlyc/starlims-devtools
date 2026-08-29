@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu, net, safeStorage } from 'electron';
 import { delimiter, join } from 'path';
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { randomUUID } from 'crypto';
+import { spawn } from 'child_process';
 import Store from 'electron-store';
 import log from 'electron-log';
 import { StarlimsMcpHttpServer } from './mcpServer';
@@ -30,6 +31,7 @@ const store = new Store({
     windowBounds: { width: 1400, height: 900 }
   }
 });
+const secretsStore = new Store({ name: 'starlims-secrets' });
 
 // Port 3002 belongs to starlimsvscode and 3003-3099 is its form callback
 // range. Migrate the old DevTools default outside both reserved ranges.
@@ -47,11 +49,40 @@ let activeToolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes';
 const agentWorkspace = new AgentWorkspaceManager(join(app.getPath('userData'), 'agent-workspaces'));
 const EXTERNAL_MCP_STORE_KEY = 'externalMcpServers.v1';
 const MCP_TOOL_PERMISSION_STORE_KEY = 'mcpToolPermissionPolicy.v1';
+const SECRET_MARKER = '__STARLIMS_SECRET__';
+const sensitiveConfigKey = (key: string): boolean => /(?:api.?key|password|token|cookie|secret|authorization)/i.test(key);
+const mcpSecretKey = (server: string, section: 'env' | 'headers', key: string): string => `external-mcp:${server}:${section}:${key}`;
+const readStoredSecret = (key: string): string => {
+  const stored = secretsStore.get(key) as unknown;
+  if (stored && typeof stored === 'object' && (stored as any).encrypted === true && typeof (stored as any).value === 'string') {
+    try { return safeStorage.decryptString(Buffer.from((stored as any).value, 'base64')); } catch { return ''; }
+  }
+  return typeof stored === 'string' ? stored : '';
+};
+const writeStoredSecret = (key: string, value: string): void => {
+  if (safeStorage.isEncryptionAvailable()) secretsStore.set(key, { encrypted: true, value: safeStorage.encryptString(value).toString('base64') });
+  else secretsStore.set(key, value);
+};
+const protectExternalMcpServers = (servers: ExternalMcpServers): ExternalMcpServers => Object.fromEntries(Object.entries(servers).map(([server, config]) => {
+  const protect = (section: 'env' | 'headers', values?: Record<string, string>) => values && Object.fromEntries(Object.entries(values).map(([key, value]) => {
+    if (!sensitiveConfigKey(key)) return [key, value];
+    if (value && value !== SECRET_MARKER) writeStoredSecret(mcpSecretKey(server, section, key), value);
+    return [key, SECRET_MARKER];
+  }));
+  return [server, { ...config, env: protect('env', config.env), headers: protect('headers', config.headers) }];
+}));
+const resolveExternalMcpServers = (servers: ExternalMcpServers): ExternalMcpServers => Object.fromEntries(Object.entries(servers).map(([server, config]) => {
+  const resolve = (section: 'env' | 'headers', values?: Record<string, string>) => values && Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value === SECRET_MARKER ? readStoredSecret(mcpSecretKey(server, section, key)) : value]));
+  return [server, { ...config, env: resolve('env', config.env), headers: resolve('headers', config.headers) }];
+}));
 const normalizeToolPermissionPolicy = (value: unknown): AgentToolPermissionPolicy =>
   value === 'read-only' || value === 'full-access' ? value : 'ask-writes';
 const getExternalMcpServers = (): ExternalMcpServers => (store.get(EXTERNAL_MCP_STORE_KEY) || {}) as ExternalMcpServers;
+const getResolvedExternalMcpServers = (): ExternalMcpServers => resolveExternalMcpServers(getExternalMcpServers());
 const externalMcpManager = new ExternalMcpManager();
-externalMcpManager.setConfigs(getExternalMcpServers());
+const protectedExternalMcpServers = protectExternalMcpServers(getExternalMcpServers());
+store.set(EXTERNAL_MCP_STORE_KEY, protectedExternalMcpServers);
+externalMcpManager.setConfigs(getResolvedExternalMcpServers());
 const emitDiagnosticLog = (event: Omit<DiagnosticLogEvent, 'timestamp'>): void => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('devtools:log', { ...event, timestamp: Date.now() } satisfies DiagnosticLogEvent);
@@ -61,6 +92,14 @@ const pendingMcpCalls = new Map<string, {
   reject: (reason: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }>();
+
+const stripSensitiveConfiguration = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(stripSensitiveConfiguration);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([key]) => !/api.?key|password|token|cookie|secret|authorization/i.test(key))
+    .map(([key, item]) => [key, stripSensitiveConfiguration(item)]));
+};
 
 const callRenderer = (tool: string, arguments_: Record<string, unknown>): Promise<unknown> => {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -281,8 +320,6 @@ ipcMain.handle('store:delete', (_, key: string) => {
 });
 
 // Secret storage. Existing plain-string entries remain readable and migrate on the next save.
-const secretsStore = new Store({ name: 'starlims-secrets' });
-
 // The retired AI panel stored provider metadata (and, in older releases, keys)
 // in the ordinary config store. Generic Agent profiles are now the sole source
 // of model configuration, so remove the obsolete plaintext-bearing entries.
@@ -588,7 +625,7 @@ const getAgentRuntime = (): AgentRuntimeManager => {
     agentRuntime = new AgentRuntimeManager({
       codexCommand: resolveCodexCommand,
       mcpUrl: () => mcpServer.getStatus().url,
-      externalMcpServers: () => activeToolPermissionPolicy === 'read-only' ? {} : getExternalMcpServers(),
+      externalMcpServers: () => activeToolPermissionPolicy === 'read-only' ? {} : getResolvedExternalMcpServers(),
       cwd: () => agentWorkspace.currentPath(),
       getVersion: () => app.getVersion(),
       emit: (event: AgentEvent) => {
@@ -737,8 +774,9 @@ ipcMain.handle('agent:setExternalMcpServers', async (_, servers: ExternalMcpServ
     if (transport === 'stdio' && !config.command?.trim()) throw new Error(`MCP server '${name}' requires command.`);
     if (transport !== 'stdio' && !config.url?.trim()) throw new Error(`MCP server '${name}' requires url.`);
   }
-  store.set(EXTERNAL_MCP_STORE_KEY, servers);
-  externalMcpManager.setConfigs(servers);
+  const protectedServers = protectExternalMcpServers(servers);
+  store.set(EXTERNAL_MCP_STORE_KEY, protectedServers);
+  externalMcpManager.setConfigs(resolveExternalMcpServers(protectedServers));
   genericAgentRuntime?.newSession();
   agentRuntime?.dispose();
   agentRuntime = undefined;
@@ -768,6 +806,29 @@ ipcMain.handle('agent:selectFiles', async (): Promise<AgentFileAttachment[]> => 
       size
     };
   });
+});
+
+ipcMain.handle('ai-config:import', async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    title: 'Import STARLIMS DevTools AI configuration or extension',
+    properties: ['openFile'],
+    filters: [{ name: 'JSON configuration', extensions: ['json'] }]
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  const filePath = result.filePaths[0];
+  if (statSync(filePath).size > 2 * 1024 * 1024) throw new Error('Configuration file is larger than 2 MB.');
+  return { filePath, value: JSON.parse(readFileSync(filePath, 'utf8')) };
+});
+
+ipcMain.handle('ai-config:export', async (_, suggestedName: string, value: unknown) => {
+  const result = await dialog.showSaveDialog(mainWindow!, {
+    title: 'Export STARLIMS DevTools AI configuration',
+    defaultPath: String(suggestedName || 'starlims-ai-config.json').replace(/[^a-zA-Z0-9._-]/g, '-'),
+    filters: [{ name: 'JSON configuration', extensions: ['json'] }]
+  });
+  if (result.canceled || !result.filePath) return null;
+  writeFileSync(result.filePath, `${JSON.stringify(stripSensitiveConfiguration(value), null, 2)}\n`, 'utf8');
+  return result.filePath;
 });
 
 ipcMain.handle('agent:start', async (_, provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => {
@@ -820,6 +881,38 @@ ipcMain.handle('agent:workspaceAcceptChanges', async (_, files: Array<{ uri: str
   })));
 });
 
+ipcMain.handle('agent:runQualityTest', async (_, command: string) => {
+  const normalized = String(command || '').trim();
+  if (!normalized) throw new Error('A test command is required.');
+  const cwd = agentWorkspace.currentPath();
+  if (!cwd || !existsSync(cwd)) throw new Error('Configure the Agent workspace before running tests.');
+  const confirmation = await dialog.showMessageBox(mainWindow!, {
+    type: 'warning',
+    title: 'Run workspace test',
+    message: 'Run this test command in the Agent workspace?',
+    detail: `${normalized}\n\nWorkspace: ${cwd}`,
+    buttons: ['Run', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true
+  });
+  if (confirmation.response !== 0) return { cancelled: true, exitCode: null, output: '', durationMs: 0 };
+  const startedAt = Date.now();
+  return await new Promise<{ cancelled?: boolean; exitCode: number | null; output: string; durationMs: number }>((resolve, reject) => {
+    const child = spawn(normalized, { cwd, shell: true, env: process.env });
+    let output = '';
+    const append = (chunk: Buffer) => { output = `${output}${chunk.toString('utf8')}`.slice(-100_000); };
+    child.stdout?.on('data', append);
+    child.stderr?.on('data', append);
+    const timeout = setTimeout(() => child.kill(), 300_000);
+    child.on('error', (error) => { clearTimeout(timeout); reject(error); });
+    child.on('close', (exitCode) => {
+      clearTimeout(timeout);
+      resolve({ exitCode, output: output.trim(), durationMs: Date.now() - startedAt });
+    });
+  });
+});
+
 ipcMain.handle('agent:interrupt', async (_, provider: AgentProvider) => getAgentRuntime().interrupt(provider));
 ipcMain.handle('agent:newSession', async (_, provider: AgentProvider) => getAgentRuntime().newSession(provider));
 ipcMain.handle('agent:respondApproval', async (_, provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => {
@@ -831,6 +924,10 @@ ipcMain.handle('generic-agent:listModels', async (_, config) => getGenericAgentR
 ipcMain.handle('generic-agent:complete', async (_, config, prompt: string) => {
   if (!config?.baseUrl || !config?.apiKey || !config?.model) throw new Error('Base URL, API Key, and model are required.');
   return getGenericAgentRuntime().complete(config, String(prompt || ''));
+});
+ipcMain.handle('generic-agent:task', async (_, config, system: string, prompt: string) => {
+  if (!config?.baseUrl || !config?.apiKey || !config?.model) throw new Error('Base URL, API Key, and model are required.');
+  return getGenericAgentRuntime().task(config, String(system || ''), String(prompt || ''));
 });
 ipcMain.handle('generic-agent:start', async (_, config, prompt: string) => {
   if (!config?.baseUrl || !config?.apiKey || !config?.model) throw new Error('Base URL, API Key, and model are required.');

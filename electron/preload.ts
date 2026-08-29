@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceChange, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, AgentWorkspaceSyncResult, ExternalMcpServers, GenericAgentConfig } from '../src/types/agent';
 import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
+import type { QualityTestRunResult } from '../src/types/aiPlatform';
 
 // Type definitions for exposed API
 export interface ElectronAPI {
@@ -81,10 +82,13 @@ export interface ElectronAPI {
   agentSelectFiles: () => Promise<AgentFileAttachment[]>;
   agentGetExternalMcpServers: () => Promise<ExternalMcpServers>;
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => Promise<boolean>;
+  aiConfigImport: () => Promise<{ filePath: string; value: unknown } | null>;
+  aiConfigExport: (suggestedName: string, value: unknown) => Promise<string | null>;
   agentWorkspaceConfigure: (context: AgentWorkspaceContext) => Promise<AgentWorkspaceInfo>;
   agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => Promise<AgentWorkspaceSyncResult>;
   agentWorkspaceGetChanges: () => Promise<AgentWorkspaceChange[]>;
   agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'>>) => Promise<number>;
+  agentRunQualityTest: (command: string) => Promise<(QualityTestRunResult & { cancelled?: boolean })>;
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
   agentNewSession: (provider: AgentProvider) => Promise<void>;
@@ -92,6 +96,7 @@ export interface ElectronAPI {
   onAgentEvent: (callback: (event: AgentEvent) => void) => () => void;
   genericAgentListModels: (config: Pick<GenericAgentConfig, 'baseUrl' | 'apiKey'>) => Promise<string[]>;
   genericAgentComplete: (config: GenericAgentConfig, prompt: string) => Promise<string>;
+  genericAgentTask: (config: GenericAgentConfig, system: string, prompt: string) => Promise<string>;
   genericAgentStart: (config: GenericAgentConfig, prompt: string) => Promise<AgentStartResult>;
   genericAgentInterrupt: () => Promise<void>;
   genericAgentNewSession: () => Promise<void>;
@@ -200,10 +205,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   agentSelectFiles: () => ipcRenderer.invoke('agent:selectFiles'),
   agentGetExternalMcpServers: () => ipcRenderer.invoke('agent:getExternalMcpServers'),
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => ipcRenderer.invoke('agent:setExternalMcpServers', servers),
+  aiConfigImport: () => ipcRenderer.invoke('ai-config:import'),
+  aiConfigExport: (suggestedName: string, value: unknown) => ipcRenderer.invoke('ai-config:export', suggestedName, value),
   agentWorkspaceConfigure: (context: AgentWorkspaceContext) => ipcRenderer.invoke('agent:workspaceConfigure', context),
   agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => ipcRenderer.invoke('agent:workspaceSyncFiles', files),
   agentWorkspaceGetChanges: () => ipcRenderer.invoke('agent:workspaceGetChanges'),
   agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'>>) => ipcRenderer.invoke('agent:workspaceAcceptChanges', files),
+  agentRunQualityTest: (command: string) => ipcRenderer.invoke('agent:runQualityTest', command),
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => ipcRenderer.invoke('agent:start', provider, prompt, model, toolPermissionPolicy),
   agentInterrupt: (provider: AgentProvider) => ipcRenderer.invoke('agent:interrupt', provider),
   agentNewSession: (provider: AgentProvider) => ipcRenderer.invoke('agent:newSession', provider),
@@ -215,6 +223,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   genericAgentListModels: (config: Pick<GenericAgentConfig, 'baseUrl' | 'apiKey'>) => ipcRenderer.invoke('generic-agent:listModels', config),
   genericAgentComplete: (config: GenericAgentConfig, prompt: string) => ipcRenderer.invoke('generic-agent:complete', config, prompt),
+  genericAgentTask: (config: GenericAgentConfig, system: string, prompt: string) => ipcRenderer.invoke('generic-agent:task', config, system, prompt),
   genericAgentStart: (config: GenericAgentConfig, prompt: string) => ipcRenderer.invoke('generic-agent:start', config, prompt),
   genericAgentInterrupt: () => ipcRenderer.invoke('generic-agent:interrupt'),
   genericAgentNewSession: () => ipcRenderer.invoke('generic-agent:newSession')

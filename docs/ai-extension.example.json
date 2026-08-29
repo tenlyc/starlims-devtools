@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "example.starlims-team",
+  "name": "Example STARLIMS Team Extension",
+  "version": "1.0.0",
+  "description": "Example contributions for STARLIMS DevTools.",
+  "contributes": {
+    "mcpServers": {
+      "team-tools": {
+        "transport": "http",
+        "url": "http://127.0.0.1:3200/mcp",
+        "enabled": true
+      }
+    },
+    "tools": [
+      {
+        "name": "validate-release",
+        "description": "Validate a STARLIMS release package.",
+        "mcpServer": "team-tools"
+      }
+    ],
+    "languages": [
+      {
+        "id": "team-sql",
+        "aliases": ["TEAMSQL"],
+        "itemTypes": ["TEAMDATASOURCE"],
+        "extensions": [".teamsql"],
+        "monacoLanguage": "sql"
+      }
+    ],
+    "workflows": [
+      {
+        "id": "team-release-review",
+        "name": "Team release review",
+        "description": "Plan a release change and run review and test analysis in parallel.",
+        "roles": ["planner", "implementer", "reviewer", "tester"],
+        "parallelReviewAndTest": true,
+        "instructions": {
+          "reviewer": "Check release compatibility and rollback impact.",
+          "tester": "Include smoke and permission regression coverage."
+        }
+      }
+    ]
+  }
+}

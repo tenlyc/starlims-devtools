@@ -16,6 +16,8 @@ import { getEnterpriseService } from '../services/enterpriseService';
 import { useDiagnosticStore } from '../services/diagnosticStore';
 import { syncCheckedOutWorkspace } from '../services/agentWorkspaceService';
 import { useI18n } from '../i18n';
+import { loadAiLayers, mergeAiLayers } from '../services/aiPlatform';
+import { configureExtensionLanguages } from '../services/editorLanguage';
 
 type WorkbenchLayout = {
   sidebarVisible: boolean;
@@ -79,6 +81,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const applyExtensionLanguages = async (layers?: Awaited<ReturnType<typeof loadAiLayers>>) => {
+      const effective = mergeAiLayers(layers || await loadAiLayers());
+      configureExtensionLanguages(effective.extensions.flatMap((extension) => extension.contributes?.languages || []));
+    };
+    void applyExtensionLanguages();
+    const onLayersChanged = (event: Event) => void applyExtensionLanguages((event as CustomEvent<Awaited<ReturnType<typeof loadAiLayers>>>).detail);
+    window.addEventListener('ai-layers:changed', onLayersChanged);
+    return () => window.removeEventListener('ai-layers:changed', onLayersChanged);
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({
       sidebarVisible,
       agentVisible: mcpPanelVisible,
@@ -112,6 +125,7 @@ export default function App() {
     }).then((workspace) => {
       localStorage.setItem('gitWorkspacePath', workspace.path);
       window.dispatchEvent(new CustomEvent('agent-workspace:configured', { detail: workspace }));
+      void loadAiLayers().then((layers) => configureExtensionLanguages(mergeAiLayers(layers).extensions.flatMap((extension) => extension.contributes?.languages || [])));
       return syncCheckedOutWorkspace();
     }).then((result) => {
       if (result?.preservedChanges) console.info(`Preserved ${result.preservedChanges} local Agent workspace change(s).`);

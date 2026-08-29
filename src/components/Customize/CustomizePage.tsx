@@ -7,12 +7,15 @@ import { loadDependencyIndex } from '../../services/starlimsDependencyIndex';
 import { GENERIC_PROFILES_STORE_KEY } from '../../services/genericAgentConfig';
 import { getEnterpriseService } from '../../services/enterpriseService';
 import { editorStore } from '../../stores/editorStore';
+import { AiPlatformSection } from './AiPlatformSection';
+import { evaluateQualityGate, loadAiLayers, mergeAiLayers, qualityReviewStoreKey } from '../../services/aiPlatform';
+import type { WorkspaceReviewState } from '../../types/aiPlatform';
 
 const AGENT_RULES_STORE_KEY = 'agentWorkspaceInstructions.v1';
 const AGENT_WORKSPACE_ROOT_STORE_KEY = 'agentWorkspaceRoot.v1';
 type LocalAgentRules = { enabled: boolean; name: string; content: string; updatedAt: number };
 type McpDraft = { originalName: string | null; name: string; config: ExternalMcpServerConfig; envText: string; headersText: string };
-type CustomizeCategory = 'overview' | 'workspace' | 'models' | 'rules' | 'mcp' | 'index';
+type CustomizeCategory = 'overview' | 'workspace' | 'models' | 'rules' | 'mcp' | 'index' | 'workflows' | 'quality' | 'layers' | 'extensions';
 type StoredGenericProfile = { id: string; name?: string; baseUrl?: string; model?: string; models?: string[] };
 type StoredGenericProfiles = { activeProfileId?: string; profiles?: StoredGenericProfile[] };
 
@@ -134,10 +137,30 @@ export function CustomizePage() {
   const applySelectedChanges = async () => {
     const selected = workspaceChanges.filter((change) => selectedChanges.has(changeKey(change)));
     if (!selected.length) return;
+    const [layers, savedReview] = await Promise.all([
+      loadAiLayers(),
+      window.electronAPI?.storeGet(qualityReviewStoreKey()).catch(() => null)
+    ]);
+    const reviewState: WorkspaceReviewState = savedReview && typeof savedReview === 'object' ? { reviewedKeys: [], tests: [], ...savedReview } : { reviewedKeys: [], tests: [] };
+    const gate = evaluateQualityGate({ changes: selected, reviewState, policy: mergeAiLayers(layers).quality });
+    if (!gate.passed) {
+      setCategory('quality');
+      setMessage(t('customize.qualityWriteBlocked', { count: gate.findings.filter((finding) => finding.level === 'error').length }));
+      return;
+    }
     setWorkspaceBusy(true);
     setMessage('');
     try {
       const result = await applyWorkspaceChanges(selected);
+      if (!result.cancelled && result.applied.length) {
+        const appliedKeys = new Set(result.applied.map(changeKey));
+        const nextReview: WorkspaceReviewState = {
+          ...reviewState,
+          reviewedKeys: reviewState.reviewedKeys.filter((key) => !appliedKeys.has(key))
+        };
+        await window.electronAPI?.storeSet(qualityReviewStoreKey(), nextReview);
+        window.dispatchEvent(new CustomEvent('ai-quality:changed', { detail: nextReview }));
+      }
       await refreshWorkspaceChanges();
       if (result.cancelled) setMessage(t('customize.workspaceApplyCancelled'));
       else setMessage(t('customize.workspaceApplyResult', {
@@ -244,11 +267,15 @@ export function CustomizePage() {
         <button onClick={() => { setCategory('mcp'); setMcpDraft(null); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'mcp' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>MCPs <span className="text-slate-500">{Object.keys(mcpServers).length + 1}</span></button>
         <button onClick={() => { setCategory('rules'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'rules' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.rules')} <span className="text-slate-500">{rules.content.trim() ? 1 : 0}</span></button>
         <button onClick={() => { setCategory('index'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'index' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.index')} <span className="text-slate-500">{dependencyIndex?.nodes.length || 0}</span></button>
+        <button onClick={() => { setCategory('workflows'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'workflows' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.workflows')}</button>
+        <button onClick={() => { setCategory('quality'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'quality' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.quality')}</button>
+        <button onClick={() => { setCategory('layers'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'layers' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.layers')}</button>
+        <button onClick={() => { setCategory('extensions'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'extensions' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.extensions')}</button>
       </div>
 
       {message && <div className="mb-4 rounded border border-slate-300 bg-white px-3 py-2 text-xs dark:border-[#3b3b3b] dark:bg-[#202020]">{message}</div>}
 
-      {category === 'overview' ? <section>
+      {category === 'workflows' || category === 'quality' || category === 'layers' || category === 'extensions' ? <AiPlatformSection category={category} changes={workspaceChanges} /> : category === 'overview' ? <section>
         <div className="mb-5"><h2 className="text-lg font-semibold">{t('customize.centerTitle')}</h2><p className="mt-1 text-xs text-slate-500 dark:text-[#888]">{t('customize.centerHint')}</p></div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {[
@@ -256,7 +283,11 @@ export function CustomizePage() {
             { category: 'models' as CustomizeCategory, icon: 'AI', title: t('customize.models'), value: `${profiles.length + 1} ${t('customize.providers')}` },
             { category: 'rules' as CustomizeCategory, icon: '⚡', title: t('customize.rules'), value: rules.enabled ? (rules.name || 'AGENTS.md') : t('customize.disabled') },
             { category: 'mcp' as CustomizeCategory, icon: 'M', title: 'MCPs', value: `${Object.values(mcpServers).filter((server) => server.enabled !== false).length + 1} ${t('customize.enabled')}` },
-            { category: 'index' as CustomizeCategory, icon: '↗', title: t('customize.index'), value: `${dependencyIndex?.nodes.length || 0} ${t('customize.files')} · ${dependencyIndex?.edges.length || 0} ${t('customize.references')}` }
+            { category: 'index' as CustomizeCategory, icon: '↗', title: t('customize.index'), value: `${dependencyIndex?.nodes.length || 0} ${t('customize.files')} · ${dependencyIndex?.edges.length || 0} ${t('customize.references')}` },
+            { category: 'workflows' as CustomizeCategory, icon: '◎', title: t('customize.workflows'), value: t('customize.workflowCard') },
+            { category: 'quality' as CustomizeCategory, icon: '✓', title: t('customize.quality'), value: t('customize.qualityCard') },
+            { category: 'layers' as CustomizeCategory, icon: '≡', title: t('customize.layers'), value: t('customize.layersCard') },
+            { category: 'extensions' as CustomizeCategory, icon: '＋', title: t('customize.extensions'), value: t('customize.extensionsCard') }
           ].map((card) => <button key={card.category} onClick={() => setCategory(card.category)} className="min-h-28 rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:border-slate-400 hover:bg-slate-50 dark:border-[#303030] dark:bg-[#202020] dark:hover:border-[#666] dark:hover:bg-[#252526]"><div className="mb-3 flex h-8 w-8 items-center justify-center rounded bg-slate-100 text-xs font-semibold dark:bg-[#2b2b2b]">{card.icon}</div><div className="text-sm font-medium">{card.title}</div><div className="mt-1 truncate text-xs text-slate-500 dark:text-[#888]">{card.value}</div></button>)}
         </div>
       </section> : category === 'models' ? <section>

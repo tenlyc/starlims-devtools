@@ -77,6 +77,10 @@ SSL 文件会在输入后约 250ms 自动执行语法解析和风格检查。使
 | 上下文引用 | Context References | 使用 `@` 引用已打开、签出或搜索到的 STARLIMS 脚本 | Attach open, checked-out or searched STARLIMS scripts with `@` |
 | 对话记录 | Conversation History | Codex 与通用 Agent 独立保存和恢复会话记录 | Separate persisted histories for Codex and Generic Agent |
 | AI 能力中心 | AI Capability Center | 集中查看工作区、模型、规则、MCP 与脚本依赖索引 | Review workspaces, models, rules, MCPs and script dependencies in one place |
+| 多 Agent 工作流 | Multi-Agent Workflows | 规划、实现、审查、测试角色分工，审查与测试可安全并行 | Planning, implementation, review and test roles with safe parallel review/test stages |
+| 自动测试与质量门禁 | Tests & Quality Gates | 执行工作区测试、保存结果，并在写回前检查 Diff、SSL、删除和测试策略 | Run workspace tests, retain results, and enforce Diff, SSL, deletion and test policies before write-back |
+| 配置分层 | Layered Configuration | 团队、项目、个人规则按层合并，支持导入导出且不覆盖用户 `agent.md` | Merge team, project and personal rules with import/export without overwriting user `agent.md` |
+| AI 扩展清单 | AI Extension Manifests | 通过 JSON 扩展第三方 MCP、工具声明、语言映射和工作流模板 | Extend third-party MCPs, tool metadata, language mappings and workflow templates via JSON manifests |
 | 自定义规则 | Custom Rules | 导入或粘贴 Markdown 规则，独立约束当前用户的 AI 行为 | Import or paste Markdown rules as an independent per-user AI constraint |
 | 通用 MCP 配置 | External MCP Configuration | 在 AI 能力中心管理 HTTP、SSE、stdio MCP 服务 | Manage HTTP, SSE and stdio MCP servers from the AI Capability Center |
 | 智能依赖索引 | Dependency Index | 分析签出脚本的 include、服务端脚本、数据源和表单引用及反向影响 | Analyze checked-out includes, server scripts, data sources, forms and reverse impact |
@@ -90,6 +94,10 @@ SSL 文件会在输入后约 250ms 自动执行语法解析和风格检查。使
 右侧 Agent Console 同时提供 Codex 与通用 Agent。Codex 启动时自动注入当前 STARLIMS MCP endpoint；通用 Agent 可保存多个服务平台及其模型列表，并将 API Key 单独存入本机密钥存储。回复、Reasoning、MCP 调用、命令、文件变更和审批按发生顺序显示在统一时间线中，支持 Markdown/GFM、代码块、脚本附件、模型选择和对话历史。可在签出列表或当前编辑器中右键选择“引用到 AI”，也可直接输入 `@` 搜索脚本并附加完整源码或编辑器选区。
 
 AI 能力中心用于集中查看 Agent 工作区、Codex 与通用模型配置、用户规则、外部 MCP 和签出脚本依赖。规则可以从本地 Markdown 文件导入或直接粘贴；它与自动生成的依赖事实严格分离，索引不会创建、覆盖或改写 `AGENTS.md`/`agent.md`。外部 MCP 支持 HTTP、SSE 与跨平台 stdio 配置，并与内置 STARLIMS MCP 分开管理。
+
+能力中心还提供四阶段协作工作流：规划角色先拆解依赖任务，实现角色形成变更方案，审查与测试角色可并行分析，完成后由用户明确选择是否交给主 Agent 执行。团队、项目、个人规则按该顺序叠加；单独导入的 `agent.md` 始终作为最高优先级的用户规则参与运行，文件本身不会被生成内容覆盖。质量页面可维护测试用例，在当前 Agent 工作区确认后运行命令并保存输出；写回 STARLIMS 前会统一检查 Diff 审查状态、SSL 诊断、删除策略和测试结果。
+
+第三方扩展使用版本化 JSON 清单，当前可贡献外部 MCP、工具元数据、编辑器语言映射和多 Agent 工作流模板。扩展清单禁止携带 API Key、Token、密码等凭据；外部 MCP 中的敏感环境变量和请求头会从普通配置中抽离到本机密钥存储。示例见 [`docs/ai-extension.example.json`](docs/ai-extension.example.json)。
 
 HTML Form 的语言会贯穿读取、签出、保存、检入与 MCP 调用，不再由文件类型代替。Agent 会在应用数据目录下按服务器和用户维护独立 Git 工作区，并把当前用户的全部签出脚本同步到 `items/`，供文件搜索、批量分析、修改和测试使用。本地工作副本与远端基线分开保存，自动同步不会覆盖 Agent 尚未审查的修改；在“Customize → 工作区”中可以查看逐文件 Diff、选择修改并确认写回。写回前会重新核对当前签出和远端内容，SSL 文件必须通过语法检查，保存后还会回读校验。行内补全直接复用当前通用 Agent 平台、模型和本机密钥，不再维护旧 AI 面板与第二套模型配置。
 
@@ -152,7 +160,7 @@ npm audit --registry=https://registry.npmjs.org
 npm run build
 ```
 
-`npm run check` 会统一执行 ESLint、11 组 smoke tests、TypeScript 检查，以及 Renderer/Electron 构建。GitHub Actions 会在 `main` 推送和 Pull Request 时执行相同检查。
+`npm run check` 会统一执行 ESLint、14 组 smoke tests、TypeScript 检查，以及 Renderer/Electron 构建。GitHub Actions 会在 `main` 推送和 Pull Request 时执行相同检查。
 
 ## 前置条件 | Pre-requisites
 

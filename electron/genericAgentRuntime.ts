@@ -129,6 +129,25 @@ export class GenericAgentRuntime {
     return String(data?.choices?.[0]?.message?.content || '').trim();
   }
 
+  async task(config: GenericAgentConfig, system: string, prompt: string): Promise<string> {
+    const data = await jsonRequest(endpoint(config.baseUrl, 'chat/completions'), config.apiKey, {
+      method: 'POST',
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: prompt }
+        ],
+        max_tokens: 3000,
+        temperature: 0.2,
+        stream: false
+      })
+    });
+    const content = data?.choices?.[0]?.message?.content;
+    if (typeof content !== 'string' || !content.trim()) throw new Error('The provider returned no workflow result.');
+    return content.trim();
+  }
+
   async send(config: GenericAgentConfig, prompt: string): Promise<AgentStartResult> {
     if (this.controller) throw new Error('Generic Agent is already processing a turn.');
     this.sessionId ||= randomUUID();

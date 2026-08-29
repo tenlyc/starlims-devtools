@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 将 Customize 升级为 AI 能力中心，统一展示 Agent 工作区、模型配置、用户规则、MCP 与依赖索引
 - 同步当前用户签出项时自动分析 include、服务端脚本、数据源和表单引用，支持上下游影响与未解析引用查看
 - AI 对话按当前引用脚本注入预算受控的依赖事实，并明确与用户 `AGENTS.md`/`agent.md` 规则隔离
+- 增加规划、实现、审查、测试四角色工作流，支持依赖顺序执行和审查/测试并行阶段
+- 增加测试用例、工作区测试命令与结果留存，以及 Diff、SSL、删除、测试写回门禁
+- 增加团队、项目、个人配置分层和安全导入导出；导入的 `agent.md` 保持独立且拥有最高用户规则优先级
+- 增加版本化 AI 扩展清单，可贡献第三方 MCP、工具元数据、语言映射和工作流模板
 
 ### Fixed | 修复
 
@@ -38,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent、Debug 与 Multitask 模式的 STARLIMS 写入/执行操作需要应用内逐次确认
 - 通用 Agent 对未声明只读的外部 MCP 工具增加确认，默认不再视作安全读操作
 - 通用 Agent API Key 继续单独存入 Electron 本机密钥存储，普通配置不保存密钥
+- 外部 MCP 的 Token、API Key、密码和 Authorization 等敏感字段迁移到本机密钥存储，普通配置与导出文件仅保留占位符
 
 ### Tooling | 工程化
 

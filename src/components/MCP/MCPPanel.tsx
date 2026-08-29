@@ -12,6 +12,7 @@ import type { EnterpriseItem } from '../../services/iEnterpriseService';
 import { useI18n } from '../../i18n';
 import { syncCheckedOutWorkspace } from '../../services/agentWorkspaceService';
 import { dependencyContextForPrompt, loadDependencyIndex } from '../../services/starlimsDependencyIndex';
+import { loadAiLayers, mergeAiLayers } from '../../services/aiPlatform';
 
 type MessageEntry = {
   entryType: 'message';
@@ -376,11 +377,19 @@ export function MCPPanel() {
       setProvider('generic');
       setShowGenericSettings(true);
     };
+    const onPrefill = (event: Event) => {
+      const detail = (event as CustomEvent<{ prompt?: string; mode?: ConversationMode }>).detail;
+      if (typeof detail?.prompt === 'string') setInput(detail.prompt);
+      if (detail?.mode && detail.mode in MODE_INSTRUCTIONS) setConversationMode(detail.mode);
+      window.setTimeout(() => inputRef.current?.focus(), 0);
+    };
     window.addEventListener('ai-rules:changed', onRulesChanged);
     window.addEventListener('ai:open-generic-settings', onOpenGenericSettings);
+    window.addEventListener('ai:prefill', onPrefill);
     return () => {
       window.removeEventListener('ai-rules:changed', onRulesChanged);
       window.removeEventListener('ai:open-generic-settings', onOpenGenericSettings);
+      window.removeEventListener('ai:prefill', onPrefill);
     };
   }, []);
 
@@ -575,12 +584,14 @@ export function MCPPanel() {
         });
       });
       const dependencyContext = dependencyContextForPrompt(await loadDependencyIndex(), contexts.map((context) => context.uri));
+      const layeredRules = mergeAiLayers(await loadAiLayers()).rules.map((rule) => `[${rule.layer}]\n${rule.content}`).join('\n\n');
+      const effectiveRules = [layeredRules, agentRules.enabled ? agentRules.content : ''].filter(Boolean).join('\n\n');
       const prompt = buildCliPrompt(
         question,
         contexts,
         promptHistory,
         mcp?.url || 'http://127.0.0.1:3102/mcp',
-        agentRules.enabled ? agentRules.content : '',
+        effectiveRules,
         MODE_INSTRUCTIONS[conversationMode],
         undefined,
         dependencyContext

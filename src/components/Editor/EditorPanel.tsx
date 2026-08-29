@@ -44,6 +44,7 @@ export function EditorPanel() {
   const [activeFileUri, setActiveFileUri] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<EditorContextMenu | null>(null);
   const [tabContextMenu, setTabContextMenu] = useState<TabContextMenu | null>(null);
+  const [, setExtensionLanguageRevision] = useState(0);
   const [cursorPosition, setCursorPosition] = useState(0);
   const [closeModal, setCloseModal] = useState<CloseConfirmModal>({
     isOpen: false,
@@ -58,6 +59,12 @@ export function EditorPanel() {
   const monacoRef = useRef<typeof monaco | null>(null);
   const [showDiffControls, setShowDiffControls] = useState(false);
   const addAiContext = useAiContextStore((state) => state.addItem);
+
+  useEffect(() => {
+    const refresh = () => setExtensionLanguageRevision((value) => value + 1);
+    window.addEventListener('ai-languages:changed', refresh);
+    return () => window.removeEventListener('ai-languages:changed', refresh);
+  }, []);
 
   // Listen for diff controls update events
   useEffect(() => {
