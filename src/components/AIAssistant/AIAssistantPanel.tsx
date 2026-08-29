@@ -276,7 +276,7 @@ export function AIAssistantPanel({ embeddedSettings = false, onCloseSettings }: 
       }
 
       // Build system prompt
-      let systemPrompt = `你是一个专业的 STARLIMS 开发 AI 助手。你必须用中文回答所有问题。
+      const systemPrompt = `你是一个专业的 STARLIMS 开发 AI 助手。你必须用中文回答所有问题。
 
 STARLIMS 是实验室信息管理系统 (LIMS)。你专长于：
 - STARLIMS SSL（服务器脚本语言）- 关键词以冒号开头：:IF, :FOR, :WHILE, :PROCEDURE, :CLASS, :TRY 等

@@ -1,0 +1,577 @@
+/* eslint-disable no-undef */
+/* eslint-disable no-unused-vars */
+/*
+Description.. :	Read XML from database and create form
+Author....... :	DC
+Date......... : 2023-11-16
+*/
+
+var _globalCount = 0;
+var _propertySchemaCache = {};
+var _propertySchemaPending = {};
+
+const controlClasses = {
+    "Button": Button,
+    "ButtonBar": ButtonBar,
+    "ButtonBarGroup": ButtonBarGroup,
+    "ButtonBarItem": ButtonBarItem,
+    "CheckBox": CheckBox,
+    "CheckedListBox": CheckedListBox,
+    "ComboBox": ComboBox,
+    "DataGrid": DataGrid,
+    "DataGridTable": SL.DataGridTable,
+    "DataGridColumn": SL.DataGridColumn,
+    "DateTimePicker": DateTimePicker,
+    "Frame": Frame,
+    "GroupBox": GroupBox,
+    "Image": Image,
+    "Label": Label,
+    "Line": Line,
+    "LinkBar": LinkBar,
+    "LinkBarItem": LinkBarItem,
+    "LinkBarGroup": LinkBarGroup,
+    "LinkButton": LinkButton,
+    "LinkLabel": LinkLabel,
+    "ListBox": ListBox,
+    "ListView": ListView,
+    "MonthCalendar": MonthCalendar,
+    "MultiChoice": MultiChoice,
+    "Panel": Panel,
+    "ProgressBar": ProgressBar,
+    "RadioButton": RadioButton,
+    "ReportViewer": ReportViewer,
+    "RichTextBox": RichTextBox,
+    "Schedule": Schedule,
+    "ScriptEditor": ScriptEditor,
+    "SplitContainerH": SL.SplitContainerH,
+    "SplitContainerV": SL.SplitContainerV,
+    "SplitterPanel": SL.SplitterPanel,
+    "TabControl": TabControl,
+    "TabPage": TabPage,
+    "TextArea": TextArea,
+    "TextBox": TextBox,
+    "TreeNode": TreeNode,
+    "TreeView": TreeView,
+    "TreeListView": TreeListView,
+    "WebBrowser": WebBrowser
+};
+
+function GetControlSchemaType(controlType)
+{
+    return (controlType || "").replace("Starlims", "");
+}
+
+function CloneDataProperties(aProperties)
+{
+    return aProperties.map(function (row)
+    {
+        return {
+            PROPERTY_NAME: row.PROPERTY_NAME,
+            PROPERTY_VALUE: row.PROPERTY_VALUE,
+            ':': row[':']
+        };
+    });
+}
+
+async function GetCachedPropertySchema(controlType)
+{
+    const schemaType = GetControlSchemaType(controlType);
+
+    if (_propertySchemaCache[schemaType])
+        return _propertySchemaCache[schemaType];
+
+    if (!_propertySchemaPending[schemaType])
+    {
+        _propertySchemaPending[schemaType] = (async function ()
+        {
+            let xmlProperties = await lims.GetData("FormDesigner.dsControlProperties", [schemaType]);
+            if (!xmlProperties)
+                return null;
+
+            _dgdProperties.Data = xmlProperties;
+            const rows = _dgdProperties.DataSet.Tables[0].Select("PROPERTY_VALUE is not null");
+            const schema = {
+                xml: xmlProperties,
+                rows: CloneDataProperties(rows)
+            };
+
+            _propertySchemaCache[schemaType] = schema;
+            delete _propertySchemaPending[schemaType];
+            return schema;
+        })();
+    }
+
+    return await _propertySchemaPending[schemaType];
+}
+
+function GetDirectChildNodes(xmlNode, nodeName)
+{
+    let childNodes = [];
+    if (!xmlNode || !xmlNode.childNodes)
+        return childNodes;
+
+    for (let childNode of xmlNode.childNodes)
+    {
+        if (childNode.nodeName === nodeName)
+            childNodes.push(childNode);
+    }
+
+    return childNodes;
+}
+
+function GetDirectChildNode(xmlNode, nodeName)
+{
+    let childNodes = GetDirectChildNodes(xmlNode, nodeName);
+    return childNodes.length > 0 ? childNodes[0] : null;
+}
+
+function GetDirectChildNodeText(xmlNode, nodeName, bReturnEmptyString = false)
+{
+    let childNode = GetDirectChildNode(xmlNode, nodeName);
+    if (childNode && childNode.textContent != null)
+        return childNode.textContent;
+
+    return bReturnEmptyString ? "" : null;
+}
+
+function QueueDeferredControlProperty(control, sPropertyName, value)
+{
+    if (!control.__deferredProperties)
+        control.__deferredProperties = [];
+
+    control.__deferredProperties.push({
+        name: sPropertyName,
+        value: value
+    });
+}
+
+function IsControlAttachedToDesignerRoot(control)
+{
+    let currentControl = control;
+    while (currentControl)
+    {
+        if (currentControl === _Form1)
+            return true;
+
+        currentControl = currentControl.Parent;
+    }
+
+    return false;
+}
+
+function ApplyDeferredControlProperties(control)
+{
+    if (!control || !control.__deferredProperties || control.__deferredProperties.length === 0)
+        return;
+
+    if (!IsControlAttachedToDesignerRoot(control))
+        return;
+
+    for (let deferredProperty of control.__deferredProperties)
+        control[deferredProperty.name] = deferredProperty.value;
+
+    delete control.__deferredProperties;
+}
+
+function ApplyDeferredControlPropertiesRecursive(control)
+{
+    if (!control)
+        return;
+
+    ApplyDeferredControlProperties(control);
+
+    if (control.Controls)
+    {
+        for (let i = 0; i < control.Controls.Count; ++i)
+            ApplyDeferredControlPropertiesRecursive(control.Controls[i]);
+    }
+
+    if (control.Panel1)
+        ApplyDeferredControlPropertiesRecursive(control.Panel1);
+    if (control.Panel2)
+        ApplyDeferredControlPropertiesRecursive(control.Panel2);
+
+    if (control.TabPages)
+    {
+        for (let i = 0; i < control.TabPages.Count; ++i)
+            ApplyDeferredControlPropertiesRecursive(control.TabPages[i]);
+    }
+
+    if (control.Groups)
+    {
+        for (let i = 0; i < control.Groups.Count; ++i)
+            ApplyDeferredControlPropertiesRecursive(control.Groups[i]);
+    }
+
+    if (control.Items)
+    {
+        for (let i = 0; i < control.Items.Count; ++i)
+            ApplyDeferredControlPropertiesRecursive(control.Items[i]);
+    }
+
+    if (control.Columns)
+    {
+        for (let i = 0; i < control.Columns.Count; ++i)
+            ApplyDeferredControlPropertiesRecursive(control.Columns[i]);
+    }
+
+    if (control.RootTable)
+        ApplyDeferredControlPropertiesRecursive(control.RootTable);
+}
+
+// create form with all controls from XML
+async function LoadFormFromXML(sXML)
+{
+    var xmlDoc = new DOMParser().parseFromString(sXML, "text/xml");
+    var formNode = xmlDoc.documentElement;
+
+    // change id tag of form node to _Form1 to avoid name conflict
+    GetDirectChildNode(formNode, "Id").textContent = "_Form1";
+
+    var newForm = await CreateControlFromXML(formNode);
+    await LoadCboControls();
+    return newForm;
+}
+
+// set properties for control
+async function SetBaseProperties(xmlNode, control)
+{
+    // set properties
+    for (let row of xmlNode.childNodes)
+    {
+        // skip text nodes
+        if (row.nodeName === "#text")
+            continue;
+
+        let sPropertyName = row.nodeName;
+        let value = row.textContent;
+
+        if (sPropertyName === "Guid")
+            continue;
+
+        if (sPropertyName.includes("On"))
+            value = ResolveEventHandlerReference(value);
+
+        // convert numeric string to number
+        if (!isNaN(value))
+            value = Number(value);
+
+        // convert boolean string to boolean
+        if (value === "true")
+            value = true;
+        else if (value === "false")
+            value = false;
+
+        control[sPropertyName] = value;
+    }
+}
+
+// create javascript control from XML
+async function CreateControlFromXML(xmlNode, xmlParentNode, control)
+{
+    // skip text nodes
+    if (xmlNode.nodeName === "#text")
+        return;
+    
+    // read type
+    var sType;
+    if(xmlNode.getAttribute("xsi:type"))
+        sType = xmlNode.getAttribute("xsi:type");
+
+    if (!sType)
+        sType = GetDirectChildNodeText(xmlNode, "xtype", true);
+
+    if (!sType || sType === "")
+        return;
+
+    // remove Starlims from type name
+    sType = sType.replace("Starlims", "");
+
+    if (sType === "Form")
+    {
+        control = _Form1;
+        control.xType = "Form";
+
+        // set form width and height
+        control.Width = Number(GetDirectChildNodeText(xmlNode, "Width", true));
+        control.Height = Number(GetDirectChildNodeText(xmlNode, "Height", true));
+    }
+    else
+    {
+        if (sType !== "SplitterPanel")
+        {
+            // create new control
+            const controlClass = controlClasses[sType];
+            if (controlClass)
+                control = new controlClass();
+            else
+            {
+                await Dialogs.MessageBox("Control " + sType + " not supported", "Error", "ERROR", "OKONLY");
+                return;
+            }
+        }
+        control.xType = sType;
+    
+        // get control's guid
+        var sGuid = GetDirectChildNodeText(xmlNode, "Guid", true);
+        
+        if(!sGuid)
+            sGuid = System.Guid.NewGuid().ToString();
+
+        control.Guid = sGuid;
+    }
+
+    // set properties
+    for (let node of xmlNode.childNodes)
+    {
+        // skip text nodes
+        if (node.nodeName === "#text" || node.nodeName === "RootTable")
+            continue;
+
+        let sPropertyName = node.nodeName;
+        let value = node.textContent;
+
+        if(value === "" || value === null)
+            continue;
+
+        if (sPropertyName === "Guid")
+            continue;
+        
+        // skip form title
+        if (control.xType === "Form" && sPropertyName === "Text")
+        {
+            control.title = "";
+            continue;
+        }
+
+        if (sPropertyName === "(Id)")
+            sPropertyName = "Id";
+
+        if (sPropertyName.includes("On"))
+            value = ResolveEventHandlerReference(value);
+
+        if (control.xType === "Frame" && sPropertyName === "Source")
+        {
+            QueueDeferredControlProperty(control, sPropertyName, value);
+            continue;
+        }
+
+        // convert numeric string to number
+        if (!isNaN(value))
+            value = Number(value);
+
+        // convert boolean string to boolean
+        if (value === "true")
+            value = true;
+        else if (value === "false")
+            value = false;
+
+        control[sPropertyName] = value;
+    }
+
+    // set control id by type and global count
+    if(!control.Id)
+        control.Id = control.xType + "_" + ++_globalCount;
+    if(!control.id)
+        control.id = control.Id;
+
+    xmlNode.Guid = control.Guid;
+    xmlNode.__designerGuid = control.Guid;
+
+    xmlNode.Id = control.Id;
+
+    if (sType !== "Form")
+    {
+        // add control to hash table
+        LoadDataProperties(control);
+
+        htControls.Add(control.Guid, control);
+
+        // add control to outline treePanel
+        let parentNode = await GetNodeFromXML(xmlParentNode);
+        await AddControlToOutline(control, parentNode);
+        ApplyContextMenu(control);
+    }
+
+    // handle Panel1 and Panel2 properties for StarlimsSplitContainer
+    if (sType === "SplitContainerH" || sType === "SplitContainerV")
+    {
+        let childNode = GetDirectChildNode(xmlNode, "Panel1");
+        if (childNode)
+            control.Panel1 = await CreateControlFromXML(childNode, xmlNode, control.Panel1);
+
+        childNode = GetDirectChildNode(xmlNode, "Panel2");
+        if (childNode)
+            control.Panel2 = await CreateControlFromXML(childNode, xmlNode, control.Panel2);
+
+        if(sType === "SplitContainerH")
+            control.SplitterDistance = control.Panel1.Height;
+        else
+            control.SplitterDistance = control.Panel1.Width;
+
+        // Modify splitter distance when splitter is dragged
+        var splitter = control.child('splitter');
+
+        splitter.on('dragend', function() {
+            if (sType === "SplitContainerH")
+                control.SplitterDistance = control.Panel1.Height;
+            else
+                control.SplitterDistance = control.Panel1.Width;
+        });
+
+        return control;
+    }
+
+    if (sType === "SplitterPanel")
+        SetZIndex();
+
+    if (sType === "TabControl")
+        var nSelectedPage = control.SelectedPage;
+
+    // get all child controls (only current level)
+    let aControls = GetDirectChildNodes(xmlNode, "__array__Controls");
+
+    if (aControls && aControls.length > 0)
+    {
+        for (let child of aControls[0].childNodes)
+        {
+            if (child.nodeName === "#text")
+                continue;
+
+            let childControl = await CreateControlFromXML(child, xmlNode);
+
+            if (childControl && control.Controls && childControl.xType !== "TabPage")
+            {
+                control.Controls.Add(childControl);
+                ApplyDeferredControlPropertiesRecursive(childControl);
+            }
+        }
+        return control;
+    }
+
+    // get all groups (only current level)
+    let aGroups = GetDirectChildNodes(xmlNode, "__array__Groups");
+
+    if (aGroups && aGroups.length > 0)
+    {
+        for (let group of aGroups[0].childNodes)
+        {
+            if (group.nodeName === "#text")
+                continue;
+
+            let childControl = await CreateControlFromXML(group, xmlNode);
+
+            // add groups for linkbar
+            if (childControl && control.Groups)
+            {
+                control.Groups.Add(childControl);
+                ApplyDeferredControlPropertiesRecursive(childControl);
+            }
+        }
+        return control;
+    }
+
+    // get all items (only current level)
+    let aItems = GetDirectChildNodes(xmlNode, "__array__Items");
+
+    if (aItems && aItems.length > 0)
+    {
+        for (let item of aItems[0].childNodes)
+        {
+            if (item.nodeName === "#text")
+                continue;
+
+            let childControl = await CreateControlFromXML(item, xmlNode);
+
+            if (childControl)
+            {
+                if(control.TabPages)
+                {
+                    control.TabPages.Add(childControl);
+                    ApplyDeferredControlPropertiesRecursive(childControl);
+                }
+                else if(control.Items)
+                {
+                    control.Items.Add(childControl);
+                    ApplyDeferredControlPropertiesRecursive(childControl);
+                }
+            }
+        }
+        
+        // set selected page for tabcontrol
+        if(control.TabPages && control.TabPages.Count > 0)
+            control.SelectedPage = nSelectedPage;
+        
+        return control;
+    }
+
+    // get all columns (only current level)
+    let aColumns = GetDirectChildNodes(xmlNode, "__array__Columns");
+
+    if (aColumns && aColumns.length > 0)
+    {
+        for (let column of aColumns[0].childNodes)
+        {
+            if (column.nodeName === "#text")
+                continue;
+
+            // set data type
+            column.setAttribute("xsi:type", "StarlimsDataGridColumn");
+
+            let childControl = await CreateControlFromXML(column, xmlNode);
+
+            if (childControl)
+            {
+                control.Columns.Add(childControl);
+                ApplyDeferredControlPropertiesRecursive(childControl);
+            }
+        }
+        return control;
+    }
+    
+    // get root table for datagrid
+    let xmlRootTable = GetDirectChildNode(xmlNode, "RootTable");
+    if (xmlRootTable)
+    {
+        // set data type
+        xmlRootTable.setAttribute("xsi:type", "StarlimsDataGridTable");
+
+        let table = await CreateControlFromXML(xmlRootTable, xmlNode);
+        table.id = table.Id;
+        control.RootTable = table;
+        ApplyDeferredControlPropertiesRecursive(table);
+        return control;
+    }
+
+    return control;
+}
+
+// get property value from xml node
+function GetProperty(column, name, bReturnEmptyString = false)
+{
+    let element = GetDirectChildNode(column, name);
+    if (element && element.textContent)
+        return element.textContent;
+    else
+    {
+        // generate guid for new columns
+        if(name === "Guid")
+           return System.Guid.NewGuid().ToString();
+        else
+            return bReturnEmptyString ? "" : null;
+    }
+}
+
+// load control properties
+async function LoadDataProperties(control)
+{
+    let propertySchema = await GetCachedPropertySchema(control.xType);
+    if (!propertySchema)
+    {
+        await Dialogs.MessageBox("Error loading properties for control " + control.xType, "Error", "ERROR", "OKONLY");
+        return;
+    }
+
+    control.DataPropertiesXml = propertySchema.xml;
+    control.DataProperties = CloneDataProperties(propertySchema.rows);
+}

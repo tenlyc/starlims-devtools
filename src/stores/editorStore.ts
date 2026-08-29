@@ -4,6 +4,7 @@ export interface OpenFile {
   uri: string;
   name: string;
   type: string;
+  language?: string;
   content: string;
   isDirty?: boolean;
   guid?: string;

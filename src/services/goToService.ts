@@ -79,10 +79,10 @@ export function extractWordAtCursor(content: string, position: number): string |
   const after = content.substring(position);
 
   // Match word characters and dots (for qualified names like ServerScript.Apps.Test)
-  const wordMatch = before.match(/[\w\.]+$/);
+  const wordMatch = before.match(/[\w.]+$/);
   if (wordMatch) {
     // Also check what comes after cursor
-    const afterMatch = after.match(/^[\w\.]+/);
+    const afterMatch = after.match(/^[\w.]+/);
     if (afterMatch) {
       return wordMatch[0] + afterMatch[0];
     }

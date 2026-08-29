@@ -1,10 +1,70 @@
 Package Name: SCM_API
-Package Date: 2026-04-12
+Package Date: 2024-09-19 15:04:37
 
-Description: STARLIMS Source Control Manager API Server Scripts
+Exported languages: English.
+
+Application Category: SCM
+	Application: FormDesigner
+		HTML Forms:
+			- dlgAnchor
+			- dlgImagePicker
+			- FormDesigner
+		Data Sources:
+			- dsBool
+			- dsCboForms
+			- dsControlProperties
+			- dsForms
+			- dsGetImageCategories
+			- dsGetImages
+		Server Scripts:
+			- scGetFormCode
+			- scGetFormCodeBehind
+			- scInitFormProperties
+			- scInstall
+			- scModifyCodeBehind
+
+
+Client Script Category: FormDesigner
+	- ContextMenu
+	- GUIFunctions
+	- ReadXML
+	- SaveXML
+	- TreeView
 
 Server Script Category: SCM_API
-	Server Scripts:
-		- GetCheckedOutItems
-		- GetPendingCheckins
-		- GetCheckedInItems
+	- Add
+	- CheckIn
+	- CheckInAll
+	- CheckOut
+	- ClearLog
+	- Delete
+	- ExportPackage
+	- GetAllItems
+	- GetCheckedOutItems
+	- GetCode
+	- GetEnterpriseItems
+	- GetItemByGUID
+	- GetItemGUID
+	- GetLanguages
+	- GetSessions
+	- GlobalSearch
+	- ImportPackage
+	- Move
+	- Rename
+	- RunScript
+	- SaveCode
+	- Search
+	- TableAdd
+	- TableCommand
+	- TableDefinition
+	- TableGetById
+	- TableSave
+	- TicketManagement
+	- UndoCheckOut
+	- Utils
+	- Version
+	- GetTickets
+
+
+Table database: DICTIONARY
+	- CONTROL_PROPERTIES

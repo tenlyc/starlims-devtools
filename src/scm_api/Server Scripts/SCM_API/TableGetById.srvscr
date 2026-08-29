@@ -1,0 +1,60 @@
+/******************************************************************************
+Description.. :	Get a full table DTO as XML for editing
+Author....... :	Copilot
+Date......... :	2026-05-18
+*******************************************************************************/;
+:DECLARE String, oResponse, oResult, sURI, oUtils, oEnterpriseItem, sTableId;
+String := "";
+
+:DECLARE oResultWrapper;
+oResultWrapper := CreateUDObject();
+oResponse := CreateUDObject({
+	{"success", .T.},
+	{"data", NIL}
+});
+
+:IF Request:QueryString:IsProperty("URI");
+	sURI := Request:QueryString:URI;
+:ELSE;
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := String:Format("Missing required parameter: {0}", "URI");
+	:RETURN oResponse;
+:ENDIF;
+
+oUtils := CreateUDObject("SCM_API.Utils", {});
+oEnterpriseItem := oUtils:ParseURI(sURI);
+
+:IF oEnterpriseItem:IsProperty("Type") .AND. oEnterpriseItem:Type == "TABLE";
+	sTableId := oUtils:GetItemGUID(oEnterpriseItem:CategoryName + "." + oEnterpriseItem:Name, "TABLE");
+:ELSE;
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := "The requested URI is not a table item.";
+	:RETURN oResponse;
+:ENDIF;
+
+:IF Empty(sTableId);
+	Response:StatusCode := 404;
+	oResponse:success := .F.;
+	oResponse:data := "The requested table could not be resolved.";
+	:RETURN oResponse;
+:ENDIF;
+
+:TRY;
+	oResult := DoProc("Enterprise_Data_Providers.TableProvider.GetById", {sTableId, .F., {}, .T., .F.});
+:CATCH;
+	:DECLARE sError;
+	sError := GetLastSSLError():FullDescription;
+	UsrMes("ERROR:", sError);
+	Response:ContentType := "application/problem+json";
+	Response:StatusCode := 500;
+	oResponse:success := .F.;
+	oResponse:data := sError;
+	:RETURN oResponse;
+:ENDTRY;
+
+Response:StatusCode := 200;
+	oResponse:success := .T.;
+	oResponse:data := oResult;
+	:RETURN oResponse;

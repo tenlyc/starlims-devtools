@@ -1,0 +1,418 @@
+import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
+import { createInterface } from 'readline';
+import { randomUUID } from 'crypto';
+import type { AgentApprovalDecision, AgentEvent, AgentProvider, AgentRuntimeStatus, AgentStartResult } from '../src/types/agent';
+
+type JsonRpcId = number | string;
+type JsonObject = Record<string, any>;
+type Emit = (event: AgentEvent) => void;
+
+function stringify(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+}
+
+function itemStatus(value: unknown): 'running' | 'completed' | 'failed' | 'declined' {
+  if (value === 'failed') return 'failed';
+  if (value === 'declined') return 'declined';
+  if (value === 'completed') return 'completed';
+  return 'running';
+}
+
+export class CodexAppServerRuntime {
+  private child?: ChildProcessWithoutNullStreams;
+  private starting?: Promise<void>;
+  private nextId = 1;
+  private threadId?: string;
+  private activeTurnId?: string;
+  private readonly pending = new Map<JsonRpcId, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+  private readonly approvals = new Map<string, { rpcId: JsonRpcId; method: string; params: JsonObject }>();
+
+  constructor(
+    private readonly command: () => string,
+    private readonly mcpUrl: () => string,
+    private readonly cwd: () => string,
+    private readonly getVersion: () => string,
+    private readonly emit: Emit
+  ) {}
+
+  async status(): Promise<AgentRuntimeStatus> {
+    const command = this.command();
+    return new Promise((resolve) => {
+      const child = spawn(command, ['--version'], { shell: command.toLowerCase().endsWith('.cmd'), windowsHide: true });
+      let output = '';
+      child.stdout.on('data', (chunk) => { output += chunk.toString(); });
+      child.stderr.on('data', (chunk) => { output += chunk.toString(); });
+      child.once('error', (error) => resolve({ available: false, runtime: 'app-server', command, detail: error.message }));
+      child.once('close', (code) => resolve({
+        available: code === 0,
+        runtime: 'app-server',
+        command,
+        version: output.trim().split(/\r?\n/).find(Boolean),
+        ...(code === 0 ? {} : { detail: output.trim() || `Exited with code ${code}` })
+      }));
+    });
+  }
+
+  async send(prompt: string): Promise<AgentStartResult> {
+    await this.ensureStarted();
+    if (!this.threadId) {
+      const result = await this.request('thread/start', {
+        cwd: this.cwd(),
+        approvalPolicy: 'on-request',
+        sandbox: 'workspace-write',
+        serviceName: 'starlims-devtools',
+        developerInstructions: 'You are the coding agent inside STARLIMS DevTools. Use the required starlims MCP server for remote STARLIMS data and changes. Never claim a remote operation succeeded unless the MCP tool confirms it.'
+      });
+      this.threadId = result.thread.id;
+      this.emit({ provider: 'codex', type: 'session', sessionId: this.threadId, title: 'Codex App Server connected' });
+    }
+    const result = await this.request('turn/start', {
+      threadId: this.threadId,
+      input: [{ type: 'text', text: prompt }]
+    });
+    this.activeTurnId = result.turn.id;
+    return { sessionId: this.threadId, turnId: this.activeTurnId };
+  }
+
+  async interrupt(): Promise<void> {
+    if (!this.threadId || !this.activeTurnId) return;
+    await this.request('turn/interrupt', { threadId: this.threadId, turnId: this.activeTurnId });
+  }
+
+  async newSession(): Promise<void> {
+    await this.interrupt().catch(() => undefined);
+    this.threadId = undefined;
+    this.activeTurnId = undefined;
+  }
+
+  respond(requestId: string, decision: AgentApprovalDecision): void {
+    const approval = this.approvals.get(requestId);
+    if (!approval || !this.child) throw new Error('Approval request is no longer active.');
+    this.approvals.delete(requestId);
+    let result: JsonObject;
+    if (approval.method === 'item/permissions/requestApproval') {
+      result = {
+        permissions: decision === 'accept' || decision === 'acceptForSession' ? approval.params.permissions : {},
+        scope: decision === 'acceptForSession' ? 'session' : 'turn'
+      };
+    } else {
+      result = { decision };
+    }
+    this.write({ id: approval.rpcId, result });
+  }
+
+  dispose(): void {
+    this.child?.kill();
+    this.child = undefined;
+    this.starting = undefined;
+  }
+
+  private async ensureStarted(): Promise<void> {
+    if (this.child && !this.child.killed) return;
+    if (this.starting) return this.starting;
+    this.starting = this.start();
+    try { await this.starting; } finally { this.starting = undefined; }
+  }
+
+  private async start(): Promise<void> {
+    const command = this.command();
+    const args = [
+      'app-server',
+      '-c', `mcp_servers.starlims.url=${this.mcpUrl()}`,
+      '-c', 'mcp_servers.starlims.required=true'
+    ];
+    const child = spawn(command, args, {
+      shell: command.toLowerCase().endsWith('.cmd'),
+      windowsHide: true,
+      env: { ...process.env }
+    });
+    this.child = child;
+    createInterface({ input: child.stdout }).on('line', (line) => this.handleLine(line));
+    child.stderr.on('data', (chunk) => {
+      const text = chunk.toString().trim();
+      if (text) this.emit({ provider: 'codex', type: 'status', text });
+    });
+    child.once('exit', (code) => {
+      const error = new Error(`Codex App Server exited with code ${code}.`);
+      for (const request of this.pending.values()) request.reject(error);
+      this.pending.clear();
+      this.child = undefined;
+      this.emit({ provider: 'codex', type: 'error', text: error.message });
+    });
+    child.once('error', (error) => {
+      this.child = undefined;
+      this.emit({ provider: 'codex', type: 'error', text: error.message });
+    });
+    await this.request('initialize', {
+      clientInfo: { name: 'starlims_devtools', title: 'STARLIMS DevTools', version: this.getVersion() },
+      capabilities: { experimentalApi: true }
+    });
+    this.write({ method: 'initialized', params: {} });
+  }
+
+  private request(method: string, params: JsonObject): Promise<any> {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      try { this.write({ id, method, params }); }
+      catch (error) {
+        this.pending.delete(id);
+        reject(error);
+      }
+    });
+  }
+
+  private write(message: JsonObject): void {
+    if (!this.child?.stdin.writable) throw new Error('Codex App Server is not connected.');
+    this.child.stdin.write(`${JSON.stringify(message)}\n`);
+  }
+
+  private handleLine(line: string): void {
+    let message: JsonObject;
+    try { message = JSON.parse(line); } catch { return; }
+    if (message.id !== undefined && !message.method) {
+      const request = this.pending.get(message.id);
+      if (!request) return;
+      this.pending.delete(message.id);
+      if (message.error) request.reject(new Error(message.error.message || stringify(message.error)));
+      else request.resolve(message.result);
+      return;
+    }
+    if (message.id !== undefined && message.method) {
+      this.handleServerRequest(message);
+      return;
+    }
+    if (message.method) this.handleNotification(message.method, message.params || {});
+  }
+
+  private handleServerRequest(message: JsonObject): void {
+    const method = String(message.method);
+    const supported = [
+      'item/commandExecution/requestApproval',
+      'item/fileChange/requestApproval',
+      'item/permissions/requestApproval'
+    ];
+    if (!supported.includes(method)) {
+      this.write({ id: message.id, error: { code: -32601, message: `Unsupported client request: ${method}` } });
+      return;
+    }
+    const requestId = `codex:${String(message.id)}:${randomUUID()}`;
+    const params = message.params || {};
+    const kind = method.includes('commandExecution') ? 'command' : method.includes('fileChange') ? 'file' : 'permissions';
+    const detail = params.command || params.reason || params.cwd || stringify(params.permissions || {});
+    this.approvals.set(requestId, { rpcId: message.id, method, params });
+    this.emit({
+      provider: 'codex', type: 'approval', requestId, kind,
+      sessionId: params.threadId, turnId: params.turnId, itemId: params.itemId,
+      title: params.reason || (kind === 'command' ? 'Allow command execution?' : kind === 'file' ? 'Allow file changes?' : 'Grant additional permissions?'),
+      detail, canAcceptForSession: true
+    });
+  }
+
+  private handleNotification(method: string, params: JsonObject): void {
+    const base = { provider: 'codex' as const, sessionId: params.threadId, turnId: params.turnId };
+    if (method === 'item/agentMessage/delta') {
+      this.emit({ ...base, type: 'text-delta', itemId: params.itemId, text: params.delta });
+      return;
+    }
+    if (method === 'item/commandExecution/outputDelta' || method === 'item/fileChange/outputDelta') {
+      this.emit({ ...base, type: 'item-output', itemId: params.itemId, output: params.delta });
+      return;
+    }
+    if (method === 'turn/diff/updated') {
+      this.emit({ ...base, type: 'diff', itemId: `diff:${params.turnId}`, title: 'Working tree changes', diff: params.diff });
+      return;
+    }
+    if (method === 'item/mcpToolCall/progress') {
+      this.emit({ ...base, type: 'item-output', itemId: params.itemId, output: `${params.message}\n` });
+      return;
+    }
+    if (method === 'item/started' || method === 'item/completed') {
+      this.emitItem(base, params.item || {}, method === 'item/completed');
+      return;
+    }
+    if (method === 'turn/completed') {
+      const turn = params.turn || {};
+      this.activeTurnId = undefined;
+      if (turn.status === 'failed') this.emit({ ...base, type: 'error', text: turn.error?.message || stringify(turn.error || 'Codex turn failed.') });
+      else this.emit({ ...base, type: 'done', status: turn.status === 'interrupted' ? 'declined' : 'completed', text: turn.status });
+      return;
+    }
+    if (method === 'error' || method === 'warning') {
+      this.emit({ ...base, type: method === 'error' ? 'error' : 'status', text: params.message || stringify(params) });
+    }
+  }
+
+  private emitItem(base: Pick<AgentEvent, 'provider' | 'sessionId' | 'turnId'>, item: JsonObject, completed: boolean): void {
+    const status = completed ? itemStatus(item.status || 'completed') : 'running';
+    if (item.type === 'mcpToolCall') {
+      this.emit({ ...base, type: 'item', itemId: item.id, kind: 'mcp', status, title: `${item.server}.${item.tool}`, detail: stringify(item.arguments), output: item.error?.message || (completed && item.result ? stringify(item.result.structuredContent ?? item.result.content) : undefined) });
+    } else if (item.type === 'commandExecution') {
+      this.emit({ ...base, type: 'item', itemId: item.id, kind: 'command', status, title: item.command, detail: item.cwd, output: item.aggregatedOutput || undefined });
+    } else if (item.type === 'fileChange') {
+      this.emit({ ...base, type: 'item', itemId: item.id, kind: 'file', status, title: `File changes (${item.changes?.length || 0})`, diff: stringify(item.changes || []) });
+    } else if (item.type === 'reasoning' || item.type === 'plan') {
+      this.emit({ ...base, type: 'item', itemId: item.id, kind: item.type, status, title: item.type === 'plan' ? 'Plan' : 'Reasoning', detail: item.text || stringify(item.summary || []) });
+    }
+  }
+}
+
+type ClaudeQuery = { close: () => void; [Symbol.asyncIterator]: () => AsyncIterator<any> };
+
+export class ClaudeAgentRuntime {
+  private sessionId?: string;
+  private active?: ClaudeQuery;
+  private readonly approvals = new Map<string, {
+    resolve: (value: any) => void;
+    suggestions?: any[];
+    toolUseID: string;
+  }>();
+
+  constructor(private readonly mcpUrl: () => string, private readonly cwd: () => string, private readonly getVersion: () => string, private readonly emit: Emit) {}
+
+  async status(): Promise<AgentRuntimeStatus> {
+    try {
+      await import('@anthropic-ai/claude-agent-sdk');
+      return { available: true, runtime: 'agent-sdk', version: 'Claude Agent SDK 0.3.251', command: 'bundled Claude Code runtime' };
+    } catch (error) {
+      return { available: false, runtime: 'agent-sdk', detail: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async send(prompt: string): Promise<AgentStartResult> {
+    if (this.active) throw new Error('Claude is already processing a turn.');
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    let streamedText = false;
+    const active = query({
+      prompt,
+      options: {
+        cwd: this.cwd(),
+        resume: this.sessionId,
+        includePartialMessages: true,
+        permissionMode: 'default',
+        systemPrompt: {
+          type: 'preset', preset: 'claude_code',
+          append: 'You are embedded in STARLIMS DevTools. Use the starlims MCP tools for remote STARLIMS objects, source code, logs, tables, check-out state, and remote changes. Never fabricate remote state.'
+        },
+        tools: { type: 'preset', preset: 'claude_code' },
+        mcpServers: {
+          starlims: { type: 'http', url: this.mcpUrl(), alwaysLoad: true, timeout: 60_000 }
+        },
+        strictMcpConfig: true,
+        env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: `starlims-devtools/${this.getVersion()}` },
+        canUseTool: (toolName, input, options) => new Promise((resolve) => {
+          const requestId = `claude:${options.requestId}:${randomUUID()}`;
+          this.approvals.set(requestId, { resolve, suggestions: options.suggestions, toolUseID: options.toolUseID });
+          this.emit({
+            provider: 'claude', type: 'approval', requestId, kind: toolName.startsWith('mcp__') ? 'permissions' : toolName === 'Bash' ? 'command' : 'file',
+            sessionId: this.sessionId, itemId: options.toolUseID,
+            title: options.title || `Allow ${options.displayName || toolName}?`,
+            detail: options.description || stringify(input),
+            canAcceptForSession: Boolean(options.suggestions?.length)
+          });
+        })
+      }
+    }) as ClaudeQuery;
+    this.active = active;
+    void (async () => {
+      try {
+        for await (const message of active) {
+          if (message.session_id && !this.sessionId) {
+            this.sessionId = message.session_id;
+            this.emit({ provider: 'claude', type: 'session', sessionId: this.sessionId, title: 'Claude Agent SDK connected' });
+          }
+          if (message.type === 'stream_event') {
+            const event = message.event;
+            if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+              streamedText = true;
+              this.emit({ provider: 'claude', type: 'text-delta', sessionId: this.sessionId, itemId: message.uuid, text: event.delta.text });
+            }
+          } else if (message.type === 'assistant') {
+            for (const block of message.message?.content || []) {
+              if (block.type === 'tool_use') {
+                this.emit({ provider: 'claude', type: 'item', sessionId: this.sessionId, itemId: block.id, kind: block.name?.startsWith('mcp__') ? 'mcp' : block.name === 'Bash' ? 'command' : 'file', status: 'running', title: block.name, detail: stringify(block.input) });
+              }
+            }
+          } else if (message.type === 'user' && message.tool_use_result !== undefined) {
+            const contents = Array.isArray(message.message?.content) ? message.message.content : [];
+            for (const block of contents) {
+              if (block.type === 'tool_result') this.emit({ provider: 'claude', type: 'item', sessionId: this.sessionId, itemId: block.tool_use_id, status: block.is_error ? 'failed' : 'completed', output: stringify(message.tool_use_result) });
+            }
+          } else if (message.type === 'tool_progress') {
+            this.emit({ provider: 'claude', type: 'item-output', sessionId: this.sessionId, itemId: message.tool_use_id, output: `Running ${message.tool_name} (${message.elapsed_time_seconds}s)…\n` });
+          } else if (message.type === 'result') {
+            if (!streamedText && message.subtype === 'success' && message.result) this.emit({ provider: 'claude', type: 'text-delta', sessionId: this.sessionId, text: message.result });
+            if (message.is_error) this.emit({ provider: 'claude', type: 'error', sessionId: this.sessionId, text: message.errors?.join('\n') || message.result || message.subtype });
+            else this.emit({ provider: 'claude', type: 'done', sessionId: this.sessionId, status: 'completed', text: `${message.num_turns} turn(s)` });
+          }
+        }
+      } catch (error) {
+        this.emit({ provider: 'claude', type: 'error', sessionId: this.sessionId, text: error instanceof Error ? error.message : String(error) });
+      } finally {
+        this.active = undefined;
+      }
+    })();
+    return { sessionId: this.sessionId };
+  }
+
+  interrupt(): void {
+    this.active?.close();
+    this.active = undefined;
+    this.emit({ provider: 'claude', type: 'done', sessionId: this.sessionId, status: 'declined', text: 'Interrupted' });
+  }
+
+  newSession(): void {
+    this.interrupt();
+    this.sessionId = undefined;
+  }
+
+  respond(requestId: string, decision: AgentApprovalDecision): void {
+    const approval = this.approvals.get(requestId);
+    if (!approval) throw new Error('Approval request is no longer active.');
+    this.approvals.delete(requestId);
+    if (decision === 'accept' || decision === 'acceptForSession') {
+      approval.resolve({ behavior: 'allow', toolUseID: approval.toolUseID, ...(decision === 'acceptForSession' && approval.suggestions ? { updatedPermissions: approval.suggestions } : {}) });
+    } else {
+      approval.resolve({ behavior: 'deny', message: decision === 'cancel' ? 'Cancelled by user.' : 'Declined by user.', interrupt: decision === 'cancel', toolUseID: approval.toolUseID });
+    }
+  }
+}
+
+export class AgentRuntimeManager {
+  readonly codex: CodexAppServerRuntime;
+  readonly claude: ClaudeAgentRuntime;
+
+  constructor(options: { codexCommand: () => string; mcpUrl: () => string; cwd: () => string; getVersion: () => string; emit: Emit }) {
+    this.codex = new CodexAppServerRuntime(options.codexCommand, options.mcpUrl, options.cwd, options.getVersion, options.emit);
+    this.claude = new ClaudeAgentRuntime(options.mcpUrl, options.cwd, options.getVersion, options.emit);
+  }
+
+  async statuses(openCodeStatus: () => Promise<AgentRuntimeStatus>): Promise<Record<AgentProvider, AgentRuntimeStatus>> {
+    const [codex, claude, opencode] = await Promise.all([this.codex.status(), this.claude.status(), openCodeStatus()]);
+    return { codex, claude, opencode };
+  }
+
+  send(provider: AgentProvider, prompt: string): Promise<AgentStartResult> {
+    if (provider === 'codex') return this.codex.send(prompt);
+    if (provider === 'claude') return this.claude.send(prompt);
+    throw new Error('OpenCode remains in CLI compatibility mode.');
+  }
+
+  async interrupt(provider: AgentProvider): Promise<void> {
+    if (provider === 'codex') await this.codex.interrupt();
+    else if (provider === 'claude') this.claude.interrupt();
+  }
+
+  async newSession(provider: AgentProvider): Promise<void> {
+    if (provider === 'codex') await this.codex.newSession();
+    else if (provider === 'claude') this.claude.newSession();
+  }
+
+  respond(provider: AgentProvider, requestId: string, decision: AgentApprovalDecision): void {
+    if (provider === 'codex') this.codex.respond(requestId, decision);
+    else if (provider === 'claude') this.claude.respond(requestId, decision);
+  }
+
+  dispose(): void { this.codex.dispose(); this.claude.interrupt(); }
+}

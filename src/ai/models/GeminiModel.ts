@@ -10,7 +10,7 @@ export class GeminiModel extends BaseAIModel {
   readonly name = 'Google Gemini';
   readonly provider: ModelProvider = 'gemini';
 
-  private apiKey: string = '';
+  private apiKey = '';
 
   protected getDefaultBaseUrl(): string {
     return 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -133,7 +133,9 @@ export class GeminiModel extends BaseAIModel {
             const data = JSON.parse(line.slice(6));
             const delta = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
             if (delta) yield { delta, done: false };
-          } catch {}
+          } catch {
+            // Ignore incomplete streaming chunks and continue reading.
+          }
         }
       }
     }

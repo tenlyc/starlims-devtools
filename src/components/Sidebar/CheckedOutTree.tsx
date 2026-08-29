@@ -3,6 +3,7 @@ import { getEnterpriseService } from '../../services/enterpriseService';
 import { editorStore } from '../../stores/editorStore';
 import { registerCheckedOutRefresh } from '../../services/checkedOutStore';
 import { ContextMenu } from '../ContextMenu';
+import { useAiContextStore } from '../../services/aiContextStore';
 
 export interface CheckedOutItem {
   id: string;
@@ -11,6 +12,9 @@ export interface CheckedOutItem {
   user: string;
   date: string;
   uri?: string;
+  path?: string;
+  language?: string;
+  rawType?: string;
 }
 
 // Format date to readable format
@@ -36,6 +40,7 @@ export function CheckedOutTree() {
   const [selectedItem, setSelectedItem] = useState<CheckedOutItem | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ item: CheckedOutItem; x: number; y: number } | null>(null);
+  const addAiContext = useAiContextStore((state) => state.addItem);
 
   // Load checked out items
   useEffect(() => {
@@ -55,7 +60,10 @@ export function CheckedOutTree() {
         type: item.type || 'DEFAULT',
         user: item.checkedOutBy || 'Unknown',
         date: item.checkedOutDate || '',
-        uri: item.uri
+        uri: item.uri,
+        path: item.displayPath,
+        language: item.language,
+        rawType: item.rawType
       }));
 
       setItems(items);
@@ -67,14 +75,11 @@ export function CheckedOutTree() {
     }
   };
 
-  const handleOpenFile = async (item: CheckedOutItem) => {
-    console.log('Opening file:', item.uri || item.id, 'type:', item.type);
-    try {
-      const enterpriseService = getEnterpriseService();
-      let uri = item.uri || item.id;
+  const resolveItemUri = async (item: CheckedOutItem): Promise<string | null> => {
+    const enterpriseService = getEnterpriseService();
+    let uri = item.uri || item.id;
 
-      // If URI is a GUID (not a full path), resolve it to a full URI first
-      if (uri && !uri.startsWith('/') && item.type) {
+    if (uri && !uri.startsWith('/') && item.type) {
         console.log('URI is a GUID, resolving to full path...');
         // Map the type from database format to API format
         const typeMap: Record<string, string> = {
@@ -90,14 +95,21 @@ export function CheckedOutTree() {
         const apiType = typeMap[item.type] || item.type;
         console.log('Mapped type:', item.type, '->', apiType);
 
-        const resolvedItem = await enterpriseService.getItemByGuid(uri, apiType);
-        if (resolvedItem && resolvedItem.uri) {
-          uri = resolvedItem.uri;
-          console.log('Resolved URI:', uri);
-        } else {
-          console.error('Failed to resolve GUID to URI');
-          return;
-        }
+      const resolvedItem = await enterpriseService.getItemByGuid(uri, apiType);
+      if (resolvedItem?.uri) uri = resolvedItem.uri;
+      else return null;
+    }
+    return uri;
+  };
+
+  const handleOpenFile = async (item: CheckedOutItem) => {
+    console.log('Opening file:', item.uri || item.id, 'type:', item.type);
+    try {
+      const enterpriseService = getEnterpriseService();
+      const uri = await resolveItemUri(item);
+      if (!uri) {
+        console.error('Failed to resolve GUID to URI');
+        return;
       }
 
       const code = await enterpriseService.getItemCode(uri);
@@ -106,6 +118,7 @@ export function CheckedOutTree() {
           uri,
           name: item.name,
           type: item.type,
+          language: item.language,
           content: code
         });
       } else {
@@ -113,6 +126,18 @@ export function CheckedOutTree() {
       }
     } catch (err) {
       console.error('Failed to open file:', err);
+    }
+  };
+
+  const handleReferenceForAi = async (item: CheckedOutItem) => {
+    try {
+      const uri = await resolveItemUri(item);
+      if (!uri) throw new Error('Could not resolve the STARLIMS item URI.');
+      const content = await getEnterpriseService().getItemCode(uri, item.language);
+      addAiContext({ id: uri, name: item.name, uri, type: item.type, content, source: 'checkout' });
+      window.dispatchEvent(new CustomEvent('ai:show'));
+    } catch (error) {
+      console.error('Failed to reference checked-out item:', error);
     }
   };
 
@@ -170,14 +195,21 @@ export function CheckedOutTree() {
     'XFDFORMXML': '📝',
     'XFDFORMCODE': '📄',
     'TABLE': '📊',
-    'DEFAULT': '📄'
+    'AppServerScript': 'S',
+    'ServerScript': 'S',
+    'AppClientScript': 'JS',
+    'ClientScript': 'JS',
+    'AppDataSourceScript': 'SQL',
+    'DataSourceScript': 'SQL',
+    'HTMLForm': 'HTML',
+    'DEFAULT': '•'
   };
 
   return (
     <div className="p-2">
       {/* Header */}
       <div className="flex items-center justify-between mb-2 px-2 min-h-[28px]">
-        <span className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase truncate">My Checkouts</span>
+        <span className="text-[11px] font-semibold text-slate-500 dark:text-[#bbbbbb] uppercase tracking-wide truncate">Checked Out <span className="text-slate-400 dark:text-[#777]">{items.length}</span></span>
         <div className="flex items-center gap-1 flex-shrink-0">
           {items.length > 0 && (
             <>
@@ -241,12 +273,12 @@ export function CheckedOutTree() {
             No checked out items
           </div>
         ) : (
-          <div className="space-y-1 relative">
+          <div className="space-y-px relative">
             {items.map(item => (
               <div
                 key={item.id}
-                className={`p-2 rounded cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 group ${
-                  selectedItem?.id === item.id ? 'bg-slate-200 dark:bg-slate-700' : ''
+                className={`px-2 py-1.5 cursor-pointer hover:bg-slate-200 dark:hover:bg-[#2a2d2e] group border-l-2 ${
+                  selectedItem?.id === item.id ? 'bg-slate-200 dark:bg-[#37373d] border-[#4daafc]' : 'border-transparent'
                 }`}
                 onClick={() => setSelectedItem(item)}
                 onDoubleClick={() => handleOpenFile(item)}
@@ -255,13 +287,15 @@ export function CheckedOutTree() {
                   setContextMenu({ item, x: e.clientX, y: e.clientY });
                 }}
               >
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">
+                <div className="flex items-start gap-2 min-w-0">
+                  <span className="mt-0.5 min-w-[27px] h-[18px] px-1 rounded-sm flex items-center justify-center bg-slate-300 dark:bg-[#333] text-[9px] font-bold text-slate-600 dark:text-[#c5c5c5]">
                     {itemTypeIcons[item.type] || itemTypeIcons.DEFAULT}
                   </span>
-                  <span className="flex-1 truncate text-sm" title={`${item.name} - Checked out by ${item.user} on ${formatDate(item.date)}`}>
-                    {item.name} <span className="text-slate-400 dark:text-slate-500 text-xs">({item.user})</span>
-                  </span>
+                  <div className="flex-1 min-w-0" title={`${item.name}\n${item.path || item.uri || ''}\nChecked out by ${item.user} on ${formatDate(item.date)}`}>
+                    <div className="truncate text-[12px] text-slate-700 dark:text-[#d4d4d4]">{item.name}</div>
+                    <div className="truncate text-[10px] text-slate-400 dark:text-[#858585]">{item.path || item.rawType || item.type}{item.language ? ` · ${item.language}` : ''}</div>
+                  </div>
+                  <span className="text-[9px] text-slate-400 dark:text-[#6f9e6f] flex-shrink-0">{item.user}</span>
                 </div>
               </div>
             ))}
@@ -275,6 +309,7 @@ export function CheckedOutTree() {
           position={{ x: contextMenu.x, y: contextMenu.y }}
           items={[
             { id: 'open', label: '打开 (Open)', icon: '📂' },
+            { id: 'reference-ai', label: '引用到 AI (@ Context)', icon: '@' },
             { id: 'divider1', label: '', divider: true },
             { id: 'checkin', label: '签入 (Check In)', icon: '📥' },
             { id: 'undo', label: '撤销签出 (Undo)', icon: '↩️', danger: true },
@@ -283,6 +318,8 @@ export function CheckedOutTree() {
           onSelect={(id) => {
             if (id === 'open') {
               handleOpenFile(contextMenu.item);
+            } else if (id === 'reference-ai') {
+              void handleReferenceForAi(contextMenu.item);
             } else if (id === 'checkin') {
               handleCheckIn(contextMenu.item);
             } else if (id === 'undo') {

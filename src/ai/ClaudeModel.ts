@@ -18,8 +18,8 @@ export class ClaudeModel implements IAIModel {
   readonly provider: ModelProvider = 'claude';
 
   private config: AIConfig | null = null;
-  private baseUrl: string = 'https://api.anthropic.com/v1';
-  private model: string = 'claude-3-5-sonnet-20241022';
+  private baseUrl = 'https://api.anthropic.com/v1';
+  private model = 'claude-3-5-sonnet-20241022';
 
   /**
    * Available Claude models

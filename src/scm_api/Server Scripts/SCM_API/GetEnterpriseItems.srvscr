@@ -1,0 +1,356 @@
+/********************************************************************************
+Description.. :	Get enterprise tree
+Author....... :	MARIUS, DC
+Date......... : 2018-11-06
+*******************************************************************************/;
+:DECLARE sOutType, aItems, aEnterpriseCategories, i, oResult, sDataSet, oDataSet, bFolder,
+		 aApplicationSubCategories, aTablesSubCategories, sURI, oRow, sGUID, sCheckedOutBy,
+		 sItemName, oUtils, oEnterpriseItem, sLang;
+
+:IF Request:QueryString:IsProperty("URI");
+	sURI := Request:QueryString:URI;
+:ELSE;
+	sURI:= "";
+:ENDIF;
+
+	
+:IF sURI == "/";
+	sURI := "";
+:ENDIF;
+	
+
+oUtils := CreateUDObject("SCM_API.Utils", {});
+
+oEnterpriseItem := oUtils:ParseURI(sURI);
+
+:IF !oEnterpriseItem:IsProperty("Type") .OR. Empty(oEnterpriseItem:Type);
+	oResult := CreateUDObject({
+		{"success", .F.},
+		{"error", "Invalid Type"}
+	});
+	Response:StatusCode := 400;
+	:RETURN oResult;
+:ENDIF;
+
+aItems := {};
+
+aEnterpriseCategories := {
+	{"Applications", "CATEGORY", "N/A", sURI + "/Applications", NIL, NIL, NIL, NIL},
+	{"Server Scripts", "CATEGORY", "N/A", sURI + "/ServerScripts", NIL, NIL, NIL, NIL},
+	{"Client Scripts", "CATEGORY", "N/A", sURI + "/ClientScripts", NIL, NIL, NIL, NIL},
+	{"Data Sources", "CATEGORY", "N/A", sURI + "/DataSources", NIL, NIL, NIL, NIL},
+	{"Tables", "CATEGORY", "N/A", sURI + "/Tables", NIL, NIL, NIL, NIL},
+	{"Server Logs", "CATEGORY", "N/A", sURI + "/ServerLogs", NIL, NIL, NIL, NIL}
+};
+
+aTablesSubCategories := {
+	{"Database", "ENT_TABLES_DATABASE", "N/A", sURI + "/Database", NIL, NIL, NIL, NIL},
+	{"Dictionary", "ENT_TABLES_DICTIONARY", "N/A", sURI + "/Dictionary", NIL, NIL, NIL, NIL}
+};
+
+aApplicationSubCategories := {
+	{"HTML Forms", "ENT_APP_HTML_FRM", "N/A", sURI + "/HTMLForms", NIL, NIL, NIL, NIL},
+	{"XFD Forms", "ENT_APP_XFD_FRM", "N/A", sURI + "/XFDForms", NIL, NIL, NIL, NIL},
+	{"Server Scripts", "ENT_APP_SS", "N/A", sURI + "/ServerScripts", NIL, NIL, NIL, NIL},
+	{"Client Scripts", "ENT_APP_CS", "N/A", sURI + "/ClientScripts", NIL, NIL, NIL, NIL},
+	{"Data Sources", "ENT_APP_DS", "N/A", sURI + "/DataSources", NIL, NIL, NIL, NIL}
+};
+
+bFolder := .T.;
+
+:BEGINCASE;
+	:CASE oEnterpriseItem:Type == "ROOT";
+		aItems := aEnterpriseCategories;
+		sOutType := "CATEGORY";
+	:EXITCASE;
+	
+	:CASE oEnterpriseItem:Type == "ENT_CAT_APPS";
+		sOutType := "APPCATEGORY";
+		sDataSet := DoProc("Enterprise_Data_Providers.AppCategProvider.GetList", {});
+		aItems := DoProc("_GetCategoryItems", {sDataSet, sOutType, sURI});
+	:EXITCASE;
+	
+	:CASE oEnterpriseItem:Type == "ENT_CAT_SS";
+		sOutType := "SSCAT";
+		sDataSet := DoProc("Enterprise_Data_Providers.ServerScriptCategProvider.GetList", {});
+		aItems := DoProc("_GetCategoryItems", {sDataSet, sOutType, sURI});
+	:EXITCASE;
+	
+	:CASE oEnterpriseItem:Type == "ENT_CAT_CS";
+		sOutType := "CSCAT";
+		sDataSet := DoProc("Enterprise_Data_Providers.ClientScriptCategProvider.GetList", {});
+		aItems := DoProc("_GetCategoryItems", {sDataSet, sOutType, sURI});
+	:EXITCASE;
+	
+	:CASE oEnterpriseItem:Type == "ENT_CAT_DS";
+		sOutType := "DSCAT";
+		sDataSet := DoProc("Enterprise_Data_Providers.DataSourceCategProvider.GetList", {});
+		aItems := DoProc("_GetCategoryItems", {sDataSet, sOutType, sURI});
+	:EXITCASE;
+	
+	:CASE oEnterpriseItem:Type == "APP";
+		aItems := aApplicationSubCategories;
+		sOutType := "CATEGORY";
+	:EXITCASE;
+	
+	:CASE oEnterpriseItem:Type == "APPCATEGORY";
+		sOutType := "APP";
+		:DECLARE sCategoryID, aCategories, sCategoryName, j, sFilter;
+		sCategoryName := Upper(oEnterpriseItem:Name);
+		:IF sCategoryName != "*";
+			sFilter := "CATNAME=?sCategoryName?";
+		:ELSE;
+			sFilter := "1=1";
+		:ENDIF;
+		aCategories := SqlExecute("select CATEGORYID from LIMSAPPCATEGORIES where " + sFilter, "DICTIONARY");
+		:FOR i:=1 :TO Len(aCategories);
+			sCategoryID := aCategories[i,1];
+			sDataSet := DoProc("Enterprise_Data_Providers.AppProvider.GetList", {sCategoryID});
+			oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+			:FOR j := 0 :TO oDataSet:Tables[0]:Rows:Count - 1;
+				oRow := oDataSet:Tables[0]:Rows[j];
+				AAdd(aItems, {oRow["APPNAME"], sOutType, "N/A", sURI + "/" + oRow["APPNAME"], NIL, NIL, NIL, NIL});
+			:NEXT;
+		:NEXT;
+	:EXITCASE;
+
+	:CASE oEnterpriseItem:Type == "APPSUBCATEGORY" .AND. oEnterpriseItem:Name == "ClientScripts";
+		sOutType := "APPCS";
+		bFolder := .F.;
+		sDataSet := DoProc("Enterprise_Data_Providers.AppClientScriptProvider.GetList", {oEnterpriseItem:AppName});
+		oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+		:FOR i := 0 :TO oDataSet:Tables[0]:Rows:Count - 1;
+			oRow := oDataSet:Tables[0]:Rows[i];
+			AAdd(aItems, {oRow["SCRIPTNAME"], sOutType, oRow["SCRIPTLANGUAGE"], sURI + "/" + oRow["SCRIPTNAME"], oRow["CHECKEDOUTBY"], oRow["SCRIPTID"], NIL, oRow["VERSION"]});
+		:NEXT;
+	:EXITCASE;
+
+	:CASE oEnterpriseItem:Type == "APPSUBCATEGORY" .AND. oEnterpriseItem:Name == "DataSources";
+		sOutType := "APPDS";
+		bFolder := .F.;
+		sDataSet := DoProc("Enterprise_Data_Providers.AppDataSourceProvider.GetList", {oEnterpriseItem:AppName});
+		oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+		:FOR i := 0 :TO oDataSet:Tables[0]:Rows:Count - 1;
+			oRow := oDataSet:Tables[0]:Rows[i];
+			AAdd(aItems, {oRow["DSNAME"], sOutType, oRow["SCRIPTLANGUAGE"], sURI + "/" + oRow["DSNAME"], oRow["CHECKEDOUTBY"], oRow["DATASOURCEID"], NIL, oRow["VERSION"]});
+		:NEXT;
+	:EXITCASE;
+	
+	:CASE oEnterpriseItem:Type == "APPSUBCATEGORY" .AND. oEnterpriseItem:Name == "HTMLForms";
+		bFolder := .F.;
+		sDataSet := DoProc("Enterprise_Data_Providers.FormProvider.GetList", {oEnterpriseItem:AppName, "HTML"});
+		oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+		:DECLARE sFormName;
+		:FOR i := 0 :TO oDataSet:Tables[0]:Rows:Count - 1;
+			oRow := oDataSet:Tables[0]:Rows[i];
+			sFormName := oEnterpriseItem:AppName + "." + oRow["FORMNAME"];
+			sGUID := oRow["FORMID"];
+			sLang := DoProc("_GetCheckOutLang", {sGUID});
+			AAdd(aItems, {oRow["FORMNAME"] + " [XML]", "HTMLFORMXML", "XML", sURI + "/XML/" + oRow["FORMNAME"], oRow["CHECKEDOUTBY"], sGUID, sLang, oRow["VERSION"]});
+			AAdd(aItems, {oRow["FORMNAME"] + " [Code Behind]", "HTMLFORMCODE", "JS", sURI + "/CodeBehind/" + oRow["FORMNAME"], oRow["CHECKEDOUTBY"], sGUID, NIL, oRow["VERSION"]});
+			AAdd(aItems, {oRow["FORMNAME"] + " [Guide]", "HTMLFORMGUIDE", "JSON", sURI + "/Guide/" + oRow["FORMNAME"], oRow["CHECKEDOUTBY"], sGUID, sLang, oRow["VERSION"]});
+			AAdd(aItems, {oRow["FORMNAME"] + " [Resources]", "HTMLFORMRESOURCES", "XML", sURI + "/Resources/" + oRow["FORMNAME"], oRow["CHECKEDOUTBY"], sGUID, sLang, oRow["VERSION"]});
+		:NEXT;
+	:EXITCASE;
+	
+	:CASE oEnterpriseItem:Type == "APPSUBCATEGORY" .AND. oEnterpriseItem:Name == "XFDForms";
+		bFolder := .F.;
+		sDataSet := DoProc("Enterprise_Data_Providers.FormProvider.GetList", {oEnterpriseItem:AppName, "XFD"});
+		oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+		:FOR i := 0 :TO oDataSet:Tables[0]:Rows:Count - 1;
+			oRow := oDataSet:Tables[0]:Rows[i];
+			sGUID := oRow["FORMID"];
+			sLang := DoProc("_GetCheckOutLang", {sGUID});
+			AAdd(aItems, {oRow["FORMNAME"] + " [XML]", "XFDFORMXML", "XML", sURI + "/XML/" + oRow["FORMNAME"], oRow["CHECKEDOUTBY"], sGUID, sLang, oRow["VERSION"]});
+			AAdd(aItems, {oRow["FORMNAME"] + " [Code Behind]", "XFDFORMCODE", "JS", sURI + "/CodeBehind/" + oRow["FORMNAME"], oRow["CHECKEDOUTBY"], sGUID, NIL, oRow["VERSION"]});
+			AAdd(aItems, {oRow["FORMNAME"] + " [Resources]", "XFDFORMRESOURCES", "XML", sURI + "/Resources/" + oRow["FORMNAME"], oRow["CHECKEDOUTBY"], sGUID, sLang, oRow["VERSION"]});
+		:NEXT;
+	:EXITCASE;
+	
+	:CASE oEnterpriseItem:Type == "APPSUBCATEGORY" .AND. oEnterpriseItem:Name == "ServerScripts";
+		sOutType := "APPSS";
+		bFolder := .F.;
+		sDataSet := DoProc("Enterprise_Data_Providers.AppServerScriptProvider.GetList", {oEnterpriseItem:AppName});
+		oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+		:FOR i := 0 :TO oDataSet:Tables[0]:Rows:Count - 1;
+			oRow := oDataSet:Tables[0]:Rows[i];
+			AAdd(aItems, {oRow["SCRIPTNAME"], sOutType, oRow["SCRIPTLANGUAGE"], sURI + "/" + oRow["SCRIPTNAME"], oRow["CHECKEDOUTBY"], oRow["SCRIPTID"], NIL, oRow["VERSION"]});
+		:NEXT;
+	:EXITCASE;
+	
+	:CASE oEnterpriseItem:Type == "SSCATEGORY";
+		sOutType := "SS";
+		bFolder := .F.;
+		sDataSet := DoProc("Enterprise_Data_Providers.ServerScriptProvider.GetList", {oEnterpriseItem:Name});
+		oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+		:FOR i := 0 :TO oDataSet:Tables[0]:Rows:Count - 1;
+			oRow := oDataSet:Tables[0]:Rows[i];
+			AAdd(aItems, {oRow["SCRIPTNAME"], sOutType, oRow["SCRIPTLANGUAGE"], sURI + "/" + oRow["SCRIPTNAME"], oRow["CHECKEDOUTBY"], oRow["SCRIPTID"], NIL, oRow["VERSION"]});
+		:NEXT;
+	:EXITCASE;
+
+	:CASE oEnterpriseItem:Type == "CSCATEGORY";
+		sOutType := "CS";
+		bFolder := .F.;
+		sDataSet := DoProc("Enterprise_Data_Providers.ClientScriptProvider.GetList", {oEnterpriseItem:Name});
+		oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+		:FOR i := 0 :TO oDataSet:Tables[0]:Rows:Count - 1;
+			oRow := oDataSet:Tables[0]:Rows[i];
+			AAdd(aItems, {oRow["SCRIPTNAME"], sOutType, oRow["SCRIPTLANGUAGE"], sURI + "/" + oRow["SCRIPTNAME"], oRow["CHECKEDOUTBY"], oRow["SCRIPTID"], NIL, oRow["VERSION"]});
+		:NEXT;
+	:EXITCASE;
+	
+	:CASE oEnterpriseItem:Type == "DSCATEGORY";
+		sOutType := "DS";
+		bFolder := .F.;
+		sDataSet := DoProc("Enterprise_Data_Providers.DataSourceProvider.GetList", {oEnterpriseItem:Name});
+		oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+		:FOR i := 0 :TO oDataSet:Tables[0]:Rows:Count - 1;
+			oRow := oDataSet:Tables[0]:Rows[i];
+			AAdd(aItems, {oRow["DSNAME"], sOutType, oRow["SCRIPTLANGUAGE"], sURI + "/" + oRow["DSNAME"], oRow["CHECKEDOUTBY"], oRow["DATASOURCEID"], NIL, oRow["VERSION"]});
+		:NEXT;
+	:EXITCASE;
+	
+	:CASE oEnterpriseItem:Type == "ENT_CAT_LOG";
+		sOutType := "SERVERLOG";
+		bFolder := .F.;
+		:DECLARE aDataSet;
+		aDataSet := DoProc("Enterprise_Data_Providers.EnterpriseUtilsProvider.GetUsersWithLog");
+		:FOR i := 1 :TO Len(aDataSet);
+			AAdd(aItems, {aDataSet[i], sOutType, sOutType, sURI + "/" + aDataSet[i], "", NIL, NIL, NIL});
+		:NEXT;
+	:EXITCASE; 
+	:CASE AScanExact({"APPSS", "APPCS", "APPDS", "HTMLFORMXML", "HTMLFORMGUIDE", 
+			"HTMLFORMCODE", "XFDFORMXML", "XFDFORMCODE", "CS", "DS", "SS", "SERVERLOG"}, 
+			oEnterpriseItem:Type) > 0;
+		sOutType := oEnterpriseItem:Type;
+		bFolder := .F.;
+
+		:IF !Empty(oEnterpriseItem:AppName);
+			sItemName := oEnterpriseItem:AppName + "." + oEnterpriseItem:Name;
+		:ELSE;
+			sItemName := oEnterpriseItem:CategoryName + "." + oEnterpriseItem:Name;
+		:ENDIF;
+		
+		sGUID := oUtils:GetItemGUID(sItemName, oEnterpriseItem:Type);
+		
+		/* get checked out by user;
+		:DECLARE thisVersion, sVersion, a;
+		thisVersion := doproc("ENTERPRISE_DATA_PROVIDERS.VersionProvider.GetAbsoluteVersionSelectString");
+		
+		sSQL := "select L.CHECKEDOUTBY, L.LANGID, " + thisVersion + " from LIMSSOURCECONTROL L where ITEMID = ? and DONE = 0";
+		aReturn := LSelect(sSQL,, "DICTIONARY", {sGUID});
+				
+		:IF Empty(aReturn);
+			sCheckedOutBy := "";
+			sLanguage := "";
+			sVersion := NIL;
+		:ELSE;
+			sCheckedOutBy := aReturn[1][1];
+			sLanguage := aReturn[1][2];
+			sVersion := NIL;
+		:ENDIF;
+		AAdd(aItems, {oEnterpriseItem:Type, sOutType, sOutType, sURI, sCheckedOutBy, sGUID, sLanguage, sVersion});
+	:EXITCASE; 
+	
+	:CASE oEnterpriseItem:Type == "ENT_CAT_TABLES";
+		aItems := aTablesSubCategories;
+		sOutType := "CATEGORY";
+		bFolder := .T.;
+	:EXITCASE;
+
+	:CASE oEnterpriseItem:Type == "TBLCATEGORY";
+		sOutType := "TABLE";
+		sDataSet := DoProc("Enterprise_Data_Providers.TableProvider.GetList", {Upper(oEnterpriseItem:Name)});
+		oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+		:FOR i := 0 :TO oDataSet:Tables[0]:Rows:Count - 1;
+			oRow := oDataSet:Tables[0]:Rows[i];
+			AAdd(aItems, {oRow["TABLENAME"], sOutType, sOutType, sURI + "/" + oRow["TABLENAME"], oRow["CHECKEDOUTBY"], oRow["TABLEID"], NIL, oRow["VERSION"]});
+		:NEXT;		
+		bFolder := .F.;
+	:EXITCASE;
+
+	:CASE oEnterpriseItem:Type == "UNKNOWN_ROOT";
+		oResult := CreateUDObject({
+			{"success", .F.},
+			{"error", "Unknown enterprise root '" + oEnterpriseItem:Name + "'. Expected one of: Applications, ServerScripts, ClientScripts, DataSources, Tables, ServerLogs."}
+		});
+		Response:StatusCode := 400;
+		:RETURN oResult;
+	:EXITCASE;
+
+:ENDCASE;
+
+:DECLARE aResultItems;
+aResultItems := {};
+:FOR i := 1 :TO Len(aItems);
+	:DECLARE sScriptLang;
+	sScriptLang := aItems[i][3];
+	:BEGINCASE;
+		:CASE Upper(sScriptLang) == "STARLIMS";
+			sScriptLang := "SSL";
+		:EXITCASE;
+		:CASE Upper(sScriptLang) == "JSCRIPT";
+			sScriptLang := "JS";
+		:EXITCASE;
+		:CASE Upper(sScriptLang) == "SERVERLOG";
+			sScriptLang := "SERVERLOG";
+		:EXITCASE;
+		:CASE Upper(sScriptLang) == "TABLE";
+			sScriptLang := "XML";
+		:EXITCASE;
+	:ENDCASE;
+	
+	:DECLARE oItem;
+	oItem := oUtils:RemoveDBNull(CreateUDObject({
+		{"name", aItems[i][1]},
+		{"type", aItems[i][2]},
+		{"uri", aItems[i][4]},
+		{"checkedOutBy", aItems[i][5]},
+		{"scriptLanguage", sScriptLang},
+		{"isFolder", bFolder},
+		{"guid", aItems[i][6]},
+		{"language", aItems[i][7]},
+		{"version", aItems[i][8]}
+	}));
+	AAdd(aResultItems, oItem);
+:NEXT;
+
+oResult := CreateUDObject({
+	{"success", .T.},
+	{"data", CreateUDObject({{"items", aResultItems}})}
+});
+
+Response:StatusCode := 200;
+:RETURN oResult;
+
+:PROCEDURE _GetCategoryItems;
+:PARAMETERS sDataSet, sOutType, sURI;
+:DEFAULT sDataSet, "";
+:DEFAULT sOutType, "";
+:DEFAULT sURI, "";
+
+:DECLARE aItems, i, oDataSet, oRow;
+	aItems := {};
+	:IF !Empty(sDataSet);
+		oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+		:FOR i := 0 :TO oDataSet:Tables[0]:Rows:Count - 1;
+			oRow := oDataSet:Tables[0]:Rows[i];
+			AAdd(aItems, {oRow["CATNAME"], sOutType, "N/A", sURI + "/" + oRow["CATNAME"], NIL, NIL, NIL, NIL});
+		:NEXT;
+	:ENDIF;
+
+	:RETURN aItems;
+:ENDPROC;
+
+:PROCEDURE _GetCheckOutLang;
+:PARAMETERS sGUID;
+:DECLARE sSQL, aReturn;
+	sSQL := "select LANGID from LIMSSOURCECONTROL where ITEMID = ? and DONE = 0";
+	aReturn := LSelect(sSQL,, "DICTIONARY", {sGUID});
+	:IF Empty(aReturn);
+		:RETURN "";
+	:ELSE;
+		:RETURN aReturn[1][1];
+	:ENDIF;
+:ENDPROC;

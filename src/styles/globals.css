@@ -12,6 +12,40 @@
   --sl-text-dim: #858585;
 }
 
+.workbench-rail-button {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #858585;
+  border-left: 2px solid transparent;
+}
+
+.workbench-rail-button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.workbench-rail-button:hover,
+.workbench-rail-button.active {
+  color: #e7e7e7;
+}
+
+.workbench-rail-button.active {
+  border-left-color: #4daafc;
+}
+
+@keyframes agentPulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.agent-pulse {
+  color: #4daafc;
+  animation: agentPulse 1.1s ease-in-out infinite;
+}
+
 * {
   margin: 0;
   padding: 0;

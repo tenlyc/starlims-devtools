@@ -10,9 +10,9 @@ export class SparkModel extends BaseAIModel {
   readonly name = 'iFlytek Spark';
   readonly provider: ModelProvider = 'spark';
 
-  private appId: string = '';
-  private apiSecret: string = '';
-  private apiKey: string = '';
+  private appId = '';
+  private apiSecret = '';
+  private apiKey = '';
 
   protected getDefaultBaseUrl(): string {
     return 'https://spark-api.xf-yun.com/v3.1/chat';

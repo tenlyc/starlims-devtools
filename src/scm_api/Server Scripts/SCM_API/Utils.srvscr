@@ -1,0 +1,671 @@
+/********************************************************************************
+Description.. :	Utility functions
+Author....... :	MARIUS, DC
+Date......... : 2018-11-02
+*******************************************************************************/;
+:CLASS Utils;
+
+:PROCEDURE TranslateFileTypeToItemType;
+:PARAMETERS sFileType;
+:DECLARE sItemType;
+	:BEGINCASE;
+		:CASE sFileType == "SS";
+			sItemType := "ServerScript";
+		:EXITCASE;
+		:CASE sFileType == "CS";
+			sItemType := "ClientScript";
+		:EXITCASE;
+		:CASE sFileType == "APPSS";
+			sItemType := "AppServerScript";
+		:EXITCASE;
+		:CASE sFileType == "APPCS";
+			sItemType := "AppClientScript";
+		:EXITCASE;
+		:CASE sFileType == "FRM";
+			sItemType := "Form";
+		:EXITCASE;
+		:CASE sFileType == "DS";
+			sItemType := "DataSourceScript";
+		:EXITCASE;
+		:CASE sFileType == "APPDS";
+			sItemType := "AppDataSourceScript";
+		:EXITCASE;
+		:CASE sFileType == "SERVERLOG";
+			sItemType := "ServerLog";
+		:OTHERWISE;
+			sItemType := "Unknown";
+		:EXITCASE;
+	:ENDCASE;
+	
+	:RETURN sItemType;
+:ENDPROC;
+
+:PROCEDURE GetDataSetTableFromString;
+:PARAMETERS sDataSet;
+:DECLARE oDataSet;
+	oDataSet := DoProc( "Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+	:IF oDataSet:Tables:Count > 0;
+		:RETURN oDataSet:Tables[0];
+	:ELSE;
+		:RETURN NIL;
+	:ENDIF;
+:ENDPROC;
+
+:PROCEDURE RemoveDBNull;
+:PARAMETERS oObject;
+	:DECLARE oDBNull;
+	oDBNull := LimsNetConnect("System", "System.DBNull");
+
+	:DECLARE aProps, i;
+	aProps := oObject:GetProperties();
+	:FOR i := 1 :TO Len(aProps);
+		:DECLARE oValue;
+		oValue := GetInternal(oObject, aProps[i]);
+		:IF oDBNull:Value:Equals(oValue);
+			SetInternal(oObject, aProps[i], ""); 
+		:ENDIF;
+	:NEXT;
+	
+	:RETURN oObject;
+:ENDPROC;
+
+:PROCEDURE ParseURI;
+:PARAMETERS sURI;
+:DEFAULT sURI, "";
+:DECLARE aComponents, oEnterpriseItem, nCount;
+	sURI := AllTrim(sURI);
+	:IF Right(sURI, 1) == "/" .AND. Len(sURI) > 1;
+		sURI := SubStr(sURI, 1, Len(sURI) - 1);
+	:ENDIF;
+	oEnterpriseItem := CreateUDObject();
+	
+	/* initialize AppName and Category with default values;
+	oEnterpriseItem:AppName := "N/A";
+	oEnterpriseItem:CategoryName := "N/A";
+	oEnterpriseItem:Type = "N/A";
+	
+	aComponents := Me:GetURIComponents(sURI);
+	nCount := Len(aComponents);
+	:IF Empty(aComponents);
+		oEnterpriseItem:Type := "ROOT";
+		:RETURN oEnterpriseItem;
+	:ENDIF;
+	
+	:DECLARE sEnterpriseCategory;
+	sEnterpriseCategory := aComponents[1];
+	
+	:IF !(AScanExact({"APPLICATIONS", "SERVERSCRIPTS", "CLIENTSCRIPTS", 
+		"DATASOURCES", "TABLES", "SERVERLOGS"}, Upper(sEnterpriseCategory)) > 0);
+		oEnterpriseItem:Type := "UNKNOWN_ROOT";
+		oEnterpriseItem:Name := sEnterpriseCategory;
+		:RETURN oEnterpriseItem;
+	:ENDIF;
+
+	:BEGINCASE;
+		:CASE Upper(sEnterpriseCategory) == "APPLICATIONS" .AND. nCount == 1;
+			oEnterpriseItem:Type := "ENT_CAT_APPS";
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "APPLICATIONS" .AND. nCount == 2;
+			oEnterpriseItem:Type := "APPCATEGORY";
+			oEnterpriseItem:Name := aComponents[2];
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "APPLICATIONS" .AND. nCount == 3;
+			oEnterpriseItem:Type := "APP";
+			oEnterpriseItem:CategoryName := aComponents[2];
+			oEnterpriseItem:Name := aComponents[3];
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "APPLICATIONS" .AND. nCount == 4;
+			oEnterpriseItem:Type := "APPSUBCATEGORY";
+			oEnterpriseItem:CategoryName := aComponents[2];
+			oEnterpriseItem:AppName := aComponents[3];
+			oEnterpriseItem:Name := aComponents[4];
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "APPLICATIONS" .AND. nCount >= 5;
+			:DECLARE sSubCategory, sFormCodeType;
+			sSubCategory := aComponents[4];
+			oEnterpriseItem:CategoryName := aComponents[2];
+			oEnterpriseItem:AppName := aComponents[3];
+			:BEGINCASE;
+				:CASE Upper(sSubCategory) == "SERVERSCRIPTS";
+					oEnterpriseItem:Type := "APPSS";
+					oEnterpriseItem:Name := aComponents[5];
+				:EXITCASE;
+				:CASE Upper(sSubCategory) == "CLIENTSCRIPTS";
+					oEnterpriseItem:Type := "APPCS";
+					oEnterpriseItem:Name := aComponents[5];
+				:EXITCASE;
+				:CASE Upper(sSubCategory) == "DATASOURCES";
+					oEnterpriseItem:Type := "APPDS";
+					oEnterpriseItem:Name := aComponents[5];
+				:EXITCASE;
+				:CASE Upper(sSubCategory) == "HTMLFORMS";
+					sFormCodeType := aComponents[5];
+					oEnterpriseItem:Name := aComponents[6];
+					:IF Upper(sFormCodeType) == "XML";
+						oEnterpriseItem:Type := "HTMLFORMXML";
+					:ELSE;
+						:IF Upper(sFormCodeType) == "GUIDE";
+							oEnterpriseItem:Type := "HTMLFORMGUIDE";
+						:ELSE;
+							:IF Upper(sFormCodeType) == "RESOURCES";
+								oEnterpriseItem:Type := "HTMLFORMRESOURCES";
+							:ELSE;
+								oEnterpriseItem:Type := "HTMLFORMCODE";
+							:ENDIF;
+						:ENDIF;
+					:ENDIF;
+				:EXITCASE;
+				:CASE Upper(sSubCategory) == "XFDFORMS";
+					sFormCodeType := aComponents[5];
+					oEnterpriseItem:Name := aComponents[6];
+					:IF Upper(sFormCodeType) == "XML";
+						oEnterpriseItem:Type := "XFDFORMXML";
+					:ELSE;
+						:IF Upper(sFormCodeType) == "RESOURCES";
+							oEnterpriseItem:Type := "XFDFORMRESOURCES";
+						:ELSE;
+							oEnterpriseItem:Type := "XFDFORMCODE";
+						:ENDIF;
+					:ENDIF;
+				:EXITCASE;
+			:ENDCASE;	
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "SERVERSCRIPTS" .AND. nCount == 1;
+			oEnterpriseItem:Type := "ENT_CAT_SS";
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "SERVERSCRIPTS" .AND. nCount == 2;
+			oEnterpriseItem:Type := "SSCATEGORY";
+			oEnterpriseItem:Name := aComponents[2];
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "SERVERSCRIPTS" .AND. nCount == 3;
+			oEnterpriseItem:Type := "SS";
+			oEnterpriseItem:CategoryName := aComponents[2];
+			oEnterpriseItem:Name := aComponents[3];
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "CLIENTSCRIPTS" .AND. nCount == 1;
+			oEnterpriseItem:Type := "ENT_CAT_CS";
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "CLIENTSCRIPTS" .AND. nCount == 2;
+			oEnterpriseItem:Type := "CSCATEGORY";
+			oEnterpriseItem:Name := aComponents[2];
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "CLIENTSCRIPTS" .AND. nCount == 3;
+			oEnterpriseItem:Type := "CS";
+			oEnterpriseItem:CategoryName := aComponents[2];
+			oEnterpriseItem:Name := aComponents[3];
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "DATASOURCES" .AND. nCount == 1;
+			oEnterpriseItem:Type := "ENT_CAT_DS";
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "DATASOURCES" .AND. nCount == 2;
+			oEnterpriseItem:Type := "DSCATEGORY";
+			oEnterpriseItem:Name := aComponents[2];
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "DATASOURCES" .AND. nCount == 3;
+			oEnterpriseItem:Type := "DS";
+			oEnterpriseItem:CategoryName := aComponents[2];
+			oEnterpriseItem:Name := aComponents[3];
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "SERVERLOGS" .AND. nCount == 1;
+			oEnterpriseItem:Type := "ENT_CAT_LOG";
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "SERVERLOGS" .AND. nCount == 2;
+			oEnterpriseItem:Type := "SERVERLOG";
+			oEnterpriseItem:CategoryName := aComponents[1];
+			oEnterpriseItem:Name := aComponents[2];
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "TABLES" .AND. nCount == 1;
+			oEnterpriseItem:Type := "ENT_CAT_TABLES";
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "TABLES" .AND. nCount == 2;
+			oEnterpriseItem:Type := "TBLCATEGORY";
+			oEnterpriseItem:Name := aComponents[2];
+		:EXITCASE;
+		:CASE Upper(sEnterpriseCategory) == "TABLES" .AND. nCount == 3;
+			oEnterpriseItem:Type := "TABLE";
+			oEnterpriseItem:CategoryName := aComponents[2];
+			oEnterpriseItem:Name := aComponents[3];
+		:EXITCASE;
+	:ENDCASE;
+	
+	:RETURN oEnterpriseItem;
+:ENDPROC;
+
+:PROCEDURE GetURIComponents;
+:PARAMETERS sURI;
+:DECLARE aURIComponents;
+	sURI := Replace(sURI, "\", "/");
+	aURIComponents := BuildArray(sURI,,"/",,.T.);
+	:IF Len(aURIComponents) > 0;
+		:RETURN DelArray(aURIComponents, 1);
+	:ELSE;
+		:RETURN {};
+	:ENDIF;
+:ENDPROC;
+
+/* ------------------------------------------------------------------
+Returns the GUID of an item
+---------------------------------------------------------------------;
+:PROCEDURE GetItemGUID;
+:PARAMETERS sItemName, sItemType;
+:DECLARE sGUID, aItemName;
+
+	:IF At(".", sItemName) > 0;
+		aItemName := BuildArray(sItemName,, ".");
+	:ELSE;
+		aItemName := {sItemName};
+	:ENDIF;
+
+	sGUID := "";
+
+	:BEGINCASE;
+		:CASE sItemType == "APP";
+			sGUID := Me:GetAppId(aItemName[1], aItemName[2]);
+		:EXITCASE;
+		:CASE sItemType == "APPCATEGORY";
+			sGUID := Me:GetAppCatId(aItemName[1]);
+		:EXITCASE;
+		:CASE sItemType == "SSCATEGORY";
+			sGUID := Me:GetSSCatId(aItemName[1]);
+		:EXITCASE;
+		:CASE sItemType == "CSCATEGORY";
+			sGUID := Me:GetCSCatId(aItemName[1]);
+		:EXITCASE;
+		:CASE sItemType == "DSCATEGORY";
+			sGUID := Me:GetDSCatId(aItemName[1]);
+		:EXITCASE;
+		:CASE sItemType == "SS".OR. sItemType == "APPSS";
+			sGUID := Me:GetServerScriptId(aItemName[1], aItemName[2]);
+		:EXITCASE;
+		:CASE sItemType == "CS" .OR. sItemType == "APPCS";
+			sGUID := Me:GetClientScriptId(aItemName[1], aItemName[2]);
+		:EXITCASE;
+		:CASE sItemType == "DS" .OR. sItemType == "APPDS";
+			sGUID := Me:GetDataSourceId(aItemName[1], aItemName[2]);
+		:EXITCASE;
+		:CASE sItemType == "HTMLFORMXML" .OR. sItemType == "HTMLFORMCODE" .OR. sItemType == "HTMLFORMGUIDE" .OR. sItemType == "HTMLFORMRESOURCES";
+			sGUID := Me:GetFormId(aItemName[1], aItemName[2], "HTML");
+		:EXITCASE;
+		:CASE sItemType == "XFDFORMXML" .OR. sItemType == "XFDFORMCODE" .OR. sItemType == "XFDFORMRESOURCES";
+			sGUID := Me:GetFormId(aItemName[1], aItemName[2], "XFD");
+		:EXITCASE;
+		:CASE sItemType == "TABLE";
+			sGUID := Me:GetTableId(aItemName[Len(aItemName)], iif(Len(aItemName) > 1, aItemName[1], ""));
+		:EXITCASE;
+	:ENDCASE;
+	
+	:RETURN sGUID;
+:ENDPROC;
+
+/*--------------------------------------------------------------------
+Returns the application GUID for application and category name
+----------------------------------------------------------------------;
+:PROCEDURE GetAppId;
+:PARAMETERS sCategoryName, sAppName;
+:DEFAULT sCategoryName, "";
+	:DECLARE sSQL, aReturn, sSysLayerId, sCategoryFilter;
+	sSysLayerId := GetSystemLayerId();
+	sAppName := Upper(sAppName);
+	
+	:IF Empty(sCategoryName);
+		sCategoryFilter := "";
+	:ELSE;
+		sCategoryName := Upper(sCategoryName);
+		sCategoryFilter := " AND c.CATNAME = ?sCategoryName? ";
+	:ENDIF;
+
+	sSQL :=
+	"SELECT APPID 
+	FROM LIMSAPPLICATIONS a
+	JOIN LIMSAPPCATEGORIES c on c.CATEGORYID = a.CATEGORYID
+	WHERE a.APPNAME = ?sAppName?
+	" + sCategoryFilter + "
+	order by
+	case
+		when a.LAYERID <= ?sSysLayerId? then ?sSysLayerId? - a.LAYERID
+		else a.LAYERID
+	end";
+
+	aReturn := SqlExecute(sSQL, "DICTIONARY");
+	:IF Len(aReturn) = 0;
+		:RETURN "";
+	:ENDIF;
+
+	:RETURN aReturn[1, 1];
+:ENDPROC;
+
+/*--------------------------------------------------------------------
+Returns the application category GUID for category name
+----------------------------------------------------------------------;
+:PROCEDURE GetAppCatId;
+:PARAMETERS sCategoryName;
+	:DECLARE sSQL, aReturn, sSysLayerId;
+	sSysLayerId := GetSystemLayerId();
+	sCategoryName := Upper(sCategoryName);
+	sSQL :=
+	"SELECT CATEGORYID
+	FROM LIMSAPPCATEGORIES
+	WHERE CATNAME = ?sCategoryName?
+	order by
+	case
+		when LAYERID <= ?sSysLayerId? then ?sSysLayerId? - LAYERID
+		else LAYERID
+	end";
+	
+	aReturn := SqlExecute(sSQL, "DICTIONARY");
+	:IF Len(aReturn) = 0;
+		:RETURN "";
+	:ENDIF;
+
+	:RETURN aReturn[1, 1];
+:ENDPROC;
+
+/*--------------------------------------------------------------------
+Returns the server script category GUID for category name
+----------------------------------------------------------------------;
+:PROCEDURE GetSSCatId;
+:PARAMETERS sCategoryName;
+	:DECLARE sSQL, aReturn, sSysLayerId;
+	sSysLayerId := GetSystemLayerId();
+	sCategoryName := Upper(sCategoryName);
+	sSQL :=
+	"SELECT CATEGORYID
+	FROM LIMSSERVERSCRIPTCATEGORIES
+	WHERE CATNAME = ?sCategoryName?
+	order by
+	case
+		when LAYERID <= ?sSysLayerId? then ?sSysLayerId? - LAYERID
+		else LAYERID
+	end";
+	
+	aReturn := SqlExecute(sSQL, "DICTIONARY");
+
+	:IF Len(aReturn) = 0;
+		:RETURN "";
+	:ENDIF;
+
+	:RETURN aReturn[1, 1];
+:ENDPROC;
+
+/*--------------------------------------------------------------------
+Returns the data source category GUID for category name
+----------------------------------------------------------------------;
+:PROCEDURE GetDSCatId;
+:PARAMETERS sCategoryName;
+	:DECLARE sSQL, aReturn, sSysLayerId;
+	sSysLayerId := GetSystemLayerId();
+	sCategoryName := Upper(sCategoryName);
+	sSQL :=
+	"SELECT CATEGORYID
+	FROM LIMSDATASOURCECATEGORIES
+	WHERE CATNAME = ?sCategoryName?
+	order by
+	case
+		when LAYERID <= ?sSysLayerId? then ?sSysLayerId? - LAYERID
+		else LAYERID
+	end";
+	
+	aReturn := SqlExecute(sSQL, "DICTIONARY");
+
+	:IF Len(aReturn) = 0;
+		:RETURN "";
+	:ENDIF;
+
+	:RETURN aReturn[1, 1];
+:ENDPROC;
+
+/*--------------------------------------------------------------------
+Returns the client script category GUID for category name
+----------------------------------------------------------------------;
+:PROCEDURE GetCSCatId;
+:PARAMETERS sCategoryName;
+	:DECLARE sSQL, aReturn, sSysLayerId;
+	sSysLayerId := GetSystemLayerId();
+	sCategoryName := Upper(sCategoryName);
+	sSQL :=
+	"SELECT CATEGORYID
+	FROM LIMSCLIENTSCRIPTCATEGORIES
+	WHERE CATNAME = ?sCategoryName?
+	order by
+	case
+		when LAYERID <= ?sSysLayerId? then ?sSysLayerId? - LAYERID
+		else LAYERID
+	end";
+	
+	aReturn := SqlExecute(sSQL, "DICTIONARY");
+	:IF Len(aReturn) = 0;
+		:RETURN "";
+	:ENDIF;
+	
+	:RETURN aReturn[1, 1];
+:ENDPROC;
+
+/* -------------------------------------------------------------------
+Returns the Form GUID for the form identified by AppName and FormName
+----------------------------------------------------------------------;
+:PROCEDURE GetFormId;
+:PARAMETERS sAppName, sFormName, sFormType;
+:DEFAULT sFormType, 'XFD';
+	:DECLARE sSQL, aReturn, sSysLayerId;
+	sSysLayerId := GetSystemLayerId();
+	sAppName := Upper(sAppName);
+	sFormName := Upper(sFormName);
+	sSQL := "SELECT f.FORMID 
+				FROM LIMSXFDFORMS f, LIMSAPPLICATIONS
+				WHERE f.APPID = LIMSAPPLICATIONS.APPID
+					AND LIMSAPPLICATIONS.APPNAME = ?sAppName?
+					AND f.FORMNAME = ?sFormName?
+					AND FORMTYPE = ?sFormType?
+				order by
+					case
+						when f.LAYERID <= ?sSysLayerId? then ?sSysLayerId? - f.LAYERID
+						else f.LAYERID
+					end";
+
+	aReturn := SqlExecute(sSQL, "DICTIONARY");
+	
+	:IF Len(aReturn) = 0;
+		:RETURN "";
+	:ENDIF;
+
+	:RETURN aReturn[1, 1];
+:ENDPROC;
+
+/* -------------------------------------------------------------------------------
+Returns the Client script GUID for the script identified by CatName and ScriptName
+----------------------------------------------------------------------------------;
+:PROCEDURE GetClientScriptId;
+:PARAMETERS sCatName, sScriptName;
+	:DECLARE sSQL, aReturn, sSysLayerId;
+	sSysLayerId := GetSystemLayerId();
+	sCatName := Upper(sCatName);
+	sScriptName := Upper(sScriptName);
+	sSQL := 
+	"SELECT s.SCRIPTID
+	FROM LIMSCLIENTSCRIPTS s, LIMSCLIENTSCRIPTCATEGORIES
+	WHERE s.CATEGORYID = LIMSCLIENTSCRIPTCATEGORIES.CATEGORYID
+	AND LIMSCLIENTSCRIPTCATEGORIES.CATNAME = ?sCatName?
+	AND s.SCRIPTNAME = ?sScriptName?
+	order by
+	case
+		when s.LAYERID <= ?sSysLayerId? then ?sSysLayerId? - s.LAYERID
+		else s.LAYERID
+	end";
+
+	aReturn := SqlExecute(sSQL, "DICTIONARY");
+	
+	:IF Len(aReturn) = 0;
+		:RETURN "";
+	:ENDIF;
+
+	:RETURN aReturn[1, 1];
+:ENDPROC;
+
+/* -------------------------------------------------------------------------------
+Returns the Server script GUID for the script identified by CatName and ScriptName
+----------------------------------------------------------------------------------;
+:PROCEDURE GetServerScriptId;
+:PARAMETERS sCatName, sScriptName;
+	:DECLARE sSQL, aReturn, sSysLayerId;
+	sSysLayerId := GetSystemLayerId();	
+	sCatName := Upper(sCatName);
+	sScriptName := Upper(sScriptName);
+	
+	sSQL := 
+	"SELECT s.SCRIPTID 
+	FROM LIMSSERVERSCRIPTS s, LIMSSERVERSCRIPTCATEGORIES
+	WHERE s.CATEGORYID = LIMSSERVERSCRIPTCATEGORIES.CATEGORYID
+	AND LIMSSERVERSCRIPTCATEGORIES.CATNAME = ?sCatName?
+	AND s.SCRIPTNAME = ?sScriptName?
+	order by
+	case
+		when s.LAYERID <= ?sSysLayerId? then ?sSysLayerId? - s.LAYERID
+		else s.LAYERID
+	end";
+
+	aReturn := SqlExecute(sSQL, "DICTIONARY");
+	
+	:IF Len(aReturn) = 0;
+		:RETURN "";
+	:ENDIF;
+
+	:RETURN aReturn[1, 1];
+:ENDPROC;
+
+/* ------------------------------------------------------------------
+Private function used by other functions in this module.
+Returns the name of an entity in cat.name format based on
+an sql statement and an Id.
+------------------------------------------------------------------;
+:PROCEDURE GetEntityName;
+:PARAMETERS sId, sSqlStatement;
+	:DECLARE aReturn;
+	aReturn := SqlExecute(sSqlStatement, "DICTIONARY");
+
+	:IF Len(aReturn) = 0;
+		:RETURN "";
+	:ENDIF;
+
+	:RETURN aReturn[1, 1] + "." + aReturn[1, 2];
+:ENDPROC;
+
+/* -------------------------------------------------------------------------------
+Returns the Data source GUID for the script identified by CatName and ScriptName
+----------------------------------------------------------------------------------;
+:PROCEDURE GetDataSourceId;
+:PARAMETERS sCatName, sDSName;
+	:DECLARE sSQL, aReturn, sSysLayerId;
+
+	sSysLayerId := GetSystemLayerId();
+	sCatName := Upper(sCatName);
+	sDSName := Upper(sDSName);
+	
+	sSQL := "SELECT d.DATASOURCEID
+				FROM LIMSDATASOURCES d, LIMSDATASOURCECATEGORIES c
+				WHERE d.CATEGORYID = c.CATEGORYID
+				AND c.CATNAME = ?sCatName?
+				AND d.DSNAME = ?sDSName?
+				order by
+					case
+						when d.LAYERID <= ?sSysLayerId? then ?sSysLayerId? - d.LAYERID
+						else d.LAYERID
+					end";
+
+	aReturn := SqlExecute(sSQL, "DICTIONARY");
+	
+	:IF Len(aReturn) = 0;
+		:RETURN "";
+	:ENDIF;
+
+	:RETURN aReturn[1, 1];
+:ENDPROC;
+
+
+/* -------------------------------------------------------------------------------
+Returns the table ID for the table identified by TableName
+----------------------------------------------------------------------------------;
+:PROCEDURE GetTableId;
+:PARAMETERS sTableName, sTableCategory;
+	:DECLARE sSQL, aReturn, sSysLayerId, sCategoryFilter;
+	sSysLayerId := GetSystemLayerId();
+	sTableName := Upper(sTableName);
+	sTableCategory := Upper(sTableCategory);
+	sCategoryFilter := "";
+
+	:IF sTableCategory == "DICTIONARY";
+		sCategoryFilter := " and t.ISSYSTEM = 'Y'";
+	:ELSE;
+		:IF sTableCategory == "DATABASE";
+			sCategoryFilter := " and t.ISSYSTEM = 'N'";
+		:ENDIF;
+	:ENDIF;
+
+	sSQL := "SELECT t.TABLEID
+				FROM LIMSTABLES t
+				WHERE t.TABLENAME=?sTableName?" + sCategoryFilter + "
+				order by
+					case
+						when t.LAYERID <= ?sSysLayerId? then ?sSysLayerId? - t.LAYERID
+						else t.LAYERID
+					end";
+ 
+	aReturn := SqlExecute(sSQL, "DICTIONARY"); 
+	
+	:IF Len(aReturn) = 0 .AND. !Empty(sCategoryFilter);
+		sSQL := "SELECT t.TABLEID
+				FROM LIMSTABLES t
+				WHERE t.TABLENAME=?sTableName?
+				order by
+					case
+						when t.LAYERID <= ?sSysLayerId? then ?sSysLayerId? - t.LAYERID
+						else t.LAYERID
+					end";
+		aReturn := SqlExecute(sSQL, "DICTIONARY");
+	:ENDIF;
+	
+	:IF Len(aReturn) = 0;
+		:RETURN "";
+	:ENDIF;
+
+	:RETURN aReturn[1, 1];
+:ENDPROC;
+
+
+/* -----------------------------------------------------------------------------------
+Return the name of the enterprise data provider responsible for handling the specified
+item type.
+-------------------------------------------------------------------------------------;
+:PROCEDURE GetProviderScript;
+:PARAMETERS sItemType;
+
+  :DECLARE oProviderConfig;
+  oProviderConfig := CreateUDObject({
+    {"APPSS", "Enterprise_Data_Providers.AppServerScriptProvider"},
+    {"APPDS", "Enterprise_Data_Providers.AppDataSourceScriptProvider"},
+    {"APPCS", "Enterprise_Data_Providers.AppClientScriptProvider"},
+    {"SS", "Enterprise_Data_Providers.ServerScriptProvider"},
+    {"DS", "Enterprise_Data_Providers.DataSourceProvider"},
+    {"CS", "Enterprise_Data_Providers.ClientScriptProvider"},
+    {"HTMLFORMXML", "Enterprise_Data_Providers.FormProvider"},
+    {"HTMLFORMCODE", "Enterprise_Data_Providers.FormProvider"},
+    {"HTMLFORMGUIDE", "Enterprise_Data_Providers.FormProvider"},
+    {"XFDFORMRESOURCES", "Enterprise_Data_Providers.FormProvider"},
+    {"XFDFORMXML", "Enterprise_Data_Providers.FormProvider"},
+    {"XFDFORMCODE", "Enterprise_Data_Providers.FormProvider"},
+    {"APPCATEGORY", "Enterprise_Data_Providers.AppCategProvider"},
+    {"SSCATEGORY", "Enterprise_Data_Providers.ServerScriptCategProvider"},
+    {"CSCATEGORY", "Enterprise_Data_Providers.ClientScriptCategProvider"},
+    {"DSCATEGORY", "Enterprise_Data_Providers.DataSourceCategProvider"},
+		{"APPCATEGORY", "Enterprise_Data_Providers.AppCategProvider"},
+		{"SSCATEGORY", "Enterprise_Data_Providers.ServerScriptCategProvider"},
+		{"DSCATEGORY", "Enterprise_Data_Providers.DataSourceCategProvider"},
+		{"CSCATEGORY", "Enterprise_Data_Providers.ClientScriptCategProvider"},
+		{"TABLE", "Enterprise_Data_Providers.TableProvider"}
+  });
+
+  :IF oProviderConfig:IsProperty(sItemType);
+		:RETURN oProviderConfig:GetProperty(sItemType);
+	:ENDIF;
+
+	:RETURN NIL;
+:ENDPROC;

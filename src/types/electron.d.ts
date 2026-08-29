@@ -1,8 +1,14 @@
 /**
  * Type declarations for Electron API exposed via preload
  */
+import type { AgentApprovalDecision, AgentEvent, AgentProvider, AgentRuntimeStatus, AgentStartResult } from './agent';
 
 export interface ElectronAPI {
+  // STARLIMS MCP bridge
+  mcpGetStatus: () => Promise<{ enabled: boolean; running: boolean; host: string; port: number; url: string; error?: string }>;
+  onMcpRequest: (callback: (request: { id: string; tool: string; arguments: Record<string, unknown> }) => void) => () => void;
+  respondToMcpRequest: (response: { id: string; result?: unknown; error?: string }) => void;
+
   // Dialog
   showOpenDialog: (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>;
   showSaveDialog: (options: Electron.SaveDialogOptions) => Promise<Electron.SaveDialogReturnValue>;
@@ -61,6 +67,16 @@ export interface ElectronAPI {
   cliCheckOpenCode: () => Promise<boolean>;
   cliExecuteClaude: (prompt: string) => Promise<string>;
   cliExecuteOpenCode: (prompt: string) => Promise<string>;
+  cliGetStatuses: () => Promise<Record<'codex' | 'claude' | 'opencode', { available: boolean; version?: string; command?: string }>>;
+  cliExecute: (provider: 'codex' | 'claude' | 'opencode', prompt: string) => Promise<string>;
+
+  // Rich agent runtimes
+  agentGetStatuses: () => Promise<Record<AgentProvider, AgentRuntimeStatus>>;
+  agentStart: (provider: AgentProvider, prompt: string) => Promise<AgentStartResult>;
+  agentInterrupt: (provider: AgentProvider) => Promise<void>;
+  agentNewSession: (provider: AgentProvider) => Promise<void>;
+  agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => Promise<boolean>;
+  onAgentEvent: (callback: (event: AgentEvent) => void) => () => void;
 }
 
 declare global {

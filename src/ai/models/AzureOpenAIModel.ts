@@ -128,7 +128,9 @@ export class AzureOpenAIModel extends BaseAIModel {
             const parsed = JSON.parse(data);
             const delta = parsed.choices?.[0]?.delta?.content || '';
             if (delta) yield { delta, done: false };
-          } catch {}
+          } catch {
+            // Ignore incomplete SSE chunks and continue with the next event.
+          }
         }
       }
     }

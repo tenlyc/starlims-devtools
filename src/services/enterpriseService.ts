@@ -10,9 +10,9 @@ import { isBridgeRunning, launchXFDForm, launchHTMLForm } from './bridge';
 
 export class EnterpriseService implements IEnterpriseService {
   private config: ServerConfig | null = null;
-  private password: string = '';
-  private baseUrl: string = '';
-  private urlSuffix: string = 'lims';
+  private password = '';
+  private baseUrl = '';
+  private urlSuffix = 'lims';
   private sessionInfo: SessionInfo | null = null;
   private refreshSessionInterval: NodeJS.Timeout | null = null;
   private checkedOutDocuments: Map<string, string> = new Map();
@@ -319,7 +319,9 @@ export class EnterpriseService implements IEnterpriseService {
       isCheckedOut: item.checkedOut === 'true' || item.checkedOut === true,
       checkedOutBy: item.checkedOutBy,
       version: item.ver || item.version,
-      guid: item.guid || item.GUID || undefined
+      guid: item.guid || item.GUID || undefined,
+      language: item.language || undefined,
+      scriptLanguage: item.scriptLanguage || item.scriptlanguage || undefined
     }));
     console.log('Parsed enterprise items, checking for guid field:', data.map(item => ({ name: item.name, guid: item.guid || item.GUID })));
   }
@@ -344,18 +346,50 @@ export class EnterpriseService implements IEnterpriseService {
           const userMatch = row.match(/<CHECKEDOUTBY>([^<]*)<\/CHECKEDOUTBY>/);
           const typeMatch = row.match(/<CHILDTYPE>([^<]*)<\/CHILDTYPE>/);
           const parentNameMatch = row.match(/<ParentName>([^<]*)<\/ParentName>/);
+          const parentNameUpperMatch = row.match(/<PARENTNAME>([^<]*)<\/PARENTNAME>/);
+          const parentTypeMatch = row.match(/<PARENTTYPE>([^<]*)<\/PARENTTYPE>/);
+          const appCatNameMatch = row.match(/<APPCATNAME>([^<]*)<\/APPCATNAME>/);
+          const scriptLanguageMatch = row.match(/<SCRIPTLANGUAGE>([^<]*)<\/SCRIPTLANGUAGE>/);
+          const languageMatch = row.match(/<LANGID>([^<]*)<\/LANGID>/);
           const dateMatch = row.match(/<CHECKEDOUTDATE>([^<]*)<\/CHECKEDOUTDATE>/);
 
           if (childNameMatch) {
+            const rawType = typeMatch?.[1] || 'UNKNOWN';
+            const parentType = parentTypeMatch?.[1] || '';
+            const parentName = parentNameMatch?.[1] || parentNameUpperMatch?.[1] || '';
+            const appCategory = appCatNameMatch?.[1] || '';
+            const scriptLanguage = scriptLanguageMatch?.[1] || '';
+            const isApplicationItem = parentType === 'APP';
+            const normalizedType = scriptLanguage === 'HTML'
+              ? 'HTMLForm'
+              : rawType === 'SERVERSCRIPT'
+                ? (isApplicationItem ? 'AppServerScript' : 'ServerScript')
+                : rawType === 'CLIENTSCRIPT'
+                  ? (isApplicationItem ? 'AppClientScript' : 'ClientScript')
+                  : rawType === 'DATASOURCE'
+                    ? (isApplicationItem ? 'AppDataSourceScript' : 'DataSourceScript')
+                    : rawType;
+            const typeFolder = scriptLanguage === 'HTML'
+              ? 'HTML Forms'
+              : rawType === 'SERVERSCRIPT' ? 'Server Scripts'
+                : rawType === 'CLIENTSCRIPT' ? 'Client Scripts'
+                  : rawType === 'DATASOURCE' ? 'Data Sources' : rawType;
+            const pathParts = isApplicationItem
+              ? ['Applications', appCategory, parentName, typeFolder]
+              : [typeFolder, parentName];
             items.push({
               id: childIdMatch?.[1] || childNameMatch[1],
               name: childNameMatch[1],
-              type: typeMatch?.[1] || 'UNKNOWN',
+              type: normalizedType,
               uri: childIdMatch?.[1] || '',
               hasChildren: false,
               isCheckedOut: true,
               checkedOutBy: userMatch?.[1] || 'Unknown',
-              checkedOutDate: dateMatch?.[1]
+              checkedOutDate: dateMatch?.[1],
+              displayPath: pathParts.filter(Boolean).join(' / '),
+              language: scriptLanguage || languageMatch?.[1] || undefined,
+              scriptLanguage: scriptLanguage || undefined,
+              rawType
             });
           }
         }
@@ -628,7 +662,7 @@ export class EnterpriseService implements IEnterpriseService {
    * Get all checked out items
    * @param allUsers - if true, get all users' checkouts; if false, only current user's
    */
-  async getCheckedOutItems(allUsers: boolean = false): Promise<EnterpriseItem[]> {
+  async getCheckedOutItems(allUsers = false): Promise<EnterpriseItem[]> {
     try {
       const endpoint = allUsers ? 'GetCheckedOutItems?allUsers=true' : 'GetCheckedOutItems';
       const data = await this.apiRequest<any>(endpoint);

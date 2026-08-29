@@ -20,8 +20,8 @@ export abstract class BaseAIModel implements IAIModel {
   abstract readonly provider: ModelProvider;
 
   protected config: AIConfig | null = null;
-  protected baseUrl: string = '';
-  protected model: string = '';
+  protected baseUrl = '';
+  protected model = '';
 
   abstract initialize(config: AIConfig): Promise<boolean>;
 

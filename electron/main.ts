@@ -1,7 +1,12 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu, net } from 'electron';
 import { join } from 'path';
+import { existsSync, readdirSync, statSync } from 'fs';
+import { randomUUID } from 'crypto';
 import Store from 'electron-store';
 import log from 'electron-log';
+import { StarlimsMcpHttpServer } from './mcpServer';
+import { AgentRuntimeManager } from './agentRuntime';
+import type { AgentApprovalDecision, AgentEvent, AgentProvider, AgentRuntimeStatus } from '../src/types/agent';
 
 // Configure logging
 log.transports.file.level = 'info';
@@ -14,12 +19,41 @@ const store = new Store({
   defaults: {
     servers: [],
     selectedServer: '',
-    aiProvider: 'minimax',
+    mcpPort: 3002,
     windowBounds: { width: 1400, height: 900 }
   }
 });
 
 let mainWindow: BrowserWindow | null = null;
+let agentRuntime: AgentRuntimeManager | undefined;
+const pendingMcpCalls = new Map<string, {
+  resolve: (value: unknown) => void;
+  reject: (reason: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+
+const callRenderer = (tool: string, arguments_: Record<string, unknown>): Promise<unknown> => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return Promise.reject(new Error('STARLIMS DevTools window is not available.'));
+  }
+  const id = randomUUID();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingMcpCalls.delete(id);
+      reject(new Error(`STARLIMS MCP tool '${tool}' timed out after 60 seconds.`));
+    }, 60_000);
+    pendingMcpCalls.set(id, { resolve, reject, timer });
+    mainWindow!.webContents.send('mcp:request', { id, tool, arguments: arguments_ });
+  });
+};
+
+const mcpServer = new StarlimsMcpHttpServer(
+  callRenderer,
+  () => app.getVersion(),
+  (message, error) => error ? log.error(message, error) : log.info(message),
+  '127.0.0.1',
+  Number(store.get('mcpPort') || 3002)
+);
 
 // Get resource path for production
 const RESOURCE_PATH = app.isPackaged
@@ -69,7 +103,7 @@ function createWindow() {
       label: 'View',
       submenu: [
         { label: 'Toggle Sidebar', accelerator: 'CmdOrCtrl+B', click: () => mainWindow?.webContents.send('menu:toggleSidebar') },
-        { label: 'Toggle AI Panel', accelerator: 'CmdOrCtrl+Shift+A', click: () => mainWindow?.webContents.send('menu:toggleAIPanel') },
+        { label: 'Toggle MCP Panel', accelerator: 'CmdOrCtrl+Shift+A', click: () => mainWindow?.webContents.send('menu:toggleMCPPanel') },
         { type: 'separator' },
         { role: 'reload' },
         { label: 'Toggle Developer Tools', accelerator: 'F12', click: () => mainWindow?.webContents.toggleDevTools() },
@@ -147,6 +181,7 @@ function showAboutDialog() {
 app.whenReady().then(() => {
   log.info('App ready');
   createWindow();
+  void mcpServer.start();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -161,7 +196,23 @@ app.on('window-all-closed', () => {
   }
 });
 
+app.on('before-quit', () => {
+  agentRuntime?.dispose();
+  void mcpServer.stop();
+});
+
 // ==================== IPC Handlers ====================
+
+ipcMain.on('mcp:response', (_event, response: { id: string; result?: unknown; error?: string }) => {
+  const pending = pendingMcpCalls.get(response.id);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingMcpCalls.delete(response.id);
+  if (response.error) pending.reject(new Error(response.error));
+  else pending.resolve(response.result);
+});
+
+ipcMain.handle('mcp:getStatus', () => mcpServer.getStatus());
 
 // Dialog handlers
 ipcMain.handle('dialog:showOpenDialog', async (_, options) => {
@@ -391,6 +442,170 @@ ipcMain.handle('git:hasChanges', async (_, workspacePath: string) => {
 });
 
 // CLI execution handlers for AI code generation
+type CliProvider = 'codex' | 'claude' | 'opencode';
+
+const resolveCodexCommand = (): string => {
+  const configured = process.env.CODEX_CLI_PATH?.trim();
+  if (configured && existsSync(configured)) return configured;
+
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA;
+    const codexBin = localAppData ? join(localAppData, 'OpenAI', 'Codex', 'bin') : '';
+    if (codexBin && existsSync(codexBin)) {
+      const candidates = readdirSync(codexBin, { withFileTypes: true })
+        .flatMap((entry) => {
+          const candidate = entry.isDirectory()
+            ? join(codexBin, entry.name, 'codex.exe')
+            : entry.name.toLowerCase() === 'codex.exe' ? join(codexBin, entry.name) : '';
+          return candidate && existsSync(candidate) ? [candidate] : [];
+        })
+        .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs);
+      if (candidates[0]) return candidates[0];
+    }
+
+    const npmShim = process.env.APPDATA ? join(process.env.APPDATA, 'npm', 'codex.cmd') : '';
+    if (npmShim && existsSync(npmShim)) return npmShim;
+  }
+
+  return 'codex';
+};
+
+const getAgentRuntime = (): AgentRuntimeManager => {
+  if (!agentRuntime) {
+    agentRuntime = new AgentRuntimeManager({
+      codexCommand: resolveCodexCommand,
+      mcpUrl: () => mcpServer.getStatus().url,
+      cwd: () => process.cwd(),
+      getVersion: () => app.getVersion(),
+      emit: (event: AgentEvent) => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent:event', event);
+      }
+    });
+  }
+  return agentRuntime;
+};
+
+const cliCommand = (provider: CliProvider): { command: string; versionArgs: string[]; runArgs: string[] } => {
+  if (provider === 'codex') {
+    const mcpUrl = `http://127.0.0.1:${Number(store.get('mcpPort') || 3002)}/mcp`;
+    return {
+      command: resolveCodexCommand(),
+      versionArgs: ['--version'],
+      runArgs: [
+        'exec', '--skip-git-repo-check', '--color', 'never',
+        '-c', `mcp_servers.starlims.url=${mcpUrl}`,
+        '-c', 'mcp_servers.starlims.required=true',
+        '-'
+      ]
+    };
+  }
+  if (provider === 'claude') return { command: 'claude', versionArgs: ['--version'], runArgs: ['-p'] };
+  return { command: 'opencode', versionArgs: ['--version'], runArgs: ['run'] };
+};
+
+const checkCli = (provider: CliProvider): Promise<{ available: boolean; version?: string; command?: string }> => {
+  const { spawn } = require('child_process');
+  const spec = cliCommand(provider);
+  return new Promise((resolve) => {
+    const child = spawn(spec.command, spec.versionArgs, { shell: true, windowsHide: true });
+    let output = '';
+    child.stdout.on('data', (data: Buffer) => { output += data.toString(); });
+    child.stderr.on('data', (data: Buffer) => { output += data.toString(); });
+    child.on('close', (code: number) => {
+      const unavailable = /not recognized|not found|could not find/i.test(output);
+      resolve({
+        available: code === 0 && !unavailable,
+        version: output.trim().split(/\r?\n/).find(Boolean),
+        command: spec.command
+      });
+    });
+    child.on('error', () => resolve({ available: false }));
+  });
+};
+
+const executeCli = async (provider: CliProvider, prompt: string): Promise<string> => {
+  if (provider === 'codex') {
+    await mcpServer.start();
+    const status = mcpServer.getStatus();
+    if (!status.running) {
+      throw new Error(`STARLIMS MCP is not running: ${status.error || status.url}`);
+    }
+  }
+
+  const { spawn } = require('child_process');
+  const spec = cliCommand(provider);
+  return new Promise((resolve, reject) => {
+    const child = spawn(spec.command, spec.runArgs, {
+      shell: true,
+      windowsHide: true,
+      env: { ...process.env }
+    });
+    let stdout = '';
+    let stderr = '';
+    let finished = false;
+    const timeout = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      child.kill();
+      reject(new Error(`${provider} CLI timed out after 10 minutes.`));
+    }, 600_000);
+
+    child.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
+    child.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
+    child.on('close', (code: number) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      if (code === 0 && stdout.trim()) resolve(stdout.trim());
+      else reject(new Error((stderr || stdout || `${provider} CLI exited with code ${code}`).trim()));
+    });
+    child.on('error', (error: Error) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.stdin.write(prompt);
+    child.stdin.end();
+  });
+};
+
+ipcMain.handle('cli:getStatuses', async () => {
+  const providers: CliProvider[] = ['codex', 'claude', 'opencode'];
+  const entries = await Promise.all(providers.map(async (provider) => [provider, await checkCli(provider)] as const));
+  return Object.fromEntries(entries);
+});
+
+ipcMain.handle('agent:getStatuses', async () => {
+  const openCodeStatus = async (): Promise<AgentRuntimeStatus> => {
+    const status = await checkCli('opencode');
+    return { ...status, runtime: 'cli', detail: status.available ? 'CLI compatibility mode' : status.version };
+  };
+  return getAgentRuntime().statuses(openCodeStatus);
+});
+
+ipcMain.handle('agent:start', async (_, provider: AgentProvider, prompt: string) => {
+  if (!['codex', 'claude'].includes(provider)) throw new Error('This provider does not support rich agent sessions yet.');
+  if (!prompt.trim()) throw new Error('Prompt is required.');
+  await mcpServer.start();
+  const status = mcpServer.getStatus();
+  if (!status.running) throw new Error(`STARLIMS MCP is not running: ${status.error || status.url}`);
+  return getAgentRuntime().send(provider, prompt);
+});
+
+ipcMain.handle('agent:interrupt', async (_, provider: AgentProvider) => getAgentRuntime().interrupt(provider));
+ipcMain.handle('agent:newSession', async (_, provider: AgentProvider) => getAgentRuntime().newSession(provider));
+ipcMain.handle('agent:respondApproval', async (_, provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => {
+  getAgentRuntime().respond(provider, requestId, decision);
+  return true;
+});
+
+ipcMain.handle('cli:execute', async (_, provider: CliProvider, prompt: string) => {
+  if (!['codex', 'claude', 'opencode'].includes(provider)) throw new Error('Unsupported AI CLI provider.');
+  if (!prompt.trim()) throw new Error('Prompt is required.');
+  return executeCli(provider, prompt);
+});
+
 ipcMain.handle('cli:checkClaude', async () => {
   const { spawn } = require('child_process');
   return new Promise((resolve) => {

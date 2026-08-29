@@ -29,6 +29,10 @@ export interface EnterpriseItem {
   checkedOutBy?: string;
   checkedOutDate?: string;
   guid?: string;
+  displayPath?: string;
+  language?: string;
+  scriptLanguage?: string;
+  rawType?: string;
 }
 
 export interface CheckOutResult {

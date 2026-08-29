@@ -9,9 +9,9 @@ import { editorStore } from '../stores/editorStore';
 import { useAIStore } from '../stores/aiStore';
 
 class InlineCompletionService {
-  private isEnabled: boolean = true;
+  private isEnabled = true;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private debounceDelay: number = 300;
+  private debounceDelay = 300;
   private currentCompletion: { insertText: string } | null = null;
   private providerDisposable: monaco.IDisposable | null = null;
 

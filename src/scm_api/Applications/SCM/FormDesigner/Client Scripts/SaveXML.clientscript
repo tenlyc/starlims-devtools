@@ -1,0 +1,261 @@
+/*
+Description.. :	Save form as XML in database
+Author....... :	DC
+Date......... : 2023-11-16
+*/
+
+// convert Sencha date format to .NET format
+if (typeof Date._convertSenchaFormatToNet !== "function")
+{
+    Date._convertSenchaFormatToNet = function (format)
+    {
+        if (window.Starlims && window.Starlims.UserProfile &&
+            window.Starlims.UserProfile.ShortDatePattern &&
+            window.Starlims.UserProfile.ShortTimePattern &&
+            window.Starlims.UserProfile.LongDatePattern)
+        {
+            let sShort = Date._convertNetFormatToSencha(window.Starlims.UserProfile.ShortDatePattern);
+            if (format == sShort || format == "SHORT")
+                return "SHORT";
+
+            let sLong = Date._convertNetFormatToSencha(window.Starlims.UserProfile.LongDatePattern);
+            if (format == sLong || format == "LONG")
+                return "LONG";
+
+            let sTime = Date._convertNetFormatToSencha(window.Starlims.UserProfile.ShortTimePattern);
+            if (format == sTime || format == "TIME")
+                return "TIME";
+
+            return "CUSTOM";
+        }
+    };
+}
+
+// generate XML from form and save it to database
+async function SaveForm(sApplicationName, sFormName, sFormLang)
+{
+    var formNode = _treePanel.getRootNode().firstChild;
+    var sFormGUID = form.Variables["FormID"];
+
+    // strip language from formName
+    var sFormName = sFormName.split("(")[0].Trim();
+
+    var sXML = '<?xml version="1.0"?>\n' +
+        '<Form xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://www.starlims.com/html">\n' +
+        await GetXMLControl(formNode, "\t") +
+        "\t<RecordId>ORIGREC</RecordId>\n" +
+        "\t<FormType>" + sApplicationName + "." + sFormName + "</FormType>\n" +
+        "\t<UseNewEventsOrder>true</UseNewEventsOrder>\n" +
+        "\t<__array__Scripts>\n" +
+        "\t\t<item>\n" +
+        "\t\t\t<Id>__CodeBehind__</Id>\n" +
+        "\t\t\t<Src>RUNTIME_SUPPORT.GetXFDFormCodeBehind.lims?FormId=" + sFormGUID + "</Src>\n" +
+        "\t\t\t<ScriptLanguage>javascript</ScriptLanguage>\n" +
+        "\t\t</item>\n" +
+        "\t</__array__Scripts>\n" +
+        "\t<Resources>\n" +
+        "\t\t<Data>RUNTIME_SUPPORT.GetFormResources.lims?formID=" + sFormGUID + "&amp;languageID=" + sFormLang + "&amp;isProgramatic=Y</Data>\n" +
+        "\t\t<KeyItem>ResourceId</KeyItem>\n" +
+        "\t\t<TextItem>ResourceValue</TextItem>\n" +
+        "\t\t<ResolveEscapeChars>true</ResolveEscapeChars>\n" +
+        "\t</Resources>\n" +
+        "</Form>\n";
+    //console.log(sXML);
+    lims.CallServer("Enterprise_Data_Providers.FormProvider.SaveXFDDocument", [sFormGUID, sFormLang, sXML]);
+}
+
+// check if control is extended control (not directly addable to form)
+function isExtendedControl(controlType)
+{
+    const extendedControls = ["TabPage", "DataGridColumn", "DataGridTable"];
+    return extendedControls.includes(controlType);
+}
+
+// generate XML for control properties
+async function GetXMLProperties(control, sIndentation = "")
+{
+    var sXML = "";
+    var aProperties = control.DataProperties;
+
+    // add "Starlims" to control type
+    var sType = control.xType.includes("Starlims") ? control.xType : "Starlims" + control.xType;
+    sXML += sIndentation + "<xtype>" + sType + "</xtype>\n";
+
+    // add guid and id
+    if (!control.Guid)
+        control.Guid = System.Guid.NewGuid().ToString();
+
+    sXML += sIndentation + "<Guid>" + control.Guid + "</Guid>\n";
+
+
+    // loop over control's properties
+    for (let row of aProperties)
+    {
+        let sPropertyName = row["PROPERTY_NAME"];
+
+        // skip special properties
+        if (sPropertyName === "Resources" || sPropertyName === "RootTable")
+            continue;
+
+        // get value from control
+        let value = control[sPropertyName];
+
+        if (sPropertyName === "Format" && control.xType === "DateTimePicker")
+            value = Date._convertSenchaFormatToNet(value);
+
+        // skip invalid values
+        if (value === undefined || value === null || value === "" || value === "default")
+            continue;
+
+        // skip id in brackets
+        if (sPropertyName === "(Id)")
+        {
+            control.Id = control.itemId = value;
+            continue;
+        }
+
+        if (control.xType === "TabPage" || control.xType === "Form")
+        {
+            if (sPropertyName === "Top")
+                value = 0;
+            else if (sPropertyName === "Left")
+                value = 0;
+        }
+
+        // convert function to string and get only function name
+        if (sPropertyName.includes("On") && typeof value === "function")
+        {
+            value = value.toString().split("(")[0].replace("async ", "").replace("function ", "").Trim();
+            if (value == "__control_OnClick")
+                continue;
+        }
+        if (control.xType === "SplitterPanel")
+        {
+            if (sPropertyName === "FixedPanel")
+                value = value.toUpperCase();
+        }
+
+        sXML += sIndentation + "<" + sPropertyName + ">" + value + "</" + sPropertyName + ">\n";
+    }
+
+    // add control id
+    if (control.Id == "_Form1")
+        sXML += sIndentation + "<Id>Form1</Id>\n";
+    else
+        sXML += sIndentation + "<Id>" + control.Id + "</Id>\n";
+
+    return sXML;
+}
+
+// generate XML from javascript control
+function GetSplitContainerPanelNode(node, panelControl, panelIndex)
+{
+    if (!node || !node.childNodes || node.childNodes.length === 0)
+        return null;
+
+    if (panelControl && panelControl.Guid)
+    {
+        for (let childNode of node.childNodes)
+        {
+            if (!childNode || !childNode.data || !childNode.data.control)
+                continue;
+
+            if (childNode.data.control.Guid === panelControl.Guid)
+                return childNode;
+        }
+    }
+
+    let splitterPanelNodes = [];
+    for (let childNode of node.childNodes)
+    {
+        if (childNode && childNode.data && childNode.data.control && childNode.data.control.xType === "SplitterPanel")
+            splitterPanelNodes.push(childNode);
+    }
+
+    if (splitterPanelNodes.length > panelIndex)
+        return splitterPanelNodes[panelIndex];
+
+    return node.childNodes.length > panelIndex ? node.childNodes[panelIndex] : null;
+}
+
+async function GetXMLControl(node, sIndentation = "")
+{
+    var control = node.data.control;
+    var sXML = "";
+
+    if (!control.xType)
+    {
+        await Dialogs.MessageBox("Control " + control.Id + " not supported", "Error", "ERROR", "OKONLY");
+        return "";
+    }
+
+    if (control.xType !== "Form" && control.xType !== "SplitterPanel" && control.xType !== "DataGridTable")
+    {
+        // add xsi type tag for regular controls only
+        if (isExtendedControl(control.xType))
+            sXML += sIndentation + "<item>\n";
+        else if (control.xType !== "SplitterPanel")
+            sXML += sIndentation + "<item xsi:type=\"" + control.xType + "\">\n";
+
+        sIndentation += "\t";
+    }
+
+    // get control's properties
+    sXML += await GetXMLProperties(control, sIndentation);
+
+    // iterate over child controls
+    if (node.childNodes.length > 0 && !control.xType.includes("SplitContainer"))
+    {
+        // get group descriptor dependent on control type
+        let sGroupDescriptor;
+        if (control.xType === "TabControl" || control.xType === "LinkBarGroup" || control.xType === "ButtonBarGroup")
+            sGroupDescriptor = "<__array__Items>";
+        else if (control.xType === "LinkBar" || control.xType === "ButtonBar")
+            sGroupDescriptor = "<__array__Groups>";
+        else if (control.xType === "DataGrid")
+            sGroupDescriptor = "<RootTable>";
+        else if (control.xType === "DataGridTable")
+            sGroupDescriptor = "<__array__Columns>";
+        else
+            sGroupDescriptor = "<__array__Controls>";
+        
+        sXML += sIndentation + sGroupDescriptor + "\n";
+
+        for (let childNode of node.childNodes)
+        {
+            if (childNode.Id === "pnlSelected")
+                continue;
+            else
+                sXML += await GetXMLControl(childNode, sIndentation + "\t");
+        }
+        sXML += sIndentation + sGroupDescriptor.replace("<", "</") +  "\n";
+    }
+
+    // add empty controls array for SplitContainer
+    if (control.xType.includes("SplitContainer") && node.childNodes.length === 0)
+        sXML += sIndentation + "<__array__Controls/>\n";
+
+    // generate splitter panels
+    if (control.xType.includes("SplitContainer"))
+    {
+        let panel1Node = GetSplitContainerPanelNode(node, control.Panel1, 0);
+        let panel2Node = GetSplitContainerPanelNode(node, control.Panel2, 1);
+
+        sXML += sIndentation + "<Panel1>\n";
+        if (panel1Node)
+            sXML += await GetXMLControl(panel1Node, sIndentation);
+        sXML += sIndentation + "</Panel1>\n";
+        sXML += sIndentation + "<Panel2>\n";
+        if (panel2Node)
+            sXML += await GetXMLControl(panel2Node, sIndentation);
+        sXML += sIndentation + "</Panel2>\n";
+    }
+
+    // add item tag for normal controls only
+    if (control.xType !== "Form" && control.xType !== "SplitterPanel" && control.xType !== "DataGridTable")
+    {
+        sIndentation = sIndentation.slice(0, -1);
+        sXML += sIndentation + "</item>\n";
+    }
+    return sXML;
+}

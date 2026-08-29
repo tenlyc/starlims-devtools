@@ -1,7 +1,7 @@
 {
   "name": "starlims-devtools",
-  "version": "1.0.0",
-  "description": "Cross-platform STARLIMS Development Tools with AI Assistance | 跨平台 STARLIMS 开发工具",
+  "version": "1.6.0",
+  "description": "Cross-platform STARLIMS Development Tools with MCP integration | 跨平台 STARLIMS 开发工具",
   "main": "dist-electron/main.js",
   "author": "STARLIMS DevTools Team",
   "repository": "https://github.com/tenlyc/starlims-devtools",
@@ -10,40 +10,62 @@
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",
     "build:vite": "tsc && vite build",
+    "test:mcp": "tsx scripts/mcp-smoke-test.ts",
+    "test:ssl": "tsx scripts/ssl-lsp-smoke-test.ts",
+    "test:server-config": "tsx scripts/server-config-smoke-test.ts",
+    "test:ai-context": "tsx scripts/ai-context-smoke-test.ts",
+    "test:agent-runtime": "tsx scripts/agent-runtime-smoke-test.ts",
+    "test:editor-languages": "tsx scripts/editor-language-smoke-test.ts",
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite\" \"electron .\"",
     "lint": "eslint src --ext ts,tsx"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.251",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@monaco-editor/react": "^4.6.0",
     "@vscode/webview-ui-toolkit": "^1.4.0",
+    "dompurify": "^3.4.14",
     "electron-log": "^5.0.0",
     "electron-store": "^8.1.0",
+    "express": "^5.2.1",
     "jsdom": "^22.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "vscode-languageserver-textdocument": "^1.0.14",
+    "vscode-languageserver-types": "^3.18.3",
+    "zod": "^4.5.1",
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/jsdom": "^21.1.6",
     "@types/node": "^20.10.0",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
     "@typescript-eslint/eslint-plugin": "^5.62.0",
     "@typescript-eslint/parser": "^5.62.0",
-    "@vitejs/plugin-react": "^4.2.1",
+    "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.4.16",
     "concurrently": "^8.2.2",
-    "electron": "^28.3.3",
-    "electron-builder": "^24.9.1",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^8.56.0",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
     "ts-loader": "^9.5.1",
-    "typescript": "^5.3.3",
-    "vite": "^5.0.10",
-    "vite-plugin-electron": "^0.28.0",
-    "vite-plugin-electron-renderer": "^0.14.5"
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2",
+    "vite-plugin-electron": "^1.1.1",
+    "vite-plugin-electron-renderer": "^1.0.0"
+  },
+  "overrides": {
+    "monaco-editor": {
+      "dompurify": "3.4.14"
+    }
   },
   "build": {
     "appId": "com.starlims.devtools",
@@ -58,11 +80,20 @@
       "dist/**/*",
       "dist-electron/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "src/scm_api",
+        "to": "scm_api"
+      }
+    ],
     "win": {
+      "signAndEditExecutable": false,
       "target": [
         {
           "target": "dir",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },

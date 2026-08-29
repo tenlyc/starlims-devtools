@@ -1,0 +1,20 @@
+/********************************************************************************
+Description.. :	Return the current API version. 
+				Ideally it should match the extension version.
+Author....... :	MARIUS
+Date......... : 2023-07-31
+********************************************************************************/;
+:DECLARE sVersion;
+sVersion := "1.8.2";
+
+:DECLARE oResponse;
+oResponse := CreateUDObject({
+	{"success", .T.},
+	{"data", NIL}
+});
+
+Response:StatusCode := 200;
+oResponse:success := .T.;
+oResponse:data := sVersion;
+
+:RETURN oResponse;

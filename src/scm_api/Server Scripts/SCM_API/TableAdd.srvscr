@@ -1,0 +1,231 @@
+/******************************************************************************
+Description.. :	Add a new table through Enterprise_Data_Providers.TableProvider
+Author....... :	Copilot
+Date......... :	2026-05-18
+*******************************************************************************/;
+:DECLARE String, oPayload, oResponse, oResult, sRequestAsFile, sTableName, sDsn, bIsSystem, oTableDto, oDebugInfo;
+String := "";
+
+:DECLARE oResultWrapper;
+oResultWrapper := CreateUDObject();
+oResponse := CreateUDObject({
+	{"success", .T.},
+	{"data", NIL}
+});
+
+:TRY;
+	sRequestAsFile := Request:SaveInputStream();
+	oPayload := FromJSON(ReadText(sRequestAsFile));
+	FileSupport(sRequestAsFile, "DELETE");
+:CATCH;
+	UsrMes("ERROR:", GetLastSSLError():FullDescription);
+	Response:ContentType := "application/problem+json";
+	Response:StatusCode := 500;
+	oResponse:success := .F.;
+	oResponse:data := "Could not deserialize request body.";
+	:RETURN oResponse;
+:ENDTRY;
+
+:IF Empty(oPayload);
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := "No payload found!";
+	:RETURN oResponse;
+:ENDIF;
+
+:IF oPayload:IsProperty("TableName");
+	sTableName := oPayload:TableName;
+:ELSE;
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := String:Format("Missing required property '{0}'", "TableName");
+	:RETURN oResponse;
+:ENDIF;
+
+:IF oPayload:IsProperty("Dsn");
+	sDsn := oPayload:Dsn;
+:ELSE;
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := String:Format("Missing required property '{0}'", "Dsn");
+	:RETURN oResponse;
+:ENDIF;
+
+bIsSystem := Upper(sDsn) == "DICTIONARY";
+
+:TRY;
+	oTableDto := CreateUDObject("ENTERPRISE_DB_OBJECTS.DTOTable");
+	oTableDto:DdlState := "New";
+	oTableDto:IsMetadataDirty := .T.;
+	oTableDto:Name := Upper(sTableName);
+	oTableDto:IsSystem := bIsSystem;
+	DoProc("AddBootstrapFields", {oTableDto});
+	DoProc("AddBootstrapPrimaryKey", {oTableDto});
+	oResult := DoProc("Enterprise_Data_Providers.TableProvider.Add", {sDsn, oTableDto, .F., .F.});
+	oDebugInfo := DoProc("BuildAddDebugInfo", {Upper(sTableName), sDsn, bIsSystem, oResult});
+:CATCH;
+	:DECLARE sError;
+	sError := GetLastSSLError():FullDescription;
+	UsrMes("ERROR:", sError);
+	Response:ContentType := "application/problem+json";
+	Response:StatusCode := 500;
+	oResponse:success := .F.;
+	oResponse:data := sError;
+	:RETURN oResponse;
+:ENDTRY;
+
+Response:StatusCode := 200;
+	oResponse:success := oDebugInfo:success;
+	oResponse:data := oDebugInfo;
+	:RETURN oResponse;
+
+:PROCEDURE BuildAddDebugInfo;
+:PARAMETERS sNormalizedTableName, sDsn, bIsSystem, oResult;
+
+	:DECLARE oInfo, nSameNameCount, sCommitState, sCommitError, sReturnedId, sExpectedSystemFlag, sPersistedTableId, sPersistedIsSystem, sPersistedCheckedOutBy, sResultExcerpt;
+	sExpectedSystemFlag := iif(bIsSystem, "Y", "N");
+	sPersistedTableId := LSearch(
+		"select TABLEID from LIMSTABLES where upper(TABLENAME) = ? and ISSYSTEM = ?",
+		"",
+		"DICTIONARY",
+		{sNormalizedTableName, sExpectedSystemFlag}
+	);
+	sPersistedIsSystem := LSearch(
+		"select ISSYSTEM from LIMSTABLES where upper(TABLENAME) = ? and ISSYSTEM = ?",
+		"",
+		"DICTIONARY",
+		{sNormalizedTableName, sExpectedSystemFlag}
+	);
+	sPersistedCheckedOutBy := LSearch(
+		"select CHECKEDOUTBY from LIMSTABLES where upper(TABLENAME) = ? and ISSYSTEM = ?",
+		"",
+		"DICTIONARY",
+		{sNormalizedTableName, sExpectedSystemFlag}
+	);
+	nSameNameCount := LSearch(
+		"select count(*) from LIMSTABLES where upper(TABLENAME) = ?",
+		0,
+		"DICTIONARY",
+		{sNormalizedTableName}
+	);
+	sCommitState := DoProc("ExtractXmlTag", {oResult, "CommitState"});
+	sCommitError := DoProc("ExtractXmlTag", {oResult, "CommitError"});
+	sReturnedId := DoProc("ExtractXmlTag", {oResult, "Id"});
+	sResultExcerpt := Left(StrTran(StrTran(LimsString(oResult), CrLf, " "), Chr(9), " "), 1000);
+
+	oInfo := CreateUDObject({
+		{"success", !Empty(sPersistedTableId)},
+		{"message", ""},
+		{"tableName", sNormalizedTableName},
+		{"dsn", sDsn},
+		{"expectedIsSystem", sExpectedSystemFlag},
+		{"returnedId", sReturnedId},
+		{"commitState", sCommitState},
+		{"commitError", sCommitError},
+		{"resultExcerpt", sResultExcerpt},
+		{"sameNameCount", nSameNameCount},
+		{"persistedTableId", sPersistedTableId},
+		{"persistedIsSystem", sPersistedIsSystem},
+		{"persistedCheckedOutBy", sPersistedCheckedOutBy}
+	});
+
+	:IF oInfo:success;
+		oInfo:message := "Table added successfully. TABLEID=" + oInfo:persistedTableId + ", CommitState=" + iif(Empty(sCommitState), "<empty>", sCommitState);
+	:ELSE;
+		oInfo:message := "Table add was reported as successful, but the table was not found in LIMSTABLES. CommitState=" + iif(Empty(sCommitState), "<empty>", sCommitState) + ", CommitError=" + iif(Empty(sCommitError), "<empty>", sCommitError) + ", ReturnedId=" + iif(Empty(sReturnedId), "<empty>", sReturnedId) + ", ExpectedIsSystem=" + sExpectedSystemFlag + ", SameNameCount=" + LimsString(nSameNameCount) + ".";
+	:ENDIF;
+
+	UsrMes("SCM_API.TableAdd", oInfo:message);
+	:RETURN oInfo;
+:ENDPROC;
+
+:PROCEDURE ExtractXmlTag;
+:PARAMETERS sXml, sTagName;
+
+	:DECLARE nStartPos, nEndPos, sOpenTag, sCloseTag;
+	sOpenTag := "<" + sTagName + ">";
+	sCloseTag := "</" + sTagName + ">";
+	nStartPos := At(sOpenTag, LimsString(sXml));
+	:IF nStartPos == 0;
+		:RETURN "";
+	:ENDIF;
+	nStartPos += Len(sOpenTag);
+	nEndPos := At(sCloseTag, LimsString(sXml));
+	:IF nEndPos == 0 .OR. nEndPos < nStartPos;
+		:RETURN "";
+	:ENDIF;
+	:RETURN AllTrim(SubStr(LimsString(sXml), nStartPos, nEndPos - nStartPos));
+:ENDPROC;
+
+:PROCEDURE AddBootstrapFields;
+:PARAMETERS oTableDto;
+
+	DoProc("EnsureBootstrapField", {oTableDto, "ORIGREC", "INTEGER", 0, 0, 0, "", .F., "System generated field"});
+	DoProc("EnsureBootstrapField", {oTableDto, "ORIGSTS", "CHAR", 1, 0, 0, "N", .F., "System generated field"});
+:ENDPROC;
+
+:PROCEDURE EnsureBootstrapField;
+:PARAMETERS oTableDto, sFieldName, sFieldType, nLength, nPrecision, nScale, sDefaultValue, bIsNullable, sDescription;
+
+	:DECLARE nFieldIndex, oField, i;
+	nFieldIndex := AScan(oTableDto:Fields, {|x| Upper(x:Name) == Upper(sFieldName)});
+	:IF nFieldIndex > 0;
+		:RETURN;
+	:ENDIF;
+
+	oField := CreateUDObject("ENTERPRISE_DB_OBJECTS.DTOField");
+	oField:DdlState := "New";
+	oField:IsMetadataDirty := .F.;
+	oField:Id := LimsString(Len(oTableDto:Fields) + 1);
+	oField:TableId := "0";
+	oField:Sorter := Len(oTableDto:Fields) + 1;
+	oField:Name := Upper(sFieldName);
+	oField:Description := sDescription;
+	oField:Type := sFieldType;
+	oField:Length := nLength;
+	oField:Precision := nPrecision;
+	oField:Scale := nScale;
+	oField:DefaultValue := sDefaultValue;
+	oField:IsNullable := bIsNullable;
+	oField:ControlType := "";
+	oField:Picture := "";
+	oField:SCaptions := "";
+	oField:ViewPrivilege := "";
+	oField:EditPrivilege := "";
+	:FOR i := 1 :TO Len(oField:Captions);
+		oField:Captions[i]:Caption := Upper(sFieldName);
+	:NEXT;
+
+	AAdd(oTableDto:Fields, oField);
+:ENDPROC;
+
+:PROCEDURE AddBootstrapPrimaryKey;
+:PARAMETERS oTableDto;
+
+	:DECLARE nIndexPos, oIndex, oIndexField, sIndexName;
+	nIndexPos := AScan(oTableDto:Indexes, {|x| x:Type == "P" .AND. x:DdlState != "Deleted"});
+	:IF nIndexPos > 0;
+		:RETURN;
+	:ENDIF;
+
+	oIndex := CreateUDObject("ENTERPRISE_DB_OBJECTS.DTOIndex");
+	oIndex:DdlState := "New";
+	oIndex:IsMetadataDirty := .F.;
+	oIndex:Id := "0";
+	sIndexName := Upper(oTableDto:Name);
+	:IF Len(sIndexName) > 27;
+		sIndexName := Left(sIndexName, 27);
+	:ENDIF;
+	oIndex:Name := sIndexName + "_PK";
+	oIndex:Type := "P";
+
+	oIndexField := CreateUDObject("ENTERPRISE_DB_OBJECTS.DTOIndexField");
+	oIndexField:DdlState := "New";
+	oIndexField:FieldName := "ORIGREC";
+	oIndexField:Sort := "A";
+	oIndexField:Sorter := 1;
+	oIndexField:Included := .F.;
+
+	AAdd(oIndex:Fields, oIndexField);
+	AAdd(oTableDto:Indexes, oIndex);
+:ENDPROC;

@@ -1,0 +1,35 @@
+/******************************************************************************
+Description.. :	Stores the active VS Code form callback port for the current STARLIMS user
+Author....... :	GitHub Copilot
+Date......... : 2026-05-15
+*******************************************************************************/;
+
+:PROCEDURE SetPort;
+:PARAMETERS nPort;
+:DEFAULT nPort, 0;
+
+nPort := Val(LimsString(nPort));
+
+:IF nPort < 3003 .OR. nPort > 3099;
+	RaiseError("Form callback port must be in the range 3003-3099.", "SCM_API.FormCallbackPort.SetPort", -1);
+:ENDIF;
+
+:DECLARE sKey;
+sKey := MYUSERNAME + "_VSCODE_FORM_CALLBACK_PORT";
+PublicConsts:AddValue(sKey, LimsString(nPort));
+
+:RETURN nPort;
+:ENDPROC;
+
+:PROCEDURE GetPort;
+
+:DECLARE sKey, sPort;
+sKey := MYUSERNAME + "_VSCODE_FORM_CALLBACK_PORT";
+sPort := PublicConsts:GetValue(sKey);
+
+:IF Empty(sPort);
+	:RETURN NIL;
+:ENDIF;
+
+:RETURN Val(LimsString(sPort));
+:ENDPROC;

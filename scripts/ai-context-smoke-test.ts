@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import { buildCliPrompt } from '../src/services/aiContextStore';
+
+const prompt = buildCliPrompt(
+  'Explain this procedure.',
+  [{
+    id: '/Server Scripts/TEST',
+    name: 'TEST',
+    uri: '/Server Scripts/TEST',
+    type: 'ServerScript',
+    content: ':PROCEDURE TEST;\n:RETURN .T.;\n:ENDPROC;',
+    source: 'checkout'
+  }],
+  [{ role: 'user', content: 'We are reviewing checked-out code.' }],
+  'http://127.0.0.1:3002/mcp'
+);
+
+assert.match(prompt, /STARLIMS MCP endpoint is http:\/\/127\.0\.0\.1:3002\/mcp/);
+assert.match(prompt, /MCP is required for remote STARLIMS operations/);
+assert.match(prompt, /Do not infer or fabricate remote state/);
+assert.match(prompt, /STARLIMS URI: \/Server Scripts\/TEST/);
+assert.match(prompt, /:PROCEDURE TEST/);
+assert.match(prompt, /Explain this procedure/);
+
+console.log('AI context smoke test passed.');

@@ -2,34 +2,38 @@ import { useState, useEffect, useCallback, MouseEvent as ReactMouseEvent } from 
 import { Sidebar } from '../components/Sidebar/Sidebar';
 import { EditorPanel } from '../components/Editor/EditorPanel';
 import { OutputPanel } from '../components/Output/OutputPanel';
-import { AIAssistantPanel } from '../components/AIAssistant/AIAssistantPanel';
+import { MCPPanel } from '../components/MCP/MCPPanel';
+import { McpRequestBridge } from '../components/MCP/McpRequestBridge';
 import { ServerSelector } from '../components/ServerSelector/ServerSelector';
 import { StatusBar } from '../components/StatusBar';
 import { ParticleBackground } from '../components/ParticleBackground';
 import { SCMPackageDialog } from '../components/SCM/SCMPackageDialog';
 import { useServerStore } from '../stores/serverStore';
-import { useAIStore } from '../stores/aiStore';
 import { useThemeStore } from '../stores/themeStore';
 import { editorStore } from '../stores/editorStore';
 import { getEnterpriseService } from '../services/enterpriseService';
 
 export default function App() {
   const [sidebarVisible, setSidebarVisible] = useState(true);
-  const [aiPanelVisible, setAIPanelVisible] = useState(true);
-  const [outputVisible, setOutputVisible] = useState(true);
-  const [showSettings, setShowSettings] = useState(false);
+  const [mcpPanelVisible, setMcpPanelVisible] = useState(true);
+  const [outputVisible, setOutputVisible] = useState(false);
   const [showSCMPackage, setShowSCMPackage] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(320);
-  const [aiPanelWidth, setAIPanelWidth] = useState(350);
-  const [outputHeight, setOutputHeight] = useState(200);
+  const [sidebarWidth, setSidebarWidth] = useState(300);
+  const [mcpPanelWidth, setMcpPanelWidth] = useState(390);
+  const [outputHeight, setOutputHeight] = useState(180);
 
   const { currentServer, isConnected, connect, disconnect } = useServerStore();
-  const { isConfigured } = useAIStore();
   const { initTheme, resolvedTheme } = useThemeStore();
 
   // Initialize theme on mount
   useEffect(() => {
     initTheme();
+  }, []);
+
+  useEffect(() => {
+    const showAgent = () => setMcpPanelVisible(true);
+    window.addEventListener('ai:show', showAgent);
+    return () => window.removeEventListener('ai:show', showAgent);
   }, []);
 
   // Handle save
@@ -58,8 +62,8 @@ export default function App() {
         case 'menu:toggleSidebar':
           setSidebarVisible(prev => !prev);
           break;
-        case 'menu:toggleAIPanel':
-          setAIPanelVisible(prev => !prev);
+        case 'menu:toggleMCPPanel':
+          setMcpPanelVisible(prev => !prev);
           break;
         case 'menu:toggleOutput':
           setOutputVisible(prev => !prev);
@@ -69,10 +73,6 @@ export default function App() {
           break;
         case 'menu:disconnect':
           disconnect();
-          break;
-        case 'menu:openAISettings':
-          setShowSettings(true);
-          setAIPanelVisible(true);
           break;
         case 'menu:save':
           handleSave();
@@ -115,16 +115,16 @@ export default function App() {
     document.addEventListener('mouseup', onMouseUp);
   }, [sidebarWidth]);
 
-  // Handle AI panel resize
-  const handleAIPanelResize = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
+  // Handle MCP panel resize
+  const handleMcpPanelResize = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault();
     const startX = e.nativeEvent.clientX;
-    const startWidth = aiPanelWidth;
+    const startWidth = mcpPanelWidth;
 
     const onMouseMove = (moveEvent: globalThis.MouseEvent) => {
       const delta = startX - moveEvent.clientX;
       const newWidth = Math.max(250, Math.min(600, startWidth + delta));
-      setAIPanelWidth(newWidth);
+      setMcpPanelWidth(newWidth);
     };
 
     const onMouseUp = () => {
@@ -134,7 +134,7 @@ export default function App() {
 
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
-  }, [aiPanelWidth]);
+  }, [mcpPanelWidth]);
 
   // Handle output panel resize
   const handleOutputResize = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
@@ -159,28 +159,45 @@ export default function App() {
 
   // Show server selector if not connected
   if (!currentServer || !isConnected) {
-    return (
+    return (<>
+      <McpRequestBridge />
       <div className="h-full w-full flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-slate-900 dark:via-blue-950 dark:to-indigo-950 relative overflow-hidden">
         <ParticleBackground />
         <div className="relative z-10">
           <ServerSelector onConnect={connect} />
         </div>
       </div>
-    );
+    </>);
   }
 
   return (
-    <div className="h-full w-full flex flex-col bg-slate-100 dark:bg-slate-900">
+    <div className="h-full w-full flex flex-col bg-slate-100 dark:bg-[#181818]">
+      <McpRequestBridge />
       {/* Main content area */}
       <div className="flex-1 flex overflow-hidden">
+        <div className="w-10 flex-shrink-0 bg-slate-200 dark:bg-[#181818] border-r border-slate-300 dark:border-[#2b2b2b] flex flex-col items-center py-2 gap-1">
+          <button className={`workbench-rail-button ${sidebarVisible ? 'active' : ''}`} title="Explorer" onClick={() => setSidebarVisible((value) => !value)}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h6l2 2h8v14H4z" strokeWidth="1.5" /></svg>
+          </button>
+          <button className={`workbench-rail-button ${outputVisible ? 'active' : ''}`} title="Output" onClick={() => setOutputVisible((value) => !value)}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m5 7 4 4-4 4m6 0h8" strokeWidth="1.5" /></svg>
+          </button>
+          <button className={`workbench-rail-button ${mcpPanelVisible ? 'active' : ''}`} title="AI Agent" onClick={() => setMcpPanelVisible((value) => !value)}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 9h8M8 13h5M5 19l2-3h11a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h1" strokeWidth="1.5" /></svg>
+          </button>
+          <div className="flex-1" />
+          <button className="workbench-rail-button" title="SCM Package Manager" onClick={() => setShowSCMPackage(true)}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 7.5 12 4l7 3.5v9L12 20l-7-3.5zM5 7.5l7 3.5 7-3.5M12 11v9" strokeWidth="1.5" /></svg>
+          </button>
+        </div>
         {/* Left Sidebar - Enterprise Tree and Checked Out */}
         {sidebarVisible && (
           <>
-            <div style={{ width: sidebarWidth }} className="bg-slate-200 dark:bg-slate-800 border-r border-slate-300 dark:border-slate-700">
+            <div style={{ width: sidebarWidth }} className="bg-slate-200 dark:bg-[#181818] border-r border-slate-300 dark:border-[#2b2b2b]">
               <Sidebar />
             </div>
             <div
-              className="resize-handle w-1 bg-slate-300 dark:bg-slate-700 hover:bg-blue-500 cursor-col-resize"
+              className="resize-handle w-px bg-slate-300 dark:bg-[#2b2b2b] hover:bg-blue-500 cursor-col-resize"
               onMouseDown={handleSidebarResize}
             />
           </>
@@ -197,28 +214,25 @@ export default function App() {
           {outputVisible && (
             <>
               <div
-                className="h-1 bg-slate-300 dark:bg-slate-700 hover:bg-blue-500 cursor-row-resize"
+                className="h-px bg-slate-300 dark:bg-[#2b2b2b] hover:bg-blue-500 cursor-row-resize"
                 onMouseDown={handleOutputResize}
               />
-              <div style={{ height: outputHeight }} className="bg-slate-200 dark:bg-slate-800 border-t border-slate-300 dark:border-slate-700">
+              <div style={{ height: outputHeight }} className="bg-slate-200 dark:bg-[#181818] border-t border-slate-300 dark:border-[#2b2b2b]">
                 <OutputPanel />
               </div>
             </>
           )}
         </div>
 
-        {/* Right - AI Assistant Panel */}
-        {aiPanelVisible && (
+        {/* Right - MCP integration panel */}
+        {mcpPanelVisible && (
           <>
             <div
-              className="w-1 bg-slate-300 dark:bg-slate-700 hover:bg-blue-500 cursor-col-resize"
-              onMouseDown={handleAIPanelResize}
+              className="w-px bg-slate-300 dark:bg-[#2b2b2b] hover:bg-blue-500 cursor-col-resize"
+              onMouseDown={handleMcpPanelResize}
             />
-            <div style={{ width: aiPanelWidth }} className="bg-slate-200 dark:bg-slate-800 border-l border-slate-300 dark:border-slate-700 overflow-hidden">
-              <AIAssistantPanel
-                embeddedSettings={showSettings}
-                onCloseSettings={() => setShowSettings(false)}
-              />
+            <div style={{ width: mcpPanelWidth }} className="bg-slate-200 dark:bg-[#181818] border-l border-slate-300 dark:border-[#2b2b2b] overflow-hidden">
+              <MCPPanel />
             </div>
           </>
         )}
@@ -227,7 +241,7 @@ export default function App() {
       {/* Status Bar */}
       <StatusBar
         onToggleSidebar={() => setSidebarVisible(!sidebarVisible)}
-        onToggleAI={() => setAIPanelVisible(!aiPanelVisible)}
+        onToggleMCP={() => setMcpPanelVisible(!mcpPanelVisible)}
         onToggleOutput={() => setOutputVisible(!outputVisible)}
         onOpenSCMPackage={() => setShowSCMPackage(true)}
       />

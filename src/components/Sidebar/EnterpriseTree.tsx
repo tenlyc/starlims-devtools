@@ -285,6 +285,7 @@ export function EnterpriseTree() {
             uri: item.uri,
             name: item.label,
             type: item.type,
+            language: item.language,
             content: code,
             guid: item.guid
           });
@@ -832,6 +833,7 @@ export function EnterpriseTree() {
                 uri: foundItem.uri,
                 name: foundItem.name || foundItem.label,
                 type: foundItem.type,
+                language: foundItem.scriptLanguage || foundItem.language,
                 content: code,
                 guid: foundItem.guid
               });
@@ -859,12 +861,14 @@ export function EnterpriseTree() {
         label: enterpriseItem.name,
         type: enterpriseItem.type || 'DEFAULT',
         uri: enterpriseItem.uri,
+        language: enterpriseItem.scriptLanguage || enterpriseItem.language,
         hasChildren: enterpriseItem.isFolder ?? enterpriseItem.hasChildren ?? false,
         children: enterpriseItem.children ? enterpriseItem.children.map((child: any) => ({
           id: child.uri || child.id,
           label: child.name,
           type: child.type || 'DEFAULT',
           uri: child.uri,
+          language: child.scriptLanguage || child.language,
           hasChildren: child.isFolder ?? child.hasChildren ?? false,
           guid: child.guid
         })) : undefined,
@@ -924,6 +928,7 @@ export function EnterpriseTree() {
         label: item.name,
         type: item.type || 'DEFAULT',
         uri: item.uri,
+        language: item.scriptLanguage || item.language,
         hasChildren: item.hasChildren || false
       }));
       setSearchResults(items);
@@ -948,6 +953,7 @@ export function EnterpriseTree() {
         label: item.name,
         type: item.type || 'DEFAULT',
         uri: item.uri,
+        language: item.scriptLanguage || item.language,
         hasChildren: item.hasChildren || false
       }));
       setSearchResults(items);
@@ -990,6 +996,7 @@ export function EnterpriseTree() {
             label: item.name,
             type: item.type || 'DEFAULT',
             uri: item.uri,
+            language: item.scriptLanguage || item.language,
             hasChildren: item.isFolder ?? item.hasChildren ?? false
           }));
 

@@ -11,6 +11,21 @@ export function cleanUrl(url: string): string {
 }
 
 /**
+ * Normalize a user-facing STARLIMS launch URL to the application root used by
+ * SCM_API endpoints. For example, `/STARLIMS/starthtml.lims` becomes
+ * `/STARLIMS`.
+ */
+export function normalizeStarlimsUrl(value: string): string {
+  const parsed = new URL(value.trim());
+  parsed.search = '';
+  parsed.hash = '';
+  parsed.pathname = parsed.pathname
+    .replace(/\/starthtml\.[^/]+\/?$/i, '')
+    .replace(/\/+$/, '');
+  return `${parsed.origin}${parsed.pathname}`;
+}
+
+/**
  * Check if a string is valid JSON
  */
 export function isJson(str: string): boolean {

@@ -1,0 +1,177 @@
+/********************************************************************************
+Description.. :	Script to get the code of an Enterprise item
+Author....... :	MARIUS
+Date......... : 2018-11-07
+*******************************************************************************/;
+:DECLARE String, sUserLang, oResponse, oResult, sURI, oUtils, oEnterpriseItem, sItemID,
+		 oDataSet, sDataSet, sItemName, sItemType, nRowNo;
+String := "";
+oResult := CreateUDObject();
+oResponse := CreateUDObject({
+	{"success", .T.},
+	{"data", NIL}
+});
+
+:IF Request:QueryString:IsProperty("URI");
+	sURI := Request:QueryString:URI;
+:ELSE;
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := String:Format("Missing required parameter: {0}", "URI");
+	:RETURN oResponse;
+:ENDIF;
+
+:IF Request:QueryString:IsProperty("UserLang") .AND. !Empty(Request:QueryString:UserLang);
+	sUserLang := Request:QueryString:UserLang;
+:ELSE;
+	sUserLang := GetSetting("DEFAULTLANGUAGE");
+:ENDIF;
+
+oResult:language := "";
+oResult:code := "";
+
+:TRY;
+	oUtils := CreateUDObject("SCM_API.Utils", {});
+
+	oEnterpriseItem := oUtils:ParseURI(sURI);
+	sItemName := BuildArray(oEnterpriseItem:Name,, ".")[1]; 
+	sItemType := oEnterpriseItem:Type;
+
+	:BEGINCASE;	
+		:CASE sItemType == "SS";
+			sItemID := oEnterpriseItem:CategoryName + "." + sItemName;
+			sDataSet := DoProc("Enterprise_Data_Providers.ServerScriptProvider.GetById", {sItemID});
+			oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+			oResult:code := DoProc("Enterprise_Data_Providers.ServerScriptProvider.GetCode", {sItemID});		
+		:EXITCASE;
+		:CASE sItemType == "APPSS";
+			sItemID := oEnterpriseItem:AppName + "." + sItemName;
+			sDataSet := DoProc("Enterprise_Data_Providers.AppServerScriptProvider.GetById", {sItemID});
+			oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+			oResult:code := DoProc("Enterprise_Data_Providers.AppServerScriptProvider.GetCode", {sItemID});
+		:EXITCASE;
+		:CASE sItemType == "CS";
+			sItemID := oEnterpriseItem:CategoryName + "." + sItemName;
+			sDataSet := DoProc("Enterprise_Data_Providers.ClientScriptProvider.GetById", {sItemID});
+			oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+			oResult:code := DoProc("Enterprise_Data_Providers.ClientScriptProvider.GetCode", {sItemID});
+			oResult:language := "JS";
+		:EXITCASE;
+		:CASE sItemType == "APPCS";
+			sItemID := oEnterpriseItem:AppName + "." + sItemName;
+			sDataSet := DoProc("Enterprise_Data_Providers.AppClientScriptProvider.GetById", {sItemID});
+			oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+			oResult:code := DoProc("Enterprise_Data_Providers.AppClientScriptProvider.GetCode", {sItemID});
+			oResult:language := "JS";
+		:EXITCASE;
+		:CASE sItemType == "DS";
+			sItemID := oEnterpriseItem:CategoryName + "." + sItemName;
+			sDataSet := DoProc("Enterprise_Data_Providers.DataSourceProvider.GetById", {sItemID, .F.});
+			oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+			oResult:code := DoProc("Enterprise_Data_Providers.DataSourceProvider.GetCode", {oDataSet:Tables[0]:Rows[0]["DATASOURCEID"]});
+		:EXITCASE;
+		:CASE sItemType == "APPDS";
+			sItemID := oEnterpriseItem:AppName + "." + sItemName;
+			sDataSet := DoProc("Enterprise_Data_Providers.AppDataSourceProvider.GetById", {sItemID, .F.});
+			oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+			oResult:code := DoProc("Enterprise_Data_Providers.AppDataSourceProvider.GetCode", {oDataSet:Tables[0]:Rows[0]["DATASOURCEID"]});
+		:EXITCASE;
+		:CASE sItemType == "HTMLFORMXML" .OR. sItemType == "XFDFORMXML";		
+			sItemID := oEnterpriseItem:AppName + "." + sItemName;
+			sDataSet := DoProc("Enterprise_Data_Providers.FormProvider.GetById", {sItemID, .F.});
+			oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+
+			:IF oDataSet:Tables[0]:Rows:Count == 2;
+				nRowNo := IIf(sItemType == "XFDFORMXML", 1, 0);
+			:ELSE;
+				nRowNo := 0;
+			:ENDIF;
+
+			oResult:code := MimeDecode(DoProc("Enterprise_Data_Providers.FormProvider.GetXFDDocument",
+											 {oDataSet:Tables[0]:Rows[nRowNo]["FORMID"], sUserLang}));
+			oResult:language := "XML";
+		:EXITCASE;
+		:CASE sItemType == "HTMLFORMCODE" .OR. sItemType == "XFDFORMCODE";
+			sItemID := oEnterpriseItem:AppName + "." + sItemName;
+			sDataSet := DoProc("Enterprise_Data_Providers.FormProvider.GetById", {sItemID, .F.});
+			oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+			
+			:IF oDataSet:Tables[0]:Rows:Count == 2;
+				nRowNo := IIf(sItemType == "XFDFORMCODE", 1, 0);
+			:ELSE;
+				nRowNo := 0;
+			:ENDIF;
+			
+			oResult:code := DoProc("Enterprise_Data_Providers.FormProvider.GetCodeBehind",
+								  {oDataSet:Tables[0]:Rows[nRowNo]["FORMID"]});
+			oResult:language := "JS";
+		:EXITCASE;
+		:CASE sItemType == "HTMLFORMGUIDE";
+			sItemID := oEnterpriseItem:AppName + "." + sItemName;
+			sDataSet := DoProc("Enterprise_Data_Providers.FormProvider.GetById", {sItemID, .F.});
+			oDataSet := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sDataSet});
+			
+			:IF oDataSet:Tables[0]:Rows:Count == 2;
+				nRowNo := IIf(sItemType == "XFDFORMCODE", 1, 0);
+			:ELSE;
+				nRowNo := 0;
+			:ENDIF;
+			
+			:DECLARE sProgramaticResourceXML, oResourceDS, sResourceID;
+			sProgramaticResourceXML := MimeDecode(DoProc("Enterprise_Data_Providers.FormProvider.GetProgramaticXfdResources",
+												 {oDataSet:Tables[0]:Rows[nRowNo]["FORMID"], sUserLang}));
+
+			oResourceDS := DoProc("Enterprise_Server.DataSetSupport.DsFromString", {sProgramaticResourceXML});
+			oResult:code := "[]";
+			:IF oResourceDS:Tables:Count > 0;
+				:FOR i := 0 :TO oResourceDS:Tables[0]:Rows:Count - 1;
+					sResourceID := LimsString(oResourceDS:Tables[0]:Rows[i]['ResourceId']);
+					:IF sResourceID == "GUIDE";
+						oResult:code := LimsString(oResourceDS:Tables[0]:Rows[i]['ResourceValue']);
+						:EXITFOR;
+					:ENDIF;
+				:NEXT;
+			:ENDIF;
+			oResult:language := "JSON";
+		:EXITCASE;
+		:CASE sItemType == "HTMLFORMRESOURCES" .OR. sItemType == "XFDFORMRESOURCES";
+			sItemID := oUtils:GetItemGUID(oEnterpriseItem:AppName + "." + sItemName, sItemType);
+			oResult:code := DoProc("Enterprise_Data_Providers.FormProvider.GetProgramaticXfdResources", {sItemID, sUserLang});
+			oResult:language := "XML";
+		:EXITCASE;
+		:CASE sItemType == "SERVERLOG";
+			oResult:code := DoProc("Enterprise_Data_Providers.EnterpriseUtilsProvider.GetServerLog", {sItemName});
+			oResult:language := "LOG";
+		:EXITCASE;
+		:CASE sItemType == "TABLE";
+			sItemID := oUtils:GetItemGUID(oEnterpriseItem:CategoryName + "." + sItemName, sItemType);
+			oResult:code := DoProc("Enterprise_Data_Providers.TableProvider.GetById", {sItemID, .F., {}, .T., .F.});
+			oResult:language := "XML";
+		:EXITCASE;
+		
+	:ENDCASE;
+
+	:IF Empty(oResult:language);
+		oResult:language := oDataSet:Tables[0]:Rows[0]["SCRIPTLANGUAGE"];
+		:BEGINCASE;
+			:CASE Upper(oResult:language) == "STARLIMS";
+				oResult:language := "SSL";
+			:EXITCASE;
+			:CASE Upper(oResult:language) == "JSCRIPT";
+				oResult:language := "JS";
+			:EXITCASE;
+		:ENDCASE;
+	:ENDIF;
+
+	oResult:name := sItemName;
+	Response:StatusCode := 200;
+	oResponse:success := .T.;
+	oResponse:data := oResult;
+:CATCH;
+	:DECLARE Error;
+	Error := GetLastSSLError();
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := Error:FullDescription;
+:ENDTRY;
+:RETURN oResponse;

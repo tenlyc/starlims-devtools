@@ -1,0 +1,251 @@
+/******************************************************************************
+Description.. :	Add new enterprise item
+Author....... :	DC
+Date......... : 2023-07-07
+*******************************************************************************/;
+:DECLARE String;
+String := "";
+
+:DECLARE oResponse, oResult, oPayload;
+oResult := CreateUDObject();
+oResponse := CreateUDObject({
+	{"success", .T.},
+	{"data", NIL}
+});
+
+:TRY;
+	:DECLARE sRequestAsFile;
+	sRequestAsFile := Request:SaveInputStream();
+	oPayload := FromJSON(ReadText(sRequestAsFile));
+	FileSupport(sRequestAsFile, "DELETE");
+:CATCH;
+	UsrMes("ERROR:", GetLastSSLError():FullDescription);
+	Response:ContentType := "application/problem+json";
+	Response:StatusCode := 500;
+	oResponse:success := .F.;
+	oResponse:data := "Could not deserialize request body.";
+	:RETURN oResponse;
+:ENDTRY;
+
+:IF Empty(oPayload);
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := "No payload found!";
+	usrmes(oResponse:data);
+	:RETURN oResponse;
+:ENDIF;
+
+/* get parameters;
+:DECLARE sItemName, sItemType, sScriptLang, sFormLang, sCategory, sAppName;
+:IF oPayload:IsProperty("ItemName");
+	sItemName := oPayload:ItemName;
+:ELSE;
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := String:Format("Missing required parameter: {0}", "ItemName");
+	usrmes(oResponse:data);
+	:RETURN oResponse;
+:ENDIF;
+
+:IF oPayload:IsProperty("ItemType");
+	sItemType := oPayload:ItemType;
+:ELSE;
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := String:Format("Missing required parameter: {0}", "ItemType");
+	usrmes(oResponse:data);
+	:RETURN oResponse;
+:ENDIF;
+
+:IF oPayload:IsProperty("Language");
+	sScriptLang := oPayload:Language;
+:ELSE;
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := String:Format("Missing required parameter: {0}", "Language");
+	usrmes(oResponse:data);
+	:RETURN oResponse;
+:ENDIF;
+
+:IF oPayload:IsProperty("Category");
+	sCategory := oPayload:Category;
+:ELSE;
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := String:Format("Missing required parameter: {0}", "Category");
+	usrmes(oResponse:data);
+	:RETURN oResponse;
+:ENDIF;
+
+:IF oPayload:IsProperty("AppName");
+	sAppName := oPayload:AppName;
+:ELSE;
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := String:Format("Missing required parameter: {0}", "AppName");
+	usrmes(oResponse:data);
+	:RETURN oResponse;
+:ENDIF;
+
+sFormLang := GetSetting("DEFAULTLANGUAGE");
+
+/* override g_Sys_IsSourceControlEnabled to prevent auto checkout;
+:DECLARE bSourceControlEnabled;
+bSourceControlEnabled := g_Sys_IsSourceControlEnabled;
+g_Sys_IsSourceControlEnabled := .F.;
+
+:DECLARE oUtils, sCategoryID, sAppID;
+oUtils := CreateUDObject("SCM_API.Utils", {});
+
+/* resolve parent IDs and validate them before adding (a bogus category or app name
+   would otherwise fail deep inside the provider with an unhelpful generic error);
+:BEGINCASE;
+	:CASE sItemType == "APP";
+		sCategoryID := oUtils:GetItemGUID(sCategory, "APPCATEGORY");
+		:IF Empty(sCategoryID);
+			Response:ContentType := "application/problem+json";
+			Response:StatusCode := 400;
+			oResponse:success := .F.;
+			oResponse:data := String:Format("Application category not found: {0}", sCategory);
+			usrmes(oResponse:data);
+			:RETURN oResponse;
+		:ENDIF;
+	:EXITCASE;
+	:CASE sItemType == "HTMLFORMXML" .OR. sItemType == "XFDFORMXML" .OR. sItemType == "APPSS" .OR. sItemType == "APPDS" .OR. sItemType == "APPCS";
+		sAppName := sCategory + "." + sAppName;
+		sAppID := oUtils:GetItemGUID(sAppName, "APP");
+		:IF Empty(sAppID);
+			Response:ContentType := "application/problem+json";
+			Response:StatusCode := 400;
+			oResponse:success := .F.;
+			oResponse:data := String:Format("Application not found: {0}", sAppName);
+			usrmes(oResponse:data);
+			:RETURN oResponse;
+		:ENDIF;
+	:EXITCASE;
+	:CASE sItemType == "SS";
+		sCategoryID := oUtils:GetItemGUID(sCategory, "SSCATEGORY");
+		:IF Empty(sCategoryID);
+			Response:ContentType := "application/problem+json";
+			Response:StatusCode := 400;
+			oResponse:success := .F.;
+			oResponse:data := String:Format("Server script category not found: {0}", sCategory);
+			usrmes(oResponse:data);
+			:RETURN oResponse;
+		:ENDIF;
+	:EXITCASE;
+	:CASE sItemType == "DS";
+		sCategoryID := oUtils:GetItemGUID(sCategory, "DSCATEGORY");
+		:IF Empty(sCategoryID);
+			Response:ContentType := "application/problem+json";
+			Response:StatusCode := 400;
+			oResponse:success := .F.;
+			oResponse:data := String:Format("Data source category not found: {0}", sCategory);
+			usrmes(oResponse:data);
+			:RETURN oResponse;
+		:ENDIF;
+	:EXITCASE;
+	:CASE sItemType == "CS";
+		sCategoryID := oUtils:GetItemGUID(sCategory, "CSCATEGORY");
+		:IF Empty(sCategoryID);
+			Response:ContentType := "application/problem+json";
+			Response:StatusCode := 400;
+			oResponse:success := .F.;
+			oResponse:data := String:Format("Client script category not found: {0}", sCategory);
+			usrmes(oResponse:data);
+			:RETURN oResponse;
+		:ENDIF;
+	:EXITCASE;
+:ENDCASE;
+
+:TRY;
+	:BEGINCASE;
+		:CASE sItemType == "APPCATEGORY";
+			DoProc("Enterprise_Data_Providers.AppCategProvider.Add", {sItemName});
+		:EXITCASE;
+
+		:CASE sItemType == "APP";
+			DoProc("Enterprise_Data_Providers.AppProvider.Add", {sCategoryID, sItemName, ""});
+		:EXITCASE;
+
+		:CASE sItemType == "HTMLFORMXML";
+			DoProc("Enterprise_Data_Providers.FormProvider.Add", {sAppID, sItemName, "", "Y", "HTML"});
+		:EXITCASE;
+
+		:CASE sItemType == "XFDFORMXML";
+			DoProc("Enterprise_Data_Providers.FormProvider.Add", {sAppID, sItemName, "", "Y", "XFD"});
+		:EXITCASE;
+
+		:CASE sItemType == "APPSS";
+			sScriptLang := "STARLIMS";
+			DoProc("Enterprise_Data_Providers.AppServerScriptProvider.Add", {sAppID, sItemName, "", sScriptLang});
+		:EXITCASE;
+
+		:CASE sItemType == "APPDS";
+			sScriptLang := "SQL";
+			DoProc("Enterprise_Data_Providers.AppDataSourceProvider.Add", {sAppID, sItemName, "", sScriptLang});
+		:EXITCASE;
+
+		:CASE sItemType == "APPCS";
+			sScriptLang := "JS";
+			DoProc("Enterprise_Data_Providers.AppClientScriptProvider.Add", {sAppID, sItemName, "", sScriptLang});
+		:EXITCASE;
+
+		:CASE sItemType == "SSCATEGORY" .OR. sItemType == "SSCAT";
+			DoProc("Enterprise_Data_Providers.ServerScriptCategProvider.Add", {sItemName});
+		:EXITCASE;
+
+		:CASE sItemType == "SS";
+			sScriptLang := "STARLIMS";
+			DoProc("Enterprise_Data_Providers.ServerScriptProvider.Add", {sCategoryID, sItemName, "", sScriptLang});
+		:EXITCASE;
+
+		:CASE sItemType == "DSCATEGORY"  .OR. sItemType == "DSCAT";
+			DoProc("Enterprise_Data_Providers.DataSourceCategProvider.Add", {sItemName});
+		:EXITCASE;
+
+		:CASE sItemType == "DS";
+			sScriptLang := "SQL";
+			DoProc("Enterprise_Data_Providers.DataSourceProvider.Add", {sCategoryID, sItemName, "", sScriptLang});
+		:EXITCASE;
+
+		:CASE sItemType == "CSCATEGORY"  .OR. sItemType == "CSCAT";
+			DoProc("Enterprise_Data_Providers.ClientScriptCategProvider.Add", {sItemName});
+		:EXITCASE;
+
+		:CASE sItemType == "CS";
+			sScriptLang := "JS";			
+			DoProc("Enterprise_Data_Providers.ClientScriptProvider.Add", {sCategoryID, sItemName, "", sScriptLang});
+		:EXITCASE;
+	:ENDCASE;
+:CATCH;
+	:DECLARE sError;
+	sError := GetLastSSLError():FullDescription;
+	UsrMes("ERROR:", sError);
+	Response:ContentType := "application/problem+json";
+	oResponse:success := .F.;
+
+	:IF At("SQL-02601", sError) > 0;
+		Response:StatusCode := 400;
+		oResponse:data := "An item with the same name already exists.";
+	:ELSE;
+		Response:StatusCode := 500;
+		oResponse:data := "Could not add new item: " + sError;
+	:ENDIF;
+
+	/* reset g_Sys_IsSourceControlEnabled;
+	g_Sys_IsSourceControlEnabled := bSourceControlEnabled;
+
+	:RETURN oResponse;
+:FINALLY;
+	Response:ContentType := "application/json";
+	Response:StatusCode := 200;
+	oResponse:data := "Item added successfully.";
+	oResult:success := .T.;
+	oResult:data := oResponse;
+:ENDTRY;
+
+/* reset g_Sys_IsSourceControlEnabled;
+g_Sys_IsSourceControlEnabled := bSourceControlEnabled;
+
+:RETURN oResult;

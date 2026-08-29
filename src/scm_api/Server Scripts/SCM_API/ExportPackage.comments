@@ -1,0 +1,18 @@
+STARLIMS Server Script: SCM_API.ExportPackage
+
+Description: Export all checked out items to an SDP package file
+
+Author: DC
+Date: 2024-10-20
+
+Procedure Parameters: None
+
+Return Value: JSON object containing:
+- success: Boolean indicating if export was successful
+- data: Filename of the exported package or error message
+
+Usage: Called via REST API endpoint SCM_API.ExportPackage.lims
+
+This script exports all items currently checked out by the current user into
+an SDP (STARLIMS Data Package) file that can be shared or imported into other
+STARLIMS instances.

@@ -1,0 +1,415 @@
+/* eslint-disable no-undef */
+/* eslint-disable no-unused-vars */
+/*
+Description.. :	Read XML from database and create form
+Author....... :	DC
+Date......... : 2023-11-16
+*/
+
+var _globalCount = 0;
+
+const controlClasses = {
+    "Button": Button,
+    "ButtonBar": ButtonBar,
+    "ButtonBarGroup": ButtonBarGroup,
+    "ButtonBarItem": ButtonBarItem,
+    "CheckBox": CheckBox,
+    "CheckedListBox": CheckedListBox,
+    "ComboBox": ComboBox,
+    "DataGrid": DataGrid,
+    "DataGridTable": SL.DataGridTable,
+    "DataGridColumn": SL.DataGridColumn,
+    "DateTimePicker": DateTimePicker,
+    "Frame": Frame,
+    "GroupBox": GroupBox,
+    "Image": Image,
+    "Label": Label,
+    "Line": Line,
+    "LinkBar": LinkBar,
+    "LinkBarItem": LinkBarItem,
+    "LinkBarGroup": LinkBarGroup,
+    "LinkButton": LinkButton,
+    "LinkLabel": LinkLabel,
+    "ListBox": ListBox,
+    "ListView": ListView,
+    "MonthCalendar": MonthCalendar,
+    "MultiChoice": MultiChoice,
+    "Panel": Panel,
+    "ProgressBar": ProgressBar,
+    "RadioButton": RadioButton,
+    "ReportViewer": ReportViewer,
+    "RichTextBox": RichTextBox,
+    "Schedule": Schedule,
+    "ScriptEditor": ScriptEditor,
+    "SplitContainerH": SL.SplitContainerH,
+    "SplitContainerV": SL.SplitContainerV,
+    "SplitterPanel": SL.SplitterPanel,
+    "TabControl": TabControl,
+    "TabPage": TabPage,
+    "TextArea": TextArea,
+    "TextBox": TextBox,
+    "TreeNode": TreeNode,
+    "TreeView": TreeView,
+    "TreeListView": TreeListView,
+    "WebBrowser": WebBrowser
+};
+
+// create form with all controls from XML
+async function LoadFormFromXML(sXML)
+{
+    var xmlDoc = new DOMParser().parseFromString(sXML, "text/xml");
+    var formNode = xmlDoc.getElementsByTagName("Form")[0];
+
+    // change id tag of form node to _Form1 to avoid name conflict
+    formNode.getElementsByTagName("Id")[0].textContent = "_Form1";
+
+    var newForm = await CreateControlFromXML(formNode);
+    await LoadCboControls();
+    return newForm;
+}
+
+// set properties for control
+async function SetBaseProperties(xmlNode, control)
+{
+    // set properties
+    for (let row of xmlNode.childNodes)
+    {
+        // skip text nodes
+        if (row.nodeName === "#text")
+            continue;
+
+        let sPropertyName = row.nodeName;
+        let value = row.textContent;
+
+        if (sPropertyName === "Guid")
+            continue;
+
+        // convert function name to function
+        if (sPropertyName.includes("On") && value.includes("("))
+        {
+            try
+            {    
+                value = eval(value);
+            }
+            catch (e) 
+            {
+                console.log("Error converting function name " + value + " to function");
+            }
+        }
+
+        // convert numeric string to number
+        if (!isNaN(value))
+            value = Number(value);
+
+        // convert boolean string to boolean
+        if (value === "true")
+            value = true;
+        else if (value === "false")
+            value = false;
+
+        control[sPropertyName] = value;
+    }
+}
+
+// create javascript control from XML
+async function CreateControlFromXML(xmlNode, xmlParentNode, control)
+{
+    // skip text nodes
+    if (xmlNode.nodeName === "#text")
+        return;
+    
+    // read type
+    var sType;
+    if(xmlNode.getAttribute("xsi:type"))
+        sType = xmlNode.getAttribute("xsi:type");
+
+    if (!sType && xmlNode.getElementsByTagName("xtype").length > 0)
+        sType = xmlNode.getElementsByTagName("xtype")[0].textContent;
+
+    if (!sType || sType === "")
+        return;
+
+    // remove Starlims from type name
+    sType = sType.replace("Starlims", "");
+
+    if (sType === "Form")
+    {
+        control = _Form1;
+        control.xType = "Form";
+
+        // set form width and height
+        control.Width = Number(xmlNode.getElementsByTagName("Width")[0].textContent);
+        control.Height = Number(xmlNode.getElementsByTagName("Height")[0].textContent);
+    }
+    else
+    {
+        if (sType !== "SplitterPanel")
+        {
+            // create new control
+            const controlClass = controlClasses[sType];
+            if (controlClass)
+                control = new controlClass();
+            else
+            {
+                await Dialogs.MessageBox("Control " + sType + " not supported", "Error", "ERROR", "OKONLY");
+                return;
+            }
+        }
+        control.xType = sType;
+    
+        // get control's guid
+        var sGuid = xmlNode.getElementsByTagName("Guid")[0].textContent;
+        
+        if(!sGuid)
+            sGuid = System.Guid.NewGuid().ToString();
+
+        control.Guid = sGuid;
+    }
+
+    // set properties
+    for (let node of xmlNode.childNodes)
+    {
+        // skip text nodes
+        if (node.nodeName === "#text" || node.nodeName === "RootTable")
+            continue;
+
+        let sPropertyName = node.nodeName;
+        let value = node.textContent;
+
+        if(value === "" || value === null)
+            continue;
+
+        if (sPropertyName === "Guid")
+            continue;
+        
+        // skip form title
+        if (control.xType === "Form" && sPropertyName === "Text")
+        {
+            control.title = "";
+            continue;
+        }
+
+        if (sPropertyName === "(Id)")
+            sPropertyName = "Id";
+
+        // convert function name to function
+        if (sPropertyName.includes("On") && value.includes("("))
+        {
+            try
+            {    
+                value = eval(value);
+            }
+            catch (e) 
+            {
+                console.log("Error converting function name " + value + " to function");
+            }
+        }
+
+        // convert numeric string to number
+        if (!isNaN(value))
+            value = Number(value);
+
+        // convert boolean string to boolean
+        if (value === "true")
+            value = true;
+        else if (value === "false")
+            value = false;
+
+        control[sPropertyName] = value;
+    }
+
+    // set control id by type and global count
+    if(!control.Id)
+        control.Id = control.xType + "_" + ++_globalCount;
+    if(!control.id)
+        control.id = control.Id;
+
+    xmlNode.Id = control.Id;
+
+    if (sType !== "Form")
+    {
+        // add control to hash table
+        LoadDataProperties(control);
+
+        htControls.Add(control.Guid, control);
+
+        // add control to outline treePanel
+        let parentNode = await GetNodeFromXML(xmlParentNode);
+        await AddControlToOutline(control, parentNode);
+        ApplyContextMenu(control);
+    }
+
+    // handle Panel1 and Panel2 properties for StarlimsSplitContainer
+    if (sType === "SplitContainerH" || sType === "SplitContainerV")
+    {
+        let childNode = xmlNode.getElementsByTagName("Panel1")[0];
+        if (childNode)
+            control.Panel1 = await CreateControlFromXML(childNode, xmlNode, control.Panel1);
+
+        childNode = xmlNode.getElementsByTagName("Panel2")[0];
+        if (childNode)
+            control.Panel2 = await CreateControlFromXML(childNode, xmlNode, control.Panel2);
+
+        if(sType === "SplitContainerH")
+            control.SplitterDistance = control.Panel1.Height;
+        else
+            control.SplitterDistance = control.Panel1.Width;
+
+        // Modify splitter distance when splitter is dragged
+        var splitter = control.child('splitter');
+
+        splitter.on('dragend', function() {
+            if (sType === "SplitContainerH")
+                control.SplitterDistance = control.Panel1.Height;
+            else
+                control.SplitterDistance = control.Panel1.Width;
+        });
+
+        return control;
+    }
+
+    if (sType === "SplitterPanel")
+        SetZIndex();
+
+    if (sType === "TabControl")
+        var nSelectedPage = control.SelectedPage;
+
+    // get all child controls (only current level)
+    let allControls = Array.from(xmlNode.getElementsByTagName("__array__Controls"));
+    let aControls = allControls.filter(item => item.parentNode === xmlNode && item.nodeName !== "#text");
+
+    if (aControls && aControls.length > 0)
+    {
+        for (let child of aControls[0].childNodes)
+        {
+            if (child.nodeName === "#text")
+                continue;
+
+            let childControl = await CreateControlFromXML(child, xmlNode);
+
+            if (childControl && control.Controls && childControl.xType !== "TabPage")
+                control.Controls.Add(childControl);
+        }
+        return control;
+    }
+
+    // get all groups (only current level)
+    let allGroups = Array.from(xmlNode.getElementsByTagName("__array__Groups"));
+    let aGroups = allGroups.filter(item => item.parentNode === xmlNode && item.nodeName !== "#text");
+
+    if (aGroups && aGroups.length > 0)
+    {
+        for (let group of aGroups[0].childNodes)
+        {
+            if (group.nodeName === "#text")
+                continue;
+
+            let childControl = await CreateControlFromXML(group, xmlNode);
+
+            // add groups for linkbar
+            if (childControl && control.Groups)
+            {
+                control.Groups.Add(childControl);
+            }
+        }
+        return control;
+    }
+
+    // get all items (only current level)
+    let allItems = Array.from(xmlNode.getElementsByTagName("__array__Items"));
+    let aItems = allItems.filter(item => item.parentNode === xmlNode && item.nodeName !== "#text");
+
+    if (aItems && aItems.length > 0)
+    {
+        for (let item of aItems[0].childNodes)
+        {
+            if (item.nodeName === "#text")
+                continue;
+
+            let childControl = await CreateControlFromXML(item, xmlNode);
+
+            if (childControl)
+            {
+                if(control.TabPages)
+                    control.TabPages.Add(childControl);
+                else if(control.Items)
+                    control.Items.Add(childControl);
+            }
+        }
+        
+        // set selected page for tabcontrol
+        if(control.TabPages && control.TabPages.Count > 0)
+            control.SelectedPage = nSelectedPage;
+        
+        return control;
+    }
+
+    // get all columns (only current level)
+    let allColumns = Array.from(xmlNode.getElementsByTagName("__array__Columns"));
+    let aColumns = allColumns.filter(item => item.parentNode === xmlNode && item.nodeName !== "#text");
+
+    if (aColumns && aColumns.length > 0)
+    {
+        for (let column of aColumns[0].childNodes)
+        {
+            if (column.nodeName === "#text")
+                continue;
+
+            // set data type
+            column.setAttribute("xsi:type", "StarlimsDataGridColumn");
+
+            let childControl = await CreateControlFromXML(column, xmlNode);
+
+            if (childControl)
+                control.Columns.Add(childControl);
+        }
+        return control;
+    }
+    
+    // get root table for datagrid
+    let xmlRootTable = xmlNode.getElementsByTagName("RootTable")[0];
+    if (xmlRootTable)
+    {
+        // set data type
+        xmlRootTable.setAttribute("xsi:type", "StarlimsDataGridTable");
+
+        let table = await CreateControlFromXML(xmlRootTable, xmlNode);
+        table.id = table.Id;
+        control.RootTable = table;
+        return control;
+    }
+
+    return control;
+}
+
+// get property value from xml node
+function GetProperty(column, name, bReturnEmptyString = false)
+{
+    let element = column.getElementsByTagName(name);
+    if (element.length > 0 && element[0].textContent)
+        return element[0].textContent;
+    else
+    {
+        // generate guid for new columns
+        if(name === "Guid")
+           return System.Guid.NewGuid().ToString();
+        else
+            return bReturnEmptyString ? "" : null;
+    }
+}
+
+// load control properties
+async function LoadDataProperties(control)
+{
+    
+    let xmlProperties = await lims.GetData("FormDesigner.dsControlProperties", [control.xType]);
+    if (!xmlProperties)
+    {
+        await Dialogs.MessageBox("Error loading properties for control " + control.xType, "Error", "ERROR", "OKONLY");
+        return;
+    }
+
+    _dgdProperties.Data = xmlProperties;
+    control.DataPropertiesXml = xmlProperties;
+    control.DataProperties = _dgdProperties.DataSet.Tables[0].Select("PROPERTY_VALUE is not null");
+}

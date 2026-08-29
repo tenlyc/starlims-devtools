@@ -1,20 +1,19 @@
-/*******************************************************************************
-Description..:        Get all currently checked out items of the user
-Author.......:        DC
-Date.........:        2023-07-26
-*******************************************************************************/
+/******************************************************************************
+Description.. :	Get all currently checked out items of the user
+Author....... :	DC
+Date......... : 2023-07-26
+*******************************************************************************/;
 :DECLARE String, oResponse, aResult, bAllUsers;
-
 String := "";
 oResponse := CreateUDObject({
-    {"success", .T.},
-    {"data", NIL}
+	{"success", .T.},
+	{"data", NIL}
 });
 
 :IF Request:QueryString:IsProperty("allUsers");
-    bAllUsers := .T.;
+	bAllUsers := .T.;
 :ELSE;
-    bAllUsers := .F.;
+	bAllUsers := .F.;
 :ENDIF;
 
 aResult := DoProc("Enterprise_Data_Providers.CheckInProvider.GetPendingCheckins", {bAllUsers});

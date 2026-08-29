@@ -14,13 +14,13 @@ export interface InlineCompletionResult {
 }
 
 class InlineCompletionService {
-  private isEnabled: boolean = true;
+  private isEnabled = true;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private debounceDelay: number = 300; // Faster response
+  private debounceDelay = 300; // Faster response
   private currentCompletion: InlineCompletionResult | null = null;
   private providerDisposable: monaco.IDisposable | null = null;
   private editor: monaco.editor.IStandaloneCodeEditor | null = null;
-  private lastTriggerTime: number = 0;
+  private lastTriggerTime = 0;
 
   constructor() {
     this.isEnabled = true;
@@ -84,7 +84,7 @@ class InlineCompletionService {
             const charBefore = lineContent.charAt(position.column - 2);
 
             // Trigger on word characters, brackets, colons, etc.
-            const triggerChars = /[a-zA-Z0-9_:.\(\)\[\]{}>'"]/;
+            const triggerChars = /[a-zA-Z0-9_:().[\]{}>'"]/;
             if (!triggerChars.test(charBefore) && charBefore !== ' ' && charBefore !== '\t') {
               return null;
             }

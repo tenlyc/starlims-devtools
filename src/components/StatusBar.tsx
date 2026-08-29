@@ -4,17 +4,18 @@ import { useThemeStore, Theme } from '../stores/themeStore';
 
 interface StatusBarProps {
   onToggleSidebar: () => void;
-  onToggleAI: () => void;
+  onToggleMCP: () => void;
   onToggleOutput: () => void;
   onOpenSCMPackage: () => void;
 }
 
-export function StatusBar({ onToggleSidebar, onToggleAI, onToggleOutput, onOpenSCMPackage }: StatusBarProps) {
+export function StatusBar({ onToggleSidebar, onToggleMCP, onToggleOutput, onOpenSCMPackage }: StatusBarProps) {
   const { currentServer, isConnected, isConnecting } = useServerStore();
   const { theme, resolvedTheme, setTheme } = useThemeStore();
   const [gitBranch, setGitBranch] = useState<string>('');
   const [gitHasChanges, setGitHasChanges] = useState(false);
   const [gitIsRepo, setGitIsRepo] = useState(false);
+  const [appVersion, setAppVersion] = useState('');
 
   const cycleTheme = () => {
     const themes: Theme[] = ['dark', 'light', 'system'];
@@ -31,6 +32,7 @@ export function StatusBar({ onToggleSidebar, onToggleAI, onToggleOutput, onOpenS
 
   // Git status check
   useEffect(() => {
+    window.electronAPI?.getAppVersion().then(setAppVersion).catch(() => undefined);
     const checkGitStatus = async () => {
       // Use a default workspace path - in a full implementation, this would be configurable
       const workspacePath = localStorage.getItem('gitWorkspacePath') || '';
@@ -74,7 +76,7 @@ export function StatusBar({ onToggleSidebar, onToggleAI, onToggleOutput, onOpenS
   }, []);
 
   return (
-    <div className="status-bar flex items-center justify-between text-slate-700 dark:text-slate-300 bg-slate-200 dark:bg-slate-800 border-t border-slate-300 dark:border-slate-700">
+    <div className="status-bar flex items-center justify-between text-slate-700 dark:text-[#bdbdbd] bg-slate-200 dark:bg-[#181818] border-t border-slate-300 dark:border-[#2b2b2b]">
       {/* Left section */}
       <div className="flex items-center gap-4">
         {/* Connection status */}
@@ -132,8 +134,8 @@ export function StatusBar({ onToggleSidebar, onToggleAI, onToggleOutput, onOpenS
 
         <button
           className="p-1 hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-          onClick={onToggleAI}
-          title="Toggle AI Panel"
+          onClick={onToggleMCP}
+          title="Toggle STARLIMS MCP Panel"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
@@ -152,8 +154,8 @@ export function StatusBar({ onToggleSidebar, onToggleAI, onToggleOutput, onOpenS
 
         <button
           className="p-1 hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-          onClick={() => alert('⚠️ Source Control Manager - Package Manager 功能正在开发中，敬请期待。')}
-          title="Source Control Manager - Package Manager (未实现)"
+          onClick={onOpenSCMPackage}
+          title="Source Control Manager - Package Manager"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -174,7 +176,7 @@ export function StatusBar({ onToggleSidebar, onToggleAI, onToggleOutput, onOpenS
         <span className="text-slate-400 dark:text-slate-600">|</span>
 
         {/* Version */}
-        <span className="text-xs text-slate-500 dark:text-slate-500">v1.0.0</span>
+        {appVersion && <span className="text-xs text-slate-500 dark:text-[#777]">v{appVersion}</span>}
       </div>
     </div>
   );

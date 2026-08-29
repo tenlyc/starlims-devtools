@@ -1,0 +1,109 @@
+/******************************************************************************
+Description.. :	Ticket management helper procedures for the VS Code extension
+Author....... :	GitHub Copilot
+Date......... : 2026-04-29
+*******************************************************************************/;
+
+:PROCEDURE AddCompletedMeasure;
+:PARAMETERS nTicketId, sMeasureTitle, sMeasureDescription;
+:DEFAULT nTicketId, -1;
+:DEFAULT sMeasureTitle, "";
+:DEFAULT sMeasureDescription, "";
+
+SQLExecute(
+"INSERT INTO BMBH_TICKET_MEASURES (TICKET_ID, TITLE, DESCRIPTION, STATUS, PRIORITY, DATE_FINISHED)
+VALUES (?nTicketId?, ?sMeasureTitle?, ?sMeasureDescription?, 'Completed', 0, GETDATE())");
+
+:DECLARE nMeasureId;
+nMeasureId := SQLExecute("SELECT @@IDENTITY");
+:RETURN nMeasureId;
+:ENDPROC;
+
+:PROCEDURE SetTicketInProgress;
+:PARAMETERS nTicketId, sUsername;
+:DEFAULT nTicketId, -1;
+:DEFAULT sUsername, "";
+
+:IF nTicketId < 0;
+	RaiseError("TicketId must be provided.", "SCM_API.TicketManagement.SetTicketInProgress", -1);
+:ENDIF;
+
+:IF Empty(AllTrim(sUsername));
+	RaiseError("Username must be provided.", "SCM_API.TicketManagement.SetTicketInProgress", -1);
+:ENDIF;
+
+:DECLARE nInProgressCode;
+nInProgressCode := SQLExecute("SELECT ORIGREC FROM BMBH_TICKET_STATUS WHERE STATUS_NAME = 'In Bearbeitung'");
+
+:IF Empty(nInProgressCode) .OR. Len(nInProgressCode) == 0;
+	RaiseError("Could not resolve ticket status 'In Bearbeitung'.", "SCM_API.TicketManagement.SetTicketInProgress", -1);
+:ENDIF;
+
+nInProgressCode := nInProgressCode[1][1];
+
+SQLExecute("UPDATE BMBH_TICKETS SET STATUS = ?nInProgressCode?, ASIGNEDTO = ?sUsername?, MODIFIEDON = GETDATE() WHERE ORIGREC = ?nTicketId?");
+
+:RETURN nInProgressCode;
+:ENDPROC;
+
+:PROCEDURE SetTicketOpen;
+:PARAMETERS nTicketId;
+:DEFAULT nTicketId, -1;
+
+:IF nTicketId < 0;
+	RaiseError("TicketId must be provided.", "SCM_API.TicketManagement.SetTicketOpen", -1);
+:ENDIF;
+
+:DECLARE nOpenCode;
+nOpenCode := SQLExecute("SELECT ORIGREC FROM BMBH_TICKET_STATUS WHERE STATUS_NAME = 'Offen'");
+
+:IF Empty(nOpenCode) .OR. Len(nOpenCode) == 0;
+	RaiseError("Could not resolve ticket status 'Offen'.", "SCM_API.TicketManagement.SetTicketOpen", -1);
+:ENDIF;
+
+nOpenCode := nOpenCode[1][1];
+
+SQLExecute("UPDATE BMBH_TICKETS SET STATUS = ?nOpenCode?, ASIGNEDTO = '', MODIFIEDON = GETDATE() WHERE ORIGREC = ?nTicketId?");
+
+:RETURN nOpenCode;
+:ENDPROC;
+
+:PROCEDURE SetTicketFertig;
+:PARAMETERS nTicketId;
+:DEFAULT nTicketId, -1;
+
+:IF nTicketId < 0;
+	RaiseError("TicketId must be provided.", "SCM_API.TicketManagement.SetTicketFertig", -1);
+:ENDIF;
+
+:DECLARE nFertigCode;
+nFertigCode := SQLExecute("SELECT ORIGREC FROM BMBH_TICKET_STATUS WHERE STATUS_NAME = 'Fertig'");
+
+:IF Empty(nFertigCode) .OR. Len(nFertigCode) == 0;
+	RaiseError("Could not resolve ticket status 'Fertig'.", "SCM_API.TicketManagement.SetTicketFertig", -1);
+:ENDIF;
+
+nFertigCode := nFertigCode[1][1];
+
+SQLExecute("UPDATE BMBH_TICKETS SET STATUS = ?nFertigCode?, ASIGNEDTO = '', MODIFIEDON = GETDATE() WHERE ORIGREC = ?nTicketId?");
+
+:RETURN nFertigCode;
+:ENDPROC;
+
+:PROCEDURE RenameTicket;
+:PARAMETERS nTicketId, sNewTitle;
+:DEFAULT nTicketId, -1;
+:DEFAULT sNewTitle, "";
+
+:IF nTicketId < 0;
+	RaiseError("TicketId must be provided.", "SCM_API.TicketManagement.RenameTicket", -1);
+:ENDIF;
+
+:IF Empty(AllTrim(sNewTitle));
+	RaiseError("New title must be provided.", "SCM_API.TicketManagement.RenameTicket", -1);
+:ENDIF;
+
+SQLExecute("UPDATE BMBH_TICKETS SET TITLE = ?sNewTitle?, MODIFIEDON = GETDATE() WHERE ORIGREC = ?nTicketId?");
+
+:RETURN 1;
+:ENDPROC;

@@ -1,0 +1,117 @@
+/******************************************************************************
+Description.. :	Save a modified table DTO XML through Enterprise_Data_Providers.TableProvider
+Author....... :	Copilot
+Date......... :	2026-05-18
+*******************************************************************************/;
+:DECLARE String, oPayload, oResponse, oResult, sRequestAsFile, sTableXml, sError, oTableDto, aTypes, sTableId, sCurrentXml, sDiffXml, oComparer;
+String := "";
+
+oResponse := CreateUDObject({
+	{"success", .T.},
+	{"data", NIL}
+});
+
+:TRY;
+	sRequestAsFile := Request:SaveInputStream();
+	oPayload := FromJSON(ReadText(sRequestAsFile));
+	FileSupport(sRequestAsFile, "DELETE");
+:CATCH;
+	UsrMes("ERROR:", GetLastSSLError():FullDescription);
+	Response:ContentType := "application/problem+json";
+	Response:StatusCode := 500;
+	oResponse:success := .F.;
+	oResponse:data := "Could not deserialize request body.";
+	:RETURN oResponse;
+:ENDTRY;
+
+:IF Empty(oPayload);
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := "No payload found!";
+	:RETURN oResponse;
+:ENDIF;
+
+:IF oPayload:IsProperty("TableXml");
+	sTableXml := oPayload:TableXml;
+:ELSE;
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := String:Format("Missing required property '{0}'", "TableXml");
+	:RETURN oResponse;
+:ENDIF;
+
+/* TableProvider.Modify only applies elements whose DdlState marks a change.
+   A raw TableGetById XML has all DdlState values empty, so committing it
+   directly is a silent no-op. Compute the diff against the current server
+   definition with the native DTO comparer (same engine the package import
+   uses), then modify the table with the diff.;
+:TRY;
+	aTypes := DoProc("Enterprise_Data_Providers.TableProvider.GetDeserializeTypes");
+	oTableDto := CreateUDObject("Enterprise_DB_Objects.DTOTable");
+	oTableDto:Deserialize(sTableXml, aTypes);
+
+	sTableId := oTableDto:Id;
+	:IF Empty(sTableId);
+		sTableId := DoProc("Enterprise_Data_Providers.TableProvider.GetIdByName", {oTableDto:Name});
+	:ENDIF;
+
+	:IF Empty(sTableId);
+		Response:StatusCode := 400;
+		oResponse:success := .F.;
+		oResponse:data := "Could not resolve the table id for '" + oTableDto:Name + "'.";
+		:RETURN oResponse;
+	:ENDIF;
+
+	sCurrentXml := DoProc("Enterprise_Data_Providers.TableProvider.GetById", {sTableId, .F., {}, .T., .F.});
+:CATCH;
+	sError := GetLastSSLError():FullDescription;
+	UsrMes("ERROR:", sError);
+	Response:ContentType := "application/problem+json";
+	Response:StatusCode := 500;
+	oResponse:success := .F.;
+	oResponse:data := sError;
+	:RETURN oResponse;
+:ENDTRY;
+
+:IF Empty(sCurrentXml);
+	Response:StatusCode := 400;
+	oResponse:success := .F.;
+	oResponse:data := "Could not read the current table definition.";
+	:RETURN oResponse;
+:ENDIF;
+
+:TRY;
+	oComparer := CreateUDObject("Enterprise_DB_Objects.DTOTablesComparer");
+	sDiffXml := oComparer:CompareXMLs(sCurrentXml, sTableXml, .F., .F., .F.);
+:CATCH;
+	sError := GetLastSSLError():FullDescription;
+	UsrMes("ERROR:", sError);
+	Response:ContentType := "application/problem+json";
+	Response:StatusCode := 500;
+	oResponse:success := .F.;
+	oResponse:data := sError;
+	:RETURN oResponse;
+:ENDTRY;
+
+:IF Empty(sDiffXml);
+	oResponse:success := .T.;
+	oResponse:data := "No changes detected.";
+	:RETURN oResponse;
+:ENDIF;
+
+:TRY;
+	oResult := DoProc("Enterprise_Data_Providers.TableProvider.Modify", {sDiffXml, .F., .T., .F.});
+:CATCH;
+	sError := GetLastSSLError():FullDescription;
+	UsrMes("ERROR:", sError);
+	Response:ContentType := "application/problem+json";
+	Response:StatusCode := 500;
+	oResponse:success := .F.;
+	oResponse:data := sError;
+	:RETURN oResponse;
+:ENDTRY;
+
+Response:StatusCode := 200;
+	oResponse:success := .T.;
+	oResponse:data := oResult;
+	:RETURN oResponse;

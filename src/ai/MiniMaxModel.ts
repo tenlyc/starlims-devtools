@@ -12,8 +12,8 @@ export class MiniMaxModel implements IAIModel {
   readonly provider: ModelProvider = 'minimax';
 
   private config: AIConfig | null = null;
-  private baseUrl: string = 'https://api.minimax.chat/v1';  // MiniMax API endpoint
-  private model: string = 'MiniMax-M2.7';  // MiniMax M2.7 model
+  private baseUrl = 'https://api.minimax.chat/v1';  // MiniMax API endpoint
+  private model = 'MiniMax-M2.7';  // MiniMax M2.7 model
 
   /**
    * Initialize the MiniMax model with API configuration

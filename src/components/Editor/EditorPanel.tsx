@@ -4,12 +4,15 @@ import { editorStore, OpenFile } from '../../stores/editorStore';
 import { goToItem, goToServerScript, goToClientScript, goToDataSource, goToForm, detectGoToCommand, parseScriptNameFromLine } from '../../services/goToService';
 import { registerSnippets } from '../../services/snippets';
 import { registerLanguages, defineThemes } from '../../services/monarchTokens';
+import { registerSslLanguageFeatures } from '../../services/sslLanguageFeatures';
+import { resolveEditorLanguage } from '../../services/editorLanguage';
 import { getEnterpriseService } from '../../services/enterpriseService';
 import { useOutputLogStore } from '../../services/outputLogStore';
 import { triggerCheckedOutRefresh } from '../../services/checkedOutStore';
 import { useThemeStore } from '../../stores/themeStore';
 import { getInlineCompletionService } from '../../services/InlineCompletionService';
 import * as monaco from 'monaco-editor';
+import { useAiContextStore } from '../../services/aiContextStore';
 
 interface EditorContextMenu {
   x: number;
@@ -43,14 +46,15 @@ export function EditorPanel() {
     isOpen: false,
     fileName: '',
     file: null,
-    onSave: () => {},
-    onDiscard: () => {},
-    onCancel: () => {}
+    onSave: () => undefined,
+    onDiscard: () => undefined,
+    onCancel: () => undefined
   });
   const [settingsKey, setSettingsKey] = useState(0);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof monaco | null>(null);
   const [showDiffControls, setShowDiffControls] = useState(false);
+  const addAiContext = useAiContextStore((state) => state.addItem);
 
   // Listen for diff controls update events
   useEffect(() => {
@@ -96,6 +100,7 @@ export function EditorPanel() {
     console.log('Registering themes and languages in handleEditorMount...');
     defineThemes(monacoInstance as any);
     registerLanguages(monacoInstance as any);
+    registerSslLanguageFeatures(monacoInstance as any);
     registerSnippets();
 
     // Set theme based on current resolved theme
@@ -106,7 +111,7 @@ export function EditorPanel() {
 
     // Debug: log current file type and language
     if (activeFile) {
-      const lang = getLanguage(activeFile.type);
+      const lang = resolveEditorLanguage(activeFile.type, activeFile.language);
       console.log('File type:', activeFile.type, '-> Language:', lang);
     }
 
@@ -388,7 +393,7 @@ export function EditorPanel() {
       // Find where original text is in the editor content
       const fullContent = model.getValue();
       const firstLine = originalLines[0];
-      let startIdx = fullContent.indexOf(firstLine);
+      const startIdx = fullContent.indexOf(firstLine);
 
       if (startIdx === -1) {
         console.log('Could not find original code in editor');
@@ -407,7 +412,6 @@ export function EditorPanel() {
       let endIdx = -1;
 
       // Try to find the exact original content by matching line by line
-      outerLoop:
       for (let i = 1; i < originalLines.length; i++) {
         const line = originalLines[i];
         // Search for this line starting from current search position
@@ -821,6 +825,24 @@ export function EditorPanel() {
     }
   };
 
+  const handleReferenceForAi = () => {
+    if (!activeFile) return;
+    const selection = editorRef.current?.getSelection();
+    const selectedContent = selection && !selection.isEmpty()
+      ? editorRef.current?.getModel()?.getValueInRange(selection)
+      : '';
+    const isSelection = !!selectedContent;
+    addAiContext({
+      id: isSelection ? `${activeFile.uri}#selection` : activeFile.uri,
+      name: isSelection ? `${activeFile.name} (selection)` : activeFile.name,
+      uri: activeFile.uri,
+      type: activeFile.type,
+      content: selectedContent || activeFile.content,
+      source: 'editor'
+    });
+    window.dispatchEvent(new CustomEvent('ai:show'));
+  };
+
   // Check Out handler
   const handleCheckOut = async () => {
     if (!activeFile) return;
@@ -1067,22 +1089,26 @@ export function EditorPanel() {
       case 'auto':
         result = await goToItem(content, currentLine, position);
         break;
-      case 'server':
+      case 'server': {
         const serverName = parseScriptNameFromLine(currentLine, 'server');
         if (serverName) result = await goToServerScript(serverName);
         break;
-      case 'client':
+      }
+      case 'client': {
         const clientName = parseScriptNameFromLine(currentLine, 'client');
         if (clientName) result = await goToClientScript(clientName);
         break;
-      case 'datasource':
+      }
+      case 'datasource': {
         const dsName = parseScriptNameFromLine(currentLine, 'datasource');
         if (dsName) result = await goToDataSource(dsName);
         break;
-      case 'form':
+      }
+      case 'form': {
         const formName = parseScriptNameFromLine(currentLine, 'form');
         if (formName) result = await goToForm(formName);
         break;
+      }
     }
 
     if (result.success) {
@@ -1300,35 +1326,6 @@ export function EditorPanel() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeFile, cursorPosition]);
 
-  // Determine language from file type
-  const getLanguage = (fileType: string): string => {
-    switch (fileType) {
-      case 'SS':
-      case 'APPSS':
-      case 'AppServerScript':
-        return 'ssl';
-      case 'CS':
-      case 'APPCS':
-      case 'ClientScript':
-        return 'csharp';
-      case 'DS':
-      case 'APPDS':
-      case 'DataSource':
-        return 'slsql';
-      case 'HTMLFORMXML':
-      case 'XFDFORMXML':
-        return 'xml';
-      case 'HTMLFORMCODE':
-      case 'XFDFORMCODE':
-        return 'html';
-      case 'SERVERLOG':
-        return 'sql'; // Server logs are SQL-based
-      default:
-        console.log('Unknown file type:', fileType);
-        return 'plaintext';
-    }
-  };
-
   // Get icon for file type
   const getFileIcon = (fileType: string): string => {
     switch (fileType) {
@@ -1350,7 +1347,7 @@ export function EditorPanel() {
   };
 
   return (
-    <div className="h-full flex flex-col bg-slate-100 dark:bg-slate-900 relative">
+    <div className="h-full flex flex-col bg-slate-100 dark:bg-[#1e1e1e] relative">
       {/* Tab bar */}
       {files.length > 0 && (
         <div className="flex items-center bg-slate-200 dark:bg-slate-800 border-b border-slate-300 dark:border-slate-700 overflow-x-auto">
@@ -1519,7 +1516,7 @@ export function EditorPanel() {
           <MonacoEditor
             key={`${currentActiveUri || 'empty'}-${settingsKey}`}
             height="100%"
-            language={getLanguage(activeFile.type)}
+            language={resolveEditorLanguage(activeFile.type, activeFile.language)}
             defaultValue={activeFile.content}
             onChange={handleEditorChange}
             onMount={handleEditorMount}
@@ -1546,7 +1543,7 @@ export function EditorPanel() {
               bracketPairColorization: { enabled: true },
               matchBrackets: 'always',
               // Hover and parameter hints
-              hover: { enabled: true },
+              hover: { enabled: 'on' },
               parameterHints: { enabled: true },
               // Multi-cursor and selection
               multiCursorModifier: 'alt',
@@ -1575,7 +1572,7 @@ export function EditorPanel() {
             }}
           />
         ) : (
-          <div className="h-full flex flex-col items-center justify-center text-slate-500 dark:text-slate-400">
+          <div className="h-full flex flex-col items-center justify-center bg-white dark:bg-[#1e1e1e] text-slate-500 dark:text-[#858585]">
             <svg className="w-16 h-16 mb-4 text-slate-400 dark:text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
@@ -1675,6 +1672,14 @@ export function EditorPanel() {
           >
             <span>📑</span>
             <span>跳转到大纲 (Ctrl+Shift+O)</span>
+          </button>
+          <div className="border-t border-slate-200 dark:border-slate-600 my-1" />
+          <button
+            className="w-full px-3 py-2 text-left text-sm text-blue-600 dark:text-[#4daafc] hover:bg-slate-100 dark:hover:bg-[#2a2d2e] flex items-center gap-2"
+            onClick={() => { handleReferenceForAi(); setContextMenu(null); }}
+          >
+            <span className="font-mono font-bold">@</span>
+            <span>引用到 AI 上下文</span>
           </button>
           <div className="border-t border-slate-200 dark:border-slate-600 my-1" />
           <button

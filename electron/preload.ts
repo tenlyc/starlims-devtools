@@ -1,7 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { AgentApprovalDecision, AgentEvent, AgentProvider, AgentRuntimeStatus, AgentStartResult } from '../src/types/agent';
 
 // Type definitions for exposed API
 export interface ElectronAPI {
+  // STARLIMS MCP bridge
+  mcpGetStatus: () => Promise<{ enabled: boolean; running: boolean; host: string; port: number; url: string; error?: string }>;
+  onMcpRequest: (callback: (request: { id: string; tool: string; arguments: Record<string, unknown> }) => void) => () => void;
+  respondToMcpRequest: (response: { id: string; result?: unknown; error?: string }) => void;
+
   // Dialog
   showOpenDialog: (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>;
   showSaveDialog: (options: Electron.SaveDialogOptions) => Promise<Electron.SaveDialogReturnValue>;
@@ -62,10 +68,29 @@ export interface ElectronAPI {
   cliCheckOpenCode: () => Promise<boolean>;
   cliExecuteClaude: (prompt: string) => Promise<string>;
   cliExecuteOpenCode: (prompt: string) => Promise<string>;
+  cliGetStatuses: () => Promise<Record<'codex' | 'claude' | 'opencode', { available: boolean; version?: string; command?: string }>>;
+  cliExecute: (provider: 'codex' | 'claude' | 'opencode', prompt: string) => Promise<string>;
+
+  // Rich agent runtimes
+  agentGetStatuses: () => Promise<Record<AgentProvider, AgentRuntimeStatus>>;
+  agentStart: (provider: AgentProvider, prompt: string) => Promise<AgentStartResult>;
+  agentInterrupt: (provider: AgentProvider) => Promise<void>;
+  agentNewSession: (provider: AgentProvider) => Promise<void>;
+  agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => Promise<boolean>;
+  onAgentEvent: (callback: (event: AgentEvent) => void) => () => void;
 }
 
 // Expose protected methods to renderer
 contextBridge.exposeInMainWorld('electronAPI', {
+  // STARLIMS MCP bridge
+  mcpGetStatus: () => ipcRenderer.invoke('mcp:getStatus'),
+  onMcpRequest: (callback: (request: { id: string; tool: string; arguments: Record<string, unknown> }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, request: { id: string; tool: string; arguments: Record<string, unknown> }) => callback(request);
+    ipcRenderer.on('mcp:request', listener);
+    return () => ipcRenderer.removeListener('mcp:request', listener);
+  },
+  respondToMcpRequest: (response: { id: string; result?: unknown; error?: string }) => ipcRenderer.send('mcp:response', response),
+
   // Dialog
   showOpenDialog: (options: Electron.OpenDialogOptions) =>
     ipcRenderer.invoke('dialog:showOpenDialog', options),
@@ -116,7 +141,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMenuEvent: (callback: (event: string) => void) => {
     const events = [
       'menu:newFile', 'menu:openFile', 'menu:save',
-      'menu:toggleSidebar', 'menu:toggleAIPanel',
+      'menu:toggleSidebar', 'menu:toggleMCPPanel',
       'menu:connect', 'menu:disconnect',
       'menu:refresh', 'menu:runScript',
       'menu:checkOut', 'menu:checkIn',
@@ -141,7 +166,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   cliCheckClaude: () => ipcRenderer.invoke('cli:checkClaude'),
   cliCheckOpenCode: () => ipcRenderer.invoke('cli:checkOpenCode'),
   cliExecuteClaude: (prompt: string) => ipcRenderer.invoke('cli:executeClaude', prompt),
-  cliExecuteOpenCode: (prompt: string) => ipcRenderer.invoke('cli:executeOpenCode', prompt)
+  cliExecuteOpenCode: (prompt: string) => ipcRenderer.invoke('cli:executeOpenCode', prompt),
+  cliGetStatuses: () => ipcRenderer.invoke('cli:getStatuses'),
+  cliExecute: (provider: 'codex' | 'claude' | 'opencode', prompt: string) => ipcRenderer.invoke('cli:execute', provider, prompt),
+
+  // Rich agent runtimes
+  agentGetStatuses: () => ipcRenderer.invoke('agent:getStatuses'),
+  agentStart: (provider: AgentProvider, prompt: string) => ipcRenderer.invoke('agent:start', provider, prompt),
+  agentInterrupt: (provider: AgentProvider) => ipcRenderer.invoke('agent:interrupt', provider),
+  agentNewSession: (provider: AgentProvider) => ipcRenderer.invoke('agent:newSession', provider),
+  agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => ipcRenderer.invoke('agent:respondApproval', provider, requestId, decision),
+  onAgentEvent: (callback: (event: AgentEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, agentEvent: AgentEvent) => callback(agentEvent);
+    ipcRenderer.on('agent:event', listener);
+    return () => ipcRenderer.removeListener('agent:event', listener);
+  }
 } as ElectronAPI);
 
 // TypeScript declaration for window object

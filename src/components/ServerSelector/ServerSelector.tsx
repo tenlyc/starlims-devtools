@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useServerStore, ServerConfig } from '../../stores/serverStore';
+import { normalizeStarlimsUrl } from '../../services/miscUtils';
 
 interface ServerSelectorProps {
   onConnect: () => void;
@@ -7,7 +8,7 @@ interface ServerSelectorProps {
 
 export function ServerSelector({ onConnect }: ServerSelectorProps) {
   const {
-    servers, addServer, removeServer, selectServer,
+    servers, addServer, updateServer, removeServer, selectServer,
     currentServer, setError, error, setPassword,
     password, isConnecting, connect
   } = useServerStore();
@@ -16,6 +17,8 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
   const [showPasswordInput, setShowPasswordInput] = useState(false);
   const [rememberPassword, setRememberPassword] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [editingServerName, setEditingServerName] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState('');
 
   // Form state
   const [formData, setFormData] = useState<ServerConfig>({
@@ -53,6 +56,7 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
       }
     };
     loadServers();
+    window.electronAPI?.getAppVersion().then(setAppVersion).catch(() => undefined);
   }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -64,28 +68,68 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
     setPassword(e.target.value);
   };
 
-  const handleAddServer = () => {
+  const resetServerForm = () => {
+    setFormData({ name: '', url: '', user: '', urlSuffix: 'lims' });
+    setEditingServerName(null);
+    setShowAddForm(false);
+  };
+
+  const handleSaveServer = async () => {
     if (!formData.name.trim() || !formData.url.trim()) {
       setError('Name and URL are required');
       return;
     }
 
-    // Validate URL format
+    let normalizedUrl: string;
     try {
-      new URL(formData.url);
+      normalizedUrl = normalizeStarlimsUrl(formData.url);
     } catch {
       setError('Invalid URL format');
       return;
     }
 
-    addServer(formData);
-    setFormData({ name: '', url: '', user: '', urlSuffix: 'lims' });
-    setShowAddForm(false);
+    const server = {
+      ...formData,
+      name: formData.name.trim(),
+      url: normalizedUrl,
+      user: formData.user?.trim(),
+      urlSuffix: formData.urlSuffix?.trim() || 'lims'
+    };
+
+    if (editingServerName) {
+      const savedPassword = editingServerName !== server.name && window.electronAPI
+        ? await window.electronAPI.storeGet(`password_${editingServerName}`)
+        : null;
+      if (!updateServer(editingServerName, server)) {
+        setError(`A server named '${server.name}' already exists`);
+        return;
+      }
+      if (editingServerName !== server.name && window.electronAPI) {
+        if (savedPassword) await window.electronAPI.storeSet(`password_${server.name}`, savedPassword);
+        await window.electronAPI.storeDelete(`password_${editingServerName}`);
+      }
+    } else {
+      if (servers.some((item) => item.name === server.name)) {
+        setError(`A server named '${server.name}' already exists`);
+        return;
+      }
+      addServer(server);
+    }
+
+    resetServerForm();
     setError(null);
   };
 
-  const handleDeleteServer = (name: string) => {
+  const handleDeleteServer = async (name: string) => {
     removeServer(name);
+    await window.electronAPI?.storeDelete(`password_${name}`);
+  };
+
+  const handleEditServer = (server: ServerConfig) => {
+    setEditingServerName(server.name);
+    setFormData({ ...server, password: undefined });
+    setShowAddForm(true);
+    setError(null);
   };
 
   const handleSelectServer = async (server: ServerConfig) => {
@@ -211,15 +255,26 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
                               <div className="text-xs text-slate-400 dark:text-slate-500">User: {server.user}</div>
                             )}
                           </div>
-                          <button
-                            className="p-1 text-slate-400 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 rounded"
-                            onClick={(e) => { e.stopPropagation(); handleDeleteServer(server.name); }}
-                            title="Delete server"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              className="p-1 text-slate-400 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded"
+                              onClick={(e) => { e.stopPropagation(); handleEditServer(server); }}
+                              title="Edit server"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                            <button
+                              className="p-1 text-slate-400 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 rounded"
+                              onClick={(e) => { e.stopPropagation(); void handleDeleteServer(server.name); }}
+                              title="Delete server"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))
@@ -230,7 +285,9 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
               {/* Add server form */}
               {showAddForm ? (
                 <div className="space-y-4 p-4 bg-slate-50 dark:bg-slate-700/50 rounded border border-slate-200 dark:border-slate-600 mb-4">
-                  <h3 className="text-sm font-medium text-slate-700 dark:text-white">Add New Server</h3>
+                  <h3 className="text-sm font-medium text-slate-700 dark:text-white">
+                    {editingServerName ? 'Edit Server' : 'Add New Server'}
+                  </h3>
                   <div>
                     <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Server Name</label>
                     <input
@@ -252,6 +309,9 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
                       className="input"
                       placeholder="https://my.starlims.server.com/STARLIMS/"
                     />
+                    <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+                      Application root URL; a pasted starthtml.lims URL is normalized automatically.
+                    </p>
                   </div>
                   <div>
                     <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Username (optional)</label>
@@ -278,13 +338,13 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
                   <div className="flex gap-2">
                     <button
                       className="btn btn-primary flex-1"
-                      onClick={handleAddServer}
+                      onClick={() => void handleSaveServer()}
                     >
-                      Add Server
+                      {editingServerName ? 'Save Changes' : 'Add Server'}
                     </button>
                     <button
                       className="btn btn-secondary"
-                      onClick={() => { setShowAddForm(false); setError(null); }}
+                      onClick={() => { resetServerForm(); setError(null); }}
                     >
                       Cancel
                     </button>
@@ -293,7 +353,11 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
               ) : (
                 <button
                   className="w-full btn btn-secondary mb-4"
-                  onClick={() => setShowAddForm(true)}
+                  onClick={() => {
+                    setEditingServerName(null);
+                    setFormData({ name: '', url: '', user: '', urlSuffix: 'lims' });
+                    setShowAddForm(true);
+                  }}
                 >
                   <span className="flex items-center justify-center gap-2">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -414,7 +478,7 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
         {/* Footer */}
         <div className="px-6 py-3 bg-slate-100 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 text-center">
           <p className="text-xs text-slate-500 dark:text-slate-500">
-            Version 1.0.0 | Cross-platform STARLIMS Development Tools
+            {appVersion ? `Version ${appVersion} | ` : ''}Cross-platform STARLIMS Development Tools
           </p>
         </div>
       </div>

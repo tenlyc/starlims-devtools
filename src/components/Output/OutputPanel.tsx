@@ -21,8 +21,8 @@ function parseLogContent(content: string): LogEntry[] {
   const logPattern = /LIYC\s+\/\s+\d{8}\s+\/\s+\d{2}:\d{2}:\d{2}/g;
   const lines = content.split('\n');
 
-  let currentEntry = '';
-  let lastIndex = 0;
+  const currentEntry = '';
+  const lastIndex = 0;
   let match;
 
   // Find all log entry starts

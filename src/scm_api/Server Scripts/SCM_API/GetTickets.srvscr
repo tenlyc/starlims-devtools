@@ -1,0 +1,50 @@
+/********************************************************************************
+Description.. :	Gets all tickets
+DS Type...... : STARLIMS
+Author....... : DC
+Date......... :	2026-05-05
+********************************************************************************/;
+:DECLARE json, oResponse, aResult, i;
+oResponse := CreateUDObject({
+	{"success", .T.},
+	{"data", NIL}
+});
+
+
+:DECLARE sSql;
+sSql := "select
+t.ORIGREC,
+t.TITLE,
+t.AUTHOR,
+t.ASIGNEDTO,
+t.ADMIN_TICKET,
+s.STATUS_NAME,
+ty.TYPE_NAME,
+p.PRIORITY_NAME, 
+t.CREATEDON,
+t.MODIFIEDON,
+t.STACKTRACE_ID,
+t.DUEON,
+t.N_REPORTS AS REPORT_COUNT,
+sv.SEVERITY_NAME
+from BMBH_TICKETS as t 
+join BMBH_TICKET_STATUS as s on t.STATUS = s.ORIGREC
+join BMBH_TICKET_PRIORITY as p on t.PRIORITY = p.ORIGREC
+join BMBH_TICKET_TYPE as ty on t.TYPE = ty.ORIGREC
+join BMBH_TICKET_SEVERITY as sv on t.SEVERITY = sv.ORIGREC
+WHERE t.PARENT_ID IS NULL
+order by ORIGREC desc";
+
+aResult := Sqlexecute(sSql);
+
+:IF !Empty(aResult);    
+    Response:StatusCode := 200;
+    oResponse:success := .T.;
+    oResponse:data := aResult;
+:ELSE;
+    Response:StatusCode := 500;
+    oResponse:success := .F.;
+    oResponse:data := "No tickets found";
+:ENDIF;
+
+:RETURN oResponse;

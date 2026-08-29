@@ -1,0 +1,1 @@
+update limsSOURCECONTROL set REASONFORCHECKOUT = '(GitHub Copilot - 29.04.2026 00:00:00) - Added TicketManagement helper procedures for VS Code ticket selection and completed measure creation.' where versionID = ?

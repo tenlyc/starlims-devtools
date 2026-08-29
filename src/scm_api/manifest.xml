@@ -1,62 +1,1107 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Package xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-  <ItemID>8E5C4A2B-1D3F-4E5A-9B7C-6F8E9A0D1B2C</ItemID>
+  <ItemID>F11BB302-6B4B-4F00-A47E-52B8787267E0</ItemID>
   <ItemName>SCM_API</ItemName>
   <IsMandatory>false</IsMandatory>
   <ItemBehaviour>merge</ItemBehaviour>
-  <PackageDate>2026-04-12T17:00:00.0000000+08:00</PackageDate>
+  <PackageDate>2024-09-19T15:04:37.7840997+02:00</PackageDate>
   <PathReadMe />
   <PathEULA />
   <PathLogo />
   <OverwriteLayer>false</OverwriteLayer>
-  <ServerScriptCategoryCollection>
-    <ServerScriptCategory>
-      <ItemID>A1B2C3D4-E5F6-7890-ABCD-EF1234567890</ItemID>
-      <ItemName>SCM_API</ItemName>
+  <ApplicationCategoryCollection>
+    <ApplicationCategory>
+      <ItemID>541997AF-CAD0-47D7-8D06-C11BC73E40AA</ItemID>
+      <ItemName>SCM</ItemName>
       <LayerId>300</LayerId>
-      <ItemDescription>Source Control Manager API</ItemDescription>
+      <ItemDescription />
       <IsMandatory>false</IsMandatory>
       <ItemBehaviour>merge</ItemBehaviour>
-      <ItemIsSystem>Y</ItemIsSystem>
+      <ItemIsSystem>N</ItemIsSystem>
+      <ApplicationCollection>
+        <Application>
+          <ItemID>FDDBD4BD-0429-46E0-9545-93F2E4B2BA32</ItemID>
+          <ItemName>FormDesigner</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM</ItemCategory>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>merge</ItemBehaviour>
+          <FormCollection>
+            <Form>
+              <ItemID>B33C9A5D-98FF-4F82-9892-6E65E89F7AAF</ItemID>
+              <ItemName>dlgAnchor</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Forms\HTML\dlgAnchor</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ClientScripts />
+              <ModesOfOperationImportMode>ignore</ModesOfOperationImportMode>
+              <OverwriteTransactionSettings>false</OverwriteTransactionSettings>
+              <FormType>HTML</FormType>
+              <IsOffline>N</IsOffline>
+            </Form>
+            <Form>
+              <ItemID>8CD67603-2A55-447C-8F39-FF6425FF2378</ItemID>
+              <ItemName>dlgImagePicker</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Forms\HTML\dlgImagePicker</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ClientScripts />
+              <ModesOfOperationImportMode>ignore</ModesOfOperationImportMode>
+              <OverwriteTransactionSettings>false</OverwriteTransactionSettings>
+              <FormType>HTML</FormType>
+              <IsOffline>N</IsOffline>
+            </Form>
+            <Form>
+              <ItemID>1D09BB79-2D28-4594-8B03-26306F5C8AEC</ItemID>
+              <ItemName>FormDesigner</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Forms\HTML\FormDesigner</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ClientScripts />
+              <ModesOfOperationImportMode>ignore</ModesOfOperationImportMode>
+              <OverwriteTransactionSettings>false</OverwriteTransactionSettings>
+              <FormType>HTML</FormType>
+              <IsOffline>N</IsOffline>
+            </Form>
+          </FormCollection>
+          <ReferedForms />
+          <DataSourceCollection>
+            <DataSourceScript>
+              <ItemID>A96BA599-FDD5-4E8E-A0E7-42FCE867C1B4</ItemID>
+              <ItemName>dsBool</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription>undefined</ItemDescription>
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Data Sources\dsBool.ds</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>SQL</ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+              <IsOffline>N</IsOffline>
+            </DataSourceScript>
+            <DataSourceScript>
+              <ItemID>7D020ACB-A27B-43B7-ACCF-C94CAE8A5F62</ItemID>
+              <ItemName>dsCboForms</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Data Sources\dsCboForms.ds</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>SQL</ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+              <IsOffline>N</IsOffline>
+            </DataSourceScript>
+            <DataSourceScript>
+              <ItemID>967727EE-1F31-42E3-B32A-D560E652D61A</ItemID>
+              <ItemName>dsControlProperties</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription>undefined</ItemDescription>
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Data Sources\dsControlProperties.ds</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>SQL</ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+              <IsOffline>N</IsOffline>
+            </DataSourceScript>
+            <DataSourceScript>
+              <ItemID>92CAE7E8-CF36-47A8-A334-043E2D10FFD8</ItemID>
+              <ItemName>dsForms</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Data Sources\dsForms.ds</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>SSL</ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+              <IsOffline>N</IsOffline>
+            </DataSourceScript>
+            <DataSourceScript>
+              <ItemID>A5008CF6-16ED-4FC0-BAA8-E2A43315AAAA</ItemID>
+              <ItemName>dsGetImageCategories</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription>undefined</ItemDescription>
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Data Sources\dsGetImageCategories.ds</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>SQL</ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+              <IsOffline>N</IsOffline>
+            </DataSourceScript>
+            <DataSourceScript>
+              <ItemID>2CB9C7CE-C222-41DB-A48E-A031CC4FAECE</ItemID>
+              <ItemName>dsGetImages</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription>undefined</ItemDescription>
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Data Sources\dsGetImages.ds</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+              <IsOffline>N</IsOffline>
+            </DataSourceScript>
+          </DataSourceCollection>
+          <ServerScriptCollection>
+            <ServerScript>
+              <ItemID>A082A113-664E-461C-9D7A-FDD1905CCE2B</ItemID>
+              <ItemName>scGetFormCode</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Server Scripts\scGetFormCode.srvscr</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+            </ServerScript>
+            <ServerScript>
+              <ItemID>86AE94B9-8B36-4848-B274-5DB32B7F3584</ItemID>
+              <ItemName>scGetFormCodeBehind</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Server Scripts\scGetFormCodeBehind.srvscr</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+            </ServerScript>
+            <ServerScript>
+              <ItemID>8C84FC69-3671-45EB-AB4B-4323876C7558</ItemID>
+              <ItemName>scInitFormProperties</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Server Scripts\scInitFormProperties.srvscr</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+            </ServerScript>
+            <ServerScript>
+              <ItemID>2B22299A-6851-4DD5-BC2A-77731C8C3E37</ItemID>
+              <ItemName>scInstall</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Server Scripts\scInstall.srvscr</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+            </ServerScript>
+            <ServerScript>
+              <ItemID>B8EC7B08-167C-4C99-8AC1-3C479B6EFBF3</ItemID>
+              <ItemName>scModifyCodeBehind</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Server Scripts\scModifyCodeBehind.srvscr</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+            </ServerScript>
+          </ServerScriptCollection>
+          <ClientScriptCollection>
+            <ClientScript>
+              <ItemID>0DF5B87C-F163-413B-8010-ED18BDB85E0F</ItemID>
+              <ItemName>ContextMenu</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Client Scripts\ContextMenu.clientscript</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>JS        </ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+            </ClientScript>
+            <ClientScript>
+              <ItemID>2F57C813-B6E7-4425-A73D-96C9115FC20E</ItemID>
+              <ItemName>GUIFunctions</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Client Scripts\GUIFunctions.clientscript</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>JS        </ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+            </ClientScript>
+            <ClientScript>
+              <ItemID>34BE2829-428D-400D-9AD3-54AB11A8743A</ItemID>
+              <ItemName>ReadXML</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Client Scripts\ReadXML.clientscript</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>JS        </ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+            </ClientScript>
+            <ClientScript>
+              <ItemID>49986D66-2117-42FF-AA41-7326D5329477</ItemID>
+              <ItemName>SaveXML</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Client Scripts\SaveXML.clientscript</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>JS        </ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+            </ClientScript>
+            <ClientScript>
+              <ItemID>69071B46-06C9-4E5F-B9E9-8528C6F72BD4</ItemID>
+              <ItemName>TreeView</ItemName>
+              <LayerId>300</LayerId>
+              <ItemDescription />
+              <ItemCategory>FormDesigner</ItemCategory>
+              <ItemContent>Applications\SCM\FormDesigner\Client Scripts\TreeView.clientscript</ItemContent>
+              <IsMandatory>false</IsMandatory>
+              <ItemBehaviour>overwrite</ItemBehaviour>
+              <ItemProgrammingLanguage>JS        </ItemProgrammingLanguage>
+              <ItemIsOwned>Y</ItemIsOwned>
+              <IsReferred>false</IsReferred>
+            </ClientScript>
+          </ClientScriptCollection>
+        </Application>
+      </ApplicationCollection>
+    </ApplicationCategory>
+  </ApplicationCategoryCollection>
+  <ServerScriptCategoryCollection>
+    <ServerScriptCategory>
+      <ItemID>7C117241-417D-442D-80B6-BAD7797E8EF2</ItemID>
+      <ItemName>SCM_API</ItemName>
+      <LayerId>200</LayerId>
+      <ItemDescription />
+      <IsMandatory>false</IsMandatory>
+      <ItemBehaviour>merge</ItemBehaviour>
+      <ItemIsSystem>N</ItemIsSystem>
       <ServerScriptCollection>
         <ServerScript>
-          <ItemID>C2D3E4F5-6A7B-8C9D-0E1F-2A3B4C5D6E7F</ItemID>
+          <ItemID>7A2C061D-7213-4A14-9A7C-8AB61E34E4E1</ItemID>
+          <ItemName>GetTickets</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\GetTickets.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>7E22EE13-31C9-481A-911A-9E8DB1DABB35</ItemID>
+          <ItemName>Add</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\Add.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>F165D253-C777-4D9B-944D-57CFC4A606D1</ItemID>
+          <ItemName>CheckIn</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\CheckIn.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>7C6706EE-6D73-4AE3-98A7-B3F8CD549588</ItemID>
+          <ItemName>CheckInAll</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\CheckInAll.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>FFC413EC-2528-49EB-861A-AA0582F5E87C</ItemID>
+          <ItemName>CheckOut</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\CheckOut.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>318A1AF2-1CE8-4001-8F32-48E7F2E8B68F</ItemID>
+          <ItemName>ClearLog</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\ClearLog.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>7445A3F4-6415-43EF-9AB8-AEB977A6500C</ItemID>
+          <ItemName>Delete</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\Delete.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>2D1C2C3E-1F4C-4D1C-8C3E-3C6F5D8A9B0E</ItemID>
+          <ItemName>ExportPackage</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\ExportPackage.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>78452D93-5054-4EAB-93FC-F040AC922458</ItemID>
+          <ItemName>GetAllItems</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\GetAllItems.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>313EF809-5DDC-4DB7-9802-4E75A977F60F</ItemID>
           <ItemName>GetCheckedOutItems</ItemName>
           <LayerId>300</LayerId>
-          <ItemDescription>Get all currently checked out items</ItemDescription>
+          <ItemDescription />
           <ItemCategory>SCM_API</ItemCategory>
           <ItemContent>Server Scripts\SCM_API\GetCheckedOutItems.srvscr</ItemContent>
           <IsMandatory>false</IsMandatory>
           <ItemBehaviour>overwrite</ItemBehaviour>
           <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
-          <IsOwned>Y</IsOwned>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
         </ServerScript>
         <ServerScript>
-          <ItemID>D3E4F5A6-7B8C-9D0E-1F2A-3B4C5D6E7F8A</ItemID>
-          <ItemName>GetPendingCheckins</ItemName>
+          <ItemID>7ECC5228-ED06-43BF-B627-03BB7175C7EE</ItemID>
+          <ItemName>GetCode</ItemName>
           <LayerId>300</LayerId>
-          <ItemDescription>Get all checked in items from LIMSSOURCECONTROL</ItemDescription>
+          <ItemDescription />
           <ItemCategory>SCM_API</ItemCategory>
-          <ItemContent>Server Scripts\SCM_API\GetPendingCheckins.srvscr</ItemContent>
+          <ItemContent>Server Scripts\SCM_API\GetCode.srvscr</ItemContent>
           <IsMandatory>false</IsMandatory>
           <ItemBehaviour>overwrite</ItemBehaviour>
           <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
-          <IsOwned>Y</IsOwned>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
         </ServerScript>
         <ServerScript>
-          <ItemID>E4F5A6B7-8C9D-0E1F-2A3B-4C5D6E7F8A9B</ItemID>
-          <ItemName>GetCheckedInItems</ItemName>
+          <ItemID>043FFF7C-4B7D-4635-88C0-5FD0D63BC283</ItemID>
+          <ItemName>GetEnterpriseItems</ItemName>
           <LayerId>300</LayerId>
-          <ItemDescription>Get all completed checked in items from LIMSSOURCECONTROL</ItemDescription>
+          <ItemDescription />
           <ItemCategory>SCM_API</ItemCategory>
-          <ItemContent>Server Scripts\SCM_API\GetCheckedInItems.srvscr</ItemContent>
+          <ItemContent>Server Scripts\SCM_API\GetEnterpriseItems.srvscr</ItemContent>
           <IsMandatory>false</IsMandatory>
           <ItemBehaviour>overwrite</ItemBehaviour>
           <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
-          <IsOwned>Y</IsOwned>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>FE2B20E2-67F4-460C-988C-9F18BB90C29A</ItemID>
+          <ItemName>GetItemByGUID</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\GetItemByGUID.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>B49E36CE-7F6C-42C8-AE08-72EB606DCEC5</ItemID>
+          <ItemName>GetItemGUID</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\GetItemGUID.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>F3531C75-49CB-4CD2-9304-BE41BEC3DF73</ItemID>
+          <ItemName>GetLanguages</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\GetLanguages.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>344AAB9F-470D-4312-841A-D193F9D758FF</ItemID>
+          <ItemName>GetSessions</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\GetSessions.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>97D5F744-3C4B-4525-B8D4-A68F6D626A0B</ItemID>
+          <ItemName>FormCallbackPort</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\FormCallbackPort.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>5A682FAB-C29C-4E87-9831-8A4F7361A817</ItemID>
+          <ItemName>GlobalSearch</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\GlobalSearch.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>4BBC2372-CC11-44D8-B9C3-27EC84D71CE3</ItemID>
+          <ItemName>ImportPackage</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\ImportPackage.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>71853E78-8F67-4BE4-9F9C-9FE712D5FAA5</ItemID>
+          <ItemName>Move</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\Move.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>4F5154F8-1858-454C-A1B0-F7CD4BAE6B03</ItemID>
+          <ItemName>Rename</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\Rename.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>13E60EDB-1664-4520-9D30-347F58C2E64E</ItemID>
+          <ItemName>RunScript</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\RunScript.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>DA13B299-C2B1-4DE1-B8A8-3F3EBF35131A</ItemID>
+          <ItemName>SaveCode</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\SaveCode.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>21B76144-2A16-4372-B767-A5B47753CD0E</ItemID>
+          <ItemName>Search</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\Search.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>54C5B39D-6591-4DA0-8027-6DD20DA21F93</ItemID>
+          <ItemName>TableCommand</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\TableCommand.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>1F33B0C8-0D2B-4B44-8B43-7E8B2A2B1A10</ItemID>
+          <ItemName>TableAdd</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\TableAdd.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>E603D755-1DA3-48FF-96CF-A7C2E7329BC0</ItemID>
+          <ItemName>TableDefinition</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\TableDefinition.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>F0C6D2B1-6F15-4D0E-9C12-4A6B8D7F7B11</ItemID>
+          <ItemName>TableGetById</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\TableGetById.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>3A6A8AF2-24A7-43A3-AE4E-7A0E1C5A90A1</ItemID>
+          <ItemName>TableSave</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\TableSave.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>F7A13A66-7D9E-4B16-8F1D-4E4C2BA4B7CF</ItemID>
+          <ItemName>TicketManagement</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\TicketManagement.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>1AA29CAF-8AD0-4707-BC7D-35F8E040D11F</ItemID>
+          <ItemName>UndoCheckOut</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\UndoCheckOut.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>9A8D0E66-A2B3-4B18-8C6A-83C66BF7F9BE</ItemID>
+          <ItemName>Utils</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\Utils.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>53E03591-B34C-4682-81AF-776952F01E96</ItemID>
+          <ItemName>Version</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\Version.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
         </ServerScript>
       </ServerScriptCollection>
-      <Hidden>false</Hidden>
     </ServerScriptCategory>
   </ServerScriptCategoryCollection>
+  <ClientScriptCategoryCollection>
+    <ClientScriptCategory>
+      <ItemID>63E1CB3B-3C01-4AEF-83E2-E2B7F1CD633F</ItemID>
+      <ItemName>FormDesigner</ItemName>
+      <LayerId>300</LayerId>
+      <ItemDescription />
+      <IsMandatory>false</IsMandatory>
+      <ItemBehaviour>merge</ItemBehaviour>
+      <ItemIsSystem>N</ItemIsSystem>
+      <ClientScriptCollection>
+        <ClientScript>
+          <ItemID>0DF5B87C-F163-413B-8010-ED18BDB85E0F</ItemID>
+          <ItemName>ContextMenu</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\ContextMenu.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>2F57C813-B6E7-4425-A73D-96C9115FC20E</ItemID>
+          <ItemName>GUIFunctions</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\GUIFunctions.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>34BE2829-428D-400D-9AD3-54AB11A8743A</ItemID>
+          <ItemName>ReadXML</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\ReadXML.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>49986D66-2117-42FF-AA41-7326D5329477</ItemID>
+          <ItemName>SaveXML</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\SaveXML.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>69071B46-06C9-4E5F-B9E9-8528C6F72BD4</ItemID>
+          <ItemName>TreeView</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\TreeView.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+      </ClientScriptCollection>
+      <Hidden>true</Hidden>
+    </ClientScriptCategory>
+    <ClientScriptCategory>
+      <ItemID>63E1CB3B-3C01-4AEF-83E2-E2B7F1CD633F</ItemID>
+      <ItemName>FormDesigner</ItemName>
+      <LayerId>300</LayerId>
+      <ItemDescription />
+      <IsMandatory>false</IsMandatory>
+      <ItemBehaviour>merge</ItemBehaviour>
+      <ItemIsSystem>N</ItemIsSystem>
+      <ClientScriptCollection>
+        <ClientScript>
+          <ItemID>0DF5B87C-F163-413B-8010-ED18BDB85E0F</ItemID>
+          <ItemName>ContextMenu</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\ContextMenu.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>2F57C813-B6E7-4425-A73D-96C9115FC20E</ItemID>
+          <ItemName>GUIFunctions</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\GUIFunctions.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>34BE2829-428D-400D-9AD3-54AB11A8743A</ItemID>
+          <ItemName>ReadXML</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\ReadXML.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>49986D66-2117-42FF-AA41-7326D5329477</ItemID>
+          <ItemName>SaveXML</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\SaveXML.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>69071B46-06C9-4E5F-B9E9-8528C6F72BD4</ItemID>
+          <ItemName>TreeView</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\TreeView.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+      </ClientScriptCollection>
+      <Hidden>true</Hidden>
+    </ClientScriptCategory>
+    <ClientScriptCategory>
+      <ItemID>63E1CB3B-3C01-4AEF-83E2-E2B7F1CD633F</ItemID>
+      <ItemName>FormDesigner</ItemName>
+      <LayerId>300</LayerId>
+      <ItemDescription />
+      <IsMandatory>false</IsMandatory>
+      <ItemBehaviour>merge</ItemBehaviour>
+      <ItemIsSystem>N</ItemIsSystem>
+      <ClientScriptCollection>
+        <ClientScript>
+          <ItemID>0DF5B87C-F163-413B-8010-ED18BDB85E0F</ItemID>
+          <ItemName>ContextMenu</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\ContextMenu.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>2F57C813-B6E7-4425-A73D-96C9115FC20E</ItemID>
+          <ItemName>GUIFunctions</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\GUIFunctions.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>34BE2829-428D-400D-9AD3-54AB11A8743A</ItemID>
+          <ItemName>ReadXML</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\ReadXML.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>49986D66-2117-42FF-AA41-7326D5329477</ItemID>
+          <ItemName>SaveXML</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\SaveXML.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>69071B46-06C9-4E5F-B9E9-8528C6F72BD4</ItemID>
+          <ItemName>TreeView</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\TreeView.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JSCRIPT</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+      </ClientScriptCollection>
+      <Hidden>true</Hidden>
+    </ClientScriptCategory>
+    <ClientScriptCategory>
+      <ItemID>63E1CB3B-3C01-4AEF-83E2-E2B7F1CD633F</ItemID>
+      <ItemName>FormDesigner</ItemName>
+      <LayerId>300</LayerId>
+      <ItemDescription />
+      <IsMandatory>false</IsMandatory>
+      <ItemBehaviour>merge</ItemBehaviour>
+      <ItemIsSystem>N</ItemIsSystem>
+      <ClientScriptCollection>
+        <ClientScript>
+          <ItemID>0DF5B87C-F163-413B-8010-ED18BDB85E0F</ItemID>
+          <ItemName>ContextMenu</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\ContextMenu.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JS        </ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>2F57C813-B6E7-4425-A73D-96C9115FC20E</ItemID>
+          <ItemName>GUIFunctions</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\GUIFunctions.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JS        </ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>34BE2829-428D-400D-9AD3-54AB11A8743A</ItemID>
+          <ItemName>ReadXML</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\ReadXML.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JS        </ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>49986D66-2117-42FF-AA41-7326D5329477</ItemID>
+          <ItemName>SaveXML</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\SaveXML.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JS        </ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+        <ClientScript>
+          <ItemID>69071B46-06C9-4E5F-B9E9-8528C6F72BD4</ItemID>
+          <ItemName>TreeView</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>FormDesigner</ItemCategory>
+          <ItemContent>Client Scripts\FormDesigner\TreeView.clientscript</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>JS        </ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ClientScript>
+      </ClientScriptCollection>
+      <Hidden>true</Hidden>
+    </ClientScriptCategory>
+  </ClientScriptCategoryCollection>
+  <LanguageCollection>
+    <Language>
+      <ItemID>ENG</ItemID>
+      <ItemName>English</ItemName>
+      <ItemDescription>English</ItemDescription>
+      <IsMandatory>false</IsMandatory>
+      <ItemBehaviour>merge</ItemBehaviour>
+      <ItemFlag>
+        <ItemID>FEDE7B57-F733-8340-A311-77F05D153799</ItemID>
+        <ItemName>USA</ItemName>
+        <LayerId>300</LayerId>
+        <ItemDescription>USA.gif</ItemDescription>
+        <ItemCategory>FLAGS16X16</ItemCategory>
+        <ItemContent>Images\FLAGS16X16\USA.img</ItemContent>
+        <IsMandatory>false</IsMandatory>
+        <ItemBehaviour>overwrite</ItemBehaviour>
+        <ImageType />
+        <ColorDepth />
+        <ImageHeight>0</ImageHeight>
+        <ImageWidth>0</ImageWidth>
+        <Size>0</Size>
+      </ItemFlag>
+    </Language>
+  </LanguageCollection>
+  <TableCategoryCollection>
+    <TableCategory>
+      <ItemID>DICTIONARY</ItemID>
+      <ItemName>DICTIONARY</ItemName>
+      <LayerId>200</LayerId>
+      <ItemDescription>Connection to DICTIONARY</ItemDescription>
+      <IsMandatory>false</IsMandatory>
+      <ItemBehaviour>merge</ItemBehaviour>
+      <ItemIsSystem>Y</ItemIsSystem>
+      <TableCollection>
+        <Table>
+          <ItemID>CBC76334-376E-4CD9-A806-9447B4BA2AAE</ItemID>
+          <ItemName>CONTROL_PROPERTIES</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription />
+          <ItemCategory>DICTIONARY</ItemCategory>
+          <ItemContent>Tables\DICTIONARY\CONTROL_PROPERTIES.xml</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>merge</ItemBehaviour>
+          <IsSystem>Y</IsSystem>
+        </Table>
+      </TableCollection>
+    </TableCategory>
+  </TableCategoryCollection>
+  <RequiredPackageCollection />
+  <OverwriteCodeBehind>true</OverwriteCodeBehind>
+  <ImportGlobalResources>true</ImportGlobalResources>
+  <ExecuteAfterImport>FormDesigner.scInstall</ExecuteAfterImport>
+  <CompareTables>false</CompareTables>
 </Package>

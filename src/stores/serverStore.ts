@@ -23,6 +23,7 @@ export interface ServerState {
   // Actions
   setServers: (servers: ServerConfig[]) => void;
   addServer: (server: ServerConfig) => void;
+  updateServer: (originalName: string, server: ServerConfig) => boolean;
   removeServer: (name: string) => void;
   selectServer: (name: string) => void;
   setPassword: (password: string) => void;
@@ -58,6 +59,28 @@ export const useServerStore = create<ServerState>((set, get) => ({
       set({ servers: newServers });
       window.electronAPI?.storeSet('servers', newServers);
     }
+  },
+
+  updateServer: (originalName, server) => {
+    const { servers, currentServer } = get();
+    if (servers.some((item) => item.name === server.name && item.name !== originalName)) {
+      return false;
+    }
+    const index = servers.findIndex((item) => item.name === originalName);
+    if (index < 0) return false;
+
+    const newServers = [...servers];
+    newServers[index] = server;
+    const wasSelected = currentServer?.name === originalName;
+    if (wasSelected) getEnterpriseService().disconnect();
+    set({
+      servers: newServers,
+      currentServer: wasSelected ? server : currentServer,
+      isConnected: wasSelected ? false : get().isConnected
+    });
+    window.electronAPI?.storeSet('servers', newServers);
+    if (wasSelected) window.electronAPI?.storeSet('selectedServer', server.name);
+    return true;
   },
 
   removeServer: (name) => {

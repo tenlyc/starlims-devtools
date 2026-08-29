@@ -5,7 +5,7 @@ export function Sidebar() {
   return (
     <div className="h-full flex flex-col">
       {/* Enterprise Tree - Top Half */}
-      <div className="flex-1 overflow-auto border-b border-slate-300 dark:border-slate-700">
+      <div className="flex-1 overflow-auto border-b border-slate-300 dark:border-[#2b2b2b]">
         <EnterpriseTree />
       </div>
 

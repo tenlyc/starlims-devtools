@@ -135,7 +135,7 @@ export const sslLanguage: monaco.languages.IMonarchLanguage = {
       [/\/\*/, 'comment', '@comment'],
 
       // Language constants .t. .f. .T. .F.
-      [/\.[TtFfNn][\.A-Za-z]*/, 'constant.language'],
+      [/\.[TtFfNn][.A-Za-z]*/, 'constant.language'],
 
       // Control keywords starting with :
       [/:[A-Z][A-Z_]*/, {
@@ -172,7 +172,7 @@ export const sslLanguage: monaco.languages.IMonarchLanguage = {
       [/\.(AND|OR|NOT)\./i, 'operator'],
 
       // Delimiters
-      [/[{}()\[\]]/, '@brackets'],
+      [/[{}()[\]]/, '@brackets'],
       [/[;,.]/, 'delimiter'],
 
       // Whitespace
@@ -651,7 +651,7 @@ function formatSSL(text: string): string {
   // Mid-block keywords (:ELSE, :OTHERWISE stay at same level as :IF)
   const midBlockKeywords = [':ELSE', ':OTHERWISE'];
 
-  for (let line of lines) {
+  for (const line of lines) {
     const trimmed = line.trim();
 
     if (!trimmed) {
@@ -730,7 +730,7 @@ function formatSLSQL(text: string): string {
     'SELECT', 'FROM', 'VALUES', 'SET', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END'
   ];
 
-  for (let line of lines) {
+  for (const line of lines) {
     const trimmed = line.trim();
 
     if (!trimmed) {

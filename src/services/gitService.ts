@@ -26,7 +26,7 @@ export interface GitStatus {
  */
 export class GitService {
   private workspacePath: string;
-  private gitPath: string = 'git';
+  private gitPath = 'git';
 
   constructor(workspacePath: string) {
     this.workspacePath = workspacePath;
@@ -206,7 +206,7 @@ export class GitService {
   /**
    * Push to remote
    */
-  public async push(remoteName: string = 'origin', branchName?: string): Promise<boolean> {
+  public async push(remoteName = 'origin', branchName?: string): Promise<boolean> {
     try {
       const args = ['push', remoteName];
       if (branchName) {
@@ -223,7 +223,7 @@ export class GitService {
   /**
    * Pull from remote
    */
-  public async pull(remoteName: string = 'origin', branchName?: string): Promise<boolean> {
+  public async pull(remoteName = 'origin', branchName?: string): Promise<boolean> {
     try {
       const args = ['pull', remoteName];
       if (branchName) {
@@ -273,7 +273,7 @@ export class GitService {
   /**
    * Get remote URL
    */
-  public async getRemoteUrl(remoteName: string = 'origin'): Promise<string | null> {
+  public async getRemoteUrl(remoteName = 'origin'): Promise<string | null> {
     try {
       const url = await this.executeGitCommand(['remote', 'get-url', remoteName]);
       return url.trim();
@@ -293,7 +293,7 @@ export class GitService {
   /**
    * Get commit history
    */
-  public async getCommitHistory(limit: number = 20): Promise<GitCommit[]> {
+  public async getCommitHistory(limit = 20): Promise<GitCommit[]> {
     try {
       const log = await this.executeGitCommand([
         'log',
