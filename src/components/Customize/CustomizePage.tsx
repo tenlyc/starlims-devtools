@@ -3,6 +3,7 @@ import type { ExternalMcpServerConfig, ExternalMcpServers } from '../../types/ag
 import { useI18n } from '../../i18n';
 
 const AGENT_RULES_STORE_KEY = 'agentWorkspaceInstructions.v1';
+const AGENT_WORKSPACE_ROOT_STORE_KEY = 'agentWorkspaceRoot.v1';
 type LocalAgentRules = { enabled: boolean; name: string; content: string; updatedAt: number };
 type McpDraft = { originalName: string | null; name: string; config: ExternalMcpServerConfig; envText: string; headersText: string };
 
@@ -17,23 +18,51 @@ function jsonObject(value: string, label: string): Record<string, string> | unde
 
 export function CustomizePage() {
   const { t } = useI18n();
-  const [category, setCategory] = useState<'rules' | 'mcp'>('rules');
+  const [category, setCategory] = useState<'workspace' | 'rules' | 'mcp'>('workspace');
   const [search, setSearch] = useState('');
   const [rules, setRules] = useState<LocalAgentRules>(emptyRules);
   const [mcpServers, setMcpServers] = useState<ExternalMcpServers>({});
   const [mcpDraft, setMcpDraft] = useState<McpDraft | null>(null);
+  const [workspaceRoot, setWorkspaceRoot] = useState('');
+  const [currentWorkspacePath, setCurrentWorkspacePath] = useState(() => localStorage.getItem('gitWorkspacePath') || '');
   const [message, setMessage] = useState('');
 
   useEffect(() => {
     if (!window.electronAPI) return;
     void Promise.all([
       window.electronAPI.storeGet(AGENT_RULES_STORE_KEY).catch(() => null),
-      window.electronAPI.agentGetExternalMcpServers().catch(() => ({}))
-    ]).then(([savedRules, servers]) => {
+      window.electronAPI.agentGetExternalMcpServers().catch(() => ({})),
+      window.electronAPI.storeGet(AGENT_WORKSPACE_ROOT_STORE_KEY).catch(() => '')
+    ]).then(([savedRules, servers, savedWorkspaceRoot]) => {
       if (savedRules && typeof savedRules === 'object') setRules({ ...emptyRules, ...savedRules });
       setMcpServers(servers || {});
+      setWorkspaceRoot(typeof savedWorkspaceRoot === 'string' ? savedWorkspaceRoot : '');
     });
+    const onWorkspaceConfigured = (event: Event) => {
+      const detail = (event as CustomEvent<{ path?: string }>).detail;
+      if (detail?.path) setCurrentWorkspacePath(detail.path);
+    };
+    window.addEventListener('agent-workspace:configured', onWorkspaceConfigured);
+    return () => window.removeEventListener('agent-workspace:configured', onWorkspaceConfigured);
   }, []);
+
+  const chooseWorkspaceRoot = async () => {
+    const result = await window.electronAPI?.showOpenDialog({
+      title: t('customize.workspaceChoose'),
+      defaultPath: workspaceRoot || undefined,
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (!result?.canceled && result.filePaths[0]) setWorkspaceRoot(result.filePaths[0]);
+  };
+
+  const saveWorkspaceRoot = async (root = workspaceRoot) => {
+    const normalized = root.trim();
+    if (normalized) await window.electronAPI?.storeSet(AGENT_WORKSPACE_ROOT_STORE_KEY, normalized);
+    else await window.electronAPI?.storeDelete(AGENT_WORKSPACE_ROOT_STORE_KEY);
+    setWorkspaceRoot(normalized);
+    window.dispatchEvent(new CustomEvent('agent-workspace:changed', { detail: normalized }));
+    setMessage(t('customize.workspaceSaved'));
+  };
 
   const saveRules = async () => {
     const next = { ...rules, enabled: rules.enabled && Boolean(rules.content.trim()), name: rules.name || 'AGENTS.md', updatedAt: Date.now() };
@@ -100,13 +129,21 @@ export function CustomizePage() {
     <div className="mx-auto max-w-5xl px-8 py-8">
       <div className="mb-5 flex items-center gap-3"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('customize.search')} className="h-9 flex-1 rounded-full border border-slate-300 bg-white px-4 text-sm outline-none focus:border-blue-500 dark:border-[#3b3b3b] dark:bg-[#202020]" /></div>
       <div className="mb-8 flex items-center gap-2 border-b border-slate-200 pb-4 dark:border-[#2b2b2b]">
+        <button onClick={() => { setCategory('workspace'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'workspace' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.workspace')}</button>
         <button onClick={() => { setCategory('mcp'); setMcpDraft(null); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'mcp' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>MCPs <span className="text-slate-500">{Object.keys(mcpServers).length + 1}</span></button>
         <button onClick={() => { setCategory('rules'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'rules' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.rules')} <span className="text-slate-500">{rules.content.trim() ? 1 : 0}</span></button>
       </div>
 
       {message && <div className="mb-4 rounded border border-slate-300 bg-white px-3 py-2 text-xs dark:border-[#3b3b3b] dark:bg-[#202020]">{message}</div>}
 
-      {category === 'rules' ? <section>
+      {category === 'workspace' ? <section>
+        <div className="mb-3"><h2 className="text-sm font-medium">{t('customize.workspaceTitle')}</h2><p className="mt-1 text-xs text-slate-500 dark:text-[#888]">{t('customize.workspaceHint')}</p></div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-[#303030] dark:bg-[#202020]">
+          <label className="block text-xs"><span className="mb-1.5 block text-slate-500">{t('customize.workspaceRoot')}</span><div className="flex gap-2"><input value={workspaceRoot} onChange={(event) => setWorkspaceRoot(event.target.value)} placeholder={t('customize.workspaceDefault')} className="h-9 min-w-0 flex-1 rounded border border-slate-300 bg-transparent px-3 font-mono text-xs outline-none focus:border-blue-500 dark:border-[#444]" /><button onClick={() => void chooseWorkspaceRoot()} className="rounded border border-slate-300 px-3 text-xs hover:bg-slate-100 dark:border-[#444] dark:hover:bg-[#2a2d2e]">{t('customize.workspaceBrowse')}</button></div></label>
+          <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3 text-xs dark:border-[#303030] dark:bg-[#181818]"><div className="mb-1 text-slate-500 dark:text-[#888]">{t('customize.workspaceCurrent')}</div><div className="break-all font-mono text-slate-700 dark:text-[#ccc]">{currentWorkspacePath || t('customize.workspaceNotReady')}</div></div>
+          <div className="mt-4 flex items-center justify-between"><button onClick={() => void saveWorkspaceRoot('')} className="text-xs text-slate-500 hover:text-blue-600 dark:hover:text-[#4daafc]">{t('customize.workspaceReset')}</button><button onClick={() => void saveWorkspaceRoot()} className="rounded bg-blue-600 px-4 py-1.5 text-xs text-white dark:bg-[#0e639c]">{t('common.save')}</button></div>
+        </div>
+      </section> : category === 'rules' ? <section>
         <div className="mb-3 flex items-center justify-between"><div><h2 className="text-sm font-medium">{t('customize.userRules')}</h2><p className="mt-1 text-xs text-slate-500 dark:text-[#888]">{t('agent.rulesHint')}</p></div><button onClick={() => void importRules()} className="rounded border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-100 dark:border-[#444] dark:hover:bg-[#252526]">＋ {t('agent.rulesImport')}</button></div>
         <div className="rounded-lg border border-slate-200 bg-white dark:border-[#303030] dark:bg-[#202020]">
           <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-[#303030]"><div className="flex h-8 w-8 items-center justify-center rounded bg-slate-100 text-lg dark:bg-[#2b2b2b]">⚡</div><div className="min-w-0 flex-1"><div className="truncate text-sm">{rules.name || 'AGENTS.md'}</div><div className="text-xs text-slate-500 dark:text-[#888]">{rules.content.trim() ? t('customize.rulesLoaded') : t('agent.rulesNoFile')}</div></div><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={rules.enabled} disabled={!rules.content.trim()} onChange={(event) => setRules((current) => ({ ...current, enabled: event.target.checked }))} />{t('agent.rulesEnabled')}</label></div>

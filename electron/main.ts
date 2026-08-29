@@ -790,7 +790,8 @@ ipcMain.handle('agent:workspaceConfigure', async (_, context: AgentWorkspaceCont
   if (!context?.serverName?.trim() || !context?.serverUrl?.trim()) throw new Error('A STARLIMS server is required for the Agent workspace.');
   const previousPath = agentWorkspace.currentPath();
   const info = await agentWorkspace.configure({
-    serverName: String(context.serverName), serverUrl: String(context.serverUrl), user: String(context.user || '')
+    serverName: String(context.serverName), serverUrl: String(context.serverUrl), user: String(context.user || ''),
+    rootPath: context.rootPath ? String(context.rootPath) : undefined
   });
   if (previousPath !== info.path) {
     agentRuntime?.dispose();

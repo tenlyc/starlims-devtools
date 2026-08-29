@@ -268,12 +268,26 @@ export class SSLParser {
 
   private parseIncludeStmt(): IncludeStmtNode {
     const start = this.consume(TokenType.Include, 'Expected :INCLUDE');
-    let target = this.consumeIdentifier('Expected include target');
-    while (this.check(TokenType.Dot)) {
-      this.advance();
-      target += '.' + this.consumeIdentifier('Expected include target after dot');
+    const isHashInclude = start.value.startsWith('#');
+    let target: string;
+    if (this.check(TokenType.String)) {
+      const value = this.advance().value;
+      target = value.length >= 2 ? value.slice(1, -1) : value;
+    } else {
+      target = this.consumeIdentifier('Expected include target');
+      while (this.check(TokenType.Dot)) {
+        this.advance();
+        target += '.' + this.consumeIdentifier('Expected include target after dot');
+      }
     }
-    this.expectSemicolon();
+    // #include references are line directives in STARLIMS client/HTML form
+    // scripts and do not require a trailing semicolon. Accept one for
+    // compatibility, while :INCLUDE continues to follow SSL statement rules.
+    if (isHashInclude) {
+      if (this.check(TokenType.Semicolon)) this.advance();
+    } else {
+      this.expectSemicolon();
+    }
 
     return {
       type: 'IncludeStmt',

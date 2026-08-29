@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { AgentWorkspaceManager } from '../electron/agentWorkspace';
 import { isReadOnlyAgentToolBlocked } from '../electron/agentRuntime';
 
@@ -23,6 +23,13 @@ async function main() {
     assert.equal(isReadOnlyAgentToolBlocked('Write'), true);
     assert.equal(isReadOnlyAgentToolBlocked('mcp__starlims__save_item'), true);
     assert.equal(isReadOnlyAgentToolBlocked('mcp__starlims__get_item_code'), false);
+
+    const customRoot = join(root, 'custom-root');
+    const customInfo = await manager.configure({
+      serverName: 'QA', serverUrl: 'https://qa.example.test/lims', user: 'TESTER', rootPath: customRoot
+    });
+    assert.equal(relative(customRoot, customInfo.path).startsWith('..'), false);
+    await stat(join(customInfo.path, '.starlims', 'workspace.json'));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

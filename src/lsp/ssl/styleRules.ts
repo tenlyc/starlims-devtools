@@ -132,7 +132,7 @@ function tokenRules(tokens: Token[], text: string, findings: Finding[]): void {
     const prev = i > 0 ? tokens[i - 1] : undefined;
     const next = i + 1 < tokens.length ? tokens[i + 1] : undefined;
 
-    if (isKeywordToken(t) && t.value !== t.value.toUpperCase()) {
+    if (isKeywordToken(t) && !t.value.startsWith('#') && t.value !== t.value.toUpperCase()) {
       findings.push({
         slug: 'keyword_uppercase',
         line: t.line,

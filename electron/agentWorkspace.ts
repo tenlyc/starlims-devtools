@@ -72,11 +72,12 @@ export class AgentWorkspaceManager {
     const identity = `${context.serverUrl}\n${context.user}`;
     const suffix = createHash('sha256').update(identity).digest('hex').slice(0, 10);
     const directory = `${safePart(context.serverName)}-${safePart(context.user || 'anonymous')}-${suffix}`;
-    const path = join(this.root, directory);
+    const workspaceRoot = context.rootPath?.trim() || this.root;
+    const path = join(workspaceRoot, directory);
     await mkdir(join(path, '.starlims'), { recursive: true });
     await mkdir(join(path, 'items'), { recursive: true });
     const info = { path, serverName: context.serverName, user: context.user };
-    await writeFile(join(path, '.starlims', 'workspace.json'), JSON.stringify({ ...context, updatedAt: new Date().toISOString() }, null, 2));
+    await writeFile(join(path, '.starlims', 'workspace.json'), JSON.stringify({ ...context, rootPath: workspaceRoot, updatedAt: new Date().toISOString() }, null, 2));
     await writeFile(join(path, 'STARLIMS_WORKSPACE.md'), [
       '# STARLIMS Agent Workspace', '',
       `Server: ${context.serverName} (${context.serverUrl})`,

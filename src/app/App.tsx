@@ -26,6 +26,7 @@ type WorkbenchLayout = {
 };
 
 const LAYOUT_STORAGE_KEY = 'starlims-devtools.workbench-layout.v1';
+const AGENT_WORKSPACE_ROOT_STORE_KEY = 'agentWorkspaceRoot.v1';
 const DEFAULT_LAYOUT: WorkbenchLayout = {
   sidebarVisible: true,
   agentVisible: true,
@@ -64,6 +65,7 @@ export default function App() {
   const [mcpPanelWidth, setMcpPanelWidth] = useState(initialLayout.agentWidth);
   const [outputHeight, setOutputHeight] = useState(initialLayout.outputHeight);
   const [agentWorkspacePath, setAgentWorkspacePath] = useState('');
+  const [agentWorkspaceRoot, setAgentWorkspaceRoot] = useState<string | null>(null);
 
   const { currentServer, isConnected, connect, disconnect } = useServerStore();
   const { initTheme } = useThemeStore();
@@ -88,16 +90,31 @@ export default function App() {
   }, [sidebarVisible, mcpPanelVisible, outputVisible, sidebarWidth, mcpPanelWidth, outputHeight]);
 
   useEffect(() => {
+    if (!window.electronAPI) return;
+    void window.electronAPI.storeGet(AGENT_WORKSPACE_ROOT_STORE_KEY)
+      .then((value) => setAgentWorkspaceRoot(typeof value === 'string' ? value : ''))
+      .catch(() => setAgentWorkspaceRoot(''));
+    const onWorkspaceRootChanged = (event: Event) => {
+      setAgentWorkspaceRoot(String((event as CustomEvent<string>).detail || ''));
+    };
+    window.addEventListener('agent-workspace:changed', onWorkspaceRootChanged);
+    return () => window.removeEventListener('agent-workspace:changed', onWorkspaceRootChanged);
+  }, []);
+
+  useEffect(() => {
     if (!isConnected || !currentServer || !window.electronAPI) return;
+    if (agentWorkspaceRoot === null) return;
     void window.electronAPI.agentWorkspaceConfigure({
       serverName: currentServer.name,
       serverUrl: currentServer.url,
-      user: currentServer.user || ''
+      user: currentServer.user || '',
+      rootPath: agentWorkspaceRoot || undefined
     }).then((workspace) => {
       localStorage.setItem('gitWorkspacePath', workspace.path);
       setAgentWorkspacePath(workspace.path);
+      window.dispatchEvent(new CustomEvent('agent-workspace:configured', { detail: workspace }));
     }).catch((error) => console.error('Failed to configure Agent workspace:', error));
-  }, [isConnected, currentServer]);
+  }, [agentWorkspaceRoot, isConnected, currentServer]);
 
   useEffect(() => {
     if (!isConnected || !agentWorkspacePath || !window.electronAPI) return;

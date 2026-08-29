@@ -172,7 +172,7 @@ class InlineCompletionService {
       // Build prompt for code completion with SSL rules
       const prompt = `You are completing STARLIMS SSL (Server Script Language).
 STARLIMS SSL Syntax Rules - CRITICAL:
-1. EVERY statement MUST end with semicolon (;)
+1. Every SSL statement must end with semicolon (;), except #include "Module.Script" reference directives
 2. Keywords: :PROCEDURE/:ENDPROC, :FUNCTION/:ENDFUNC, :IF/:ENDIF/:ELSE, :FOR/:NEXT, :WHILE/:ENDWHILE, :TRY/:CATCH/:FINALLY/:ENDTRY, :DECLARE, :PARAMETERS
 3. Comments: /* comment */; (semicolon AFTER closing */)
 4. Assignment: variable := value;
@@ -193,7 +193,7 @@ Complete the code at the cursor position. Rules:
 2. Keep completion concise (max 60 tokens)
 3. Match the surrounding code style and indentation
 4. If completing a block (:IF, :FOR, :WHILE, :PROCEDURE), include the closing keyword (:ENDIF, :ENDFOR, :ENDWHILE, :ENDPROC)
-5. EVERY line must end with semicolon including comments
+5. Every executable SSL line and comment must end with semicolon; #include reference directives do not
 6. Do NOT repeat text that already exists after the cursor
 
 Code before cursor:\n${beforeCursor}\n\nCurrent line (cursor at |):\n${currentLine}\n\nContext:\n${context}\n\nOutput only the code to insert.`;

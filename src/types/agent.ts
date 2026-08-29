@@ -51,6 +51,7 @@ export type AgentWorkspaceContext = {
   serverName: string;
   serverUrl: string;
   user: string;
+  rootPath?: string;
 };
 
 export type AgentWorkspaceFile = {

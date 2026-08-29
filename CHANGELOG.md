@@ -15,8 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 修复 MCP 签出与检入声明了语言参数、但执行阶段丢失参数的问题
 - 修复 Claude Agent 未执行 Plan/Ask 只读权限策略的问题
 - 修复切换到服务器专属 Agent 工作区时，Codex 正常重启被错误显示为 `exited with code null` 的问题
+- 修复 `#include "Module.Script"` 脚本引用被错误要求以分号结尾的问题
 
 ### Changed | 变更
+
+- Agent 工作区支持在“自定义 → 工作区”中选择本机根目录，并继续按 STARLIMS 服务器与用户隔离
 
 - Agent 使用按 STARLIMS 服务器和用户隔离的稳定本地 Git 工作区，并自动镜像编辑器中打开的脚本
 - 对规则、最近对话和脚本引用实施约 32K token 的分区预算，超限内容会明确标记截断

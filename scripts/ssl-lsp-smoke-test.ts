@@ -22,6 +22,22 @@ const validSource = [
 const parsed = new SSLParser().parse(validSource);
 assert.equal(parsed.errors.length, 0, parsed.errors.map((error) => error.message).join('\n'));
 
+const includeSource = [
+  '#include "AUDIT.HTML_EnterpriseAudit"',
+  '#include "EmpowerInterface.HTML_GetResultsAuto"'
+].join('\n');
+const parsedIncludes = new SSLParser().parse(includeSource);
+assert.equal(parsedIncludes.errors.length, 0, parsedIncludes.errors.map((error) => error.message).join('\n'));
+assert.deepEqual(parsedIncludes.ast.body.map((node) => node.type === 'IncludeStmt' ? node.target : ''), [
+  'AUDIT.HTML_EnterpriseAudit', 'EmpowerInterface.HTML_GetResultsAuto'
+]);
+assert.equal(formatSSL(includeSource), `${includeSource}\n`);
+assert.equal(
+  computeStyleDiagnostics(includeSource, parsedIncludes.ast, DEFAULT_STYLE_RULE_CONFIG)
+    .some((diagnostic) => diagnostic.code === 'keyword_uppercase'),
+  false
+);
+
 const symbols = new SymbolTable();
 symbols.buildFromAST(parsed.ast);
 assert.ok(symbols.lookup('FormatName'));

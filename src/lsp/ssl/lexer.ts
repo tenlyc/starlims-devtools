@@ -228,6 +228,12 @@ export class SSLLexer {
       return;
     }
 
+    // Client/HTML form script reference: #include "Module.Script"
+    if (ch === '#') {
+      this.scanHashDirective();
+      return;
+    }
+
     // Numbers
     if (this.isDigit(ch)) {
       this.scanNumber();
@@ -411,6 +417,20 @@ export class SSLLexer {
 
     // Unterminated comment
     this.addToken(TokenType.Comment, this.source.substring(startOffset, this.pos), startLine, startCol, startOffset, this.pos - startOffset);
+  }
+
+  private scanHashDirective(): void {
+    const startOffset = this.pos;
+    const startLine = this.line;
+    const startCol = this.column;
+    const match = this.source.slice(this.pos).match(/^#include\b/i);
+    if (!match) {
+      this.advance();
+      this.addToken(TokenType.ErrorToken, '#', startLine, startCol, startOffset, 1);
+      return;
+    }
+    for (let index = 0; index < match[0].length; index++) this.advance();
+    this.addToken(TokenType.Include, match[0], startLine, startCol, startOffset, match[0].length);
   }
 
   private scanSqlParameter(): void {

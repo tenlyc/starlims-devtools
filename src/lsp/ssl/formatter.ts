@@ -280,7 +280,7 @@ function isWordToken(t: Token): boolean {
 }
 
 function keywordName(token: Token): string {
-  return token.value.replace(/^:/, '').toUpperCase();
+  return token.value.replace(/^[:#]/, '').toUpperCase();
 }
 
 function isStatementEndingToken(t: Token): boolean {
@@ -464,7 +464,7 @@ function needsSpace(prev: Token, curr: Token, prePrev: Token | undefined, option
 
 function formatTokenValue(token: Token, options: SSLFormatOptions): string {
   if (isKeywordToken(token)) {
-    return token.value.toUpperCase();
+    return token.value.startsWith('#') ? token.value.toLowerCase() : token.value.toUpperCase();
   }
   switch (token.type) {
     case TokenType.Identifier:
@@ -544,6 +544,9 @@ function needsSemicolon(tokens: Token[], ctx: RewriteContext): boolean {
     return false;
   }
   const last = tokens[tokens.length - 1];
+  if (tokens[0]?.type === TokenType.Include && tokens[0].value.startsWith('#')) {
+    return false;
+  }
   if (!last) {
     return false;
   }
