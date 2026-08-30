@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 移除内置 Claude Agent SDK；Claude Code 等第三方客户端继续通过外部 MCP 使用 STARLIMS 工具，显著缩小桌面安装包
 - 启动时清理旧 AI 面板遗留的普通配置项，避免历史版本的明文密钥继续残留
 - 内置 MCP HTTP 服务与通用 Agent 改为共用固定版本的工具目录；`SCM_API`、公共 MCP 扩展和 DevTools 专属扩展使用独立命名空间
+- 将共享组件升级到 `starlims-mcp` v0.2.0；DevTools 与上游 MCP/SCM 实际源码现在按提交和 SHA-256 归档，可离线恢复并供其他 STARLIMS 工具复用
 
 ### Security | 安全
 

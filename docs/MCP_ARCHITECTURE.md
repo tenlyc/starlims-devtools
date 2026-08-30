@@ -9,7 +9,7 @@ STARLIMS DevTools 使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starl
 | 仓库 | 职责 | 不负责 |
 | --- | --- | --- |
 | `MrDoe/starlimsvscode` | 上游 `SCM_API`、VS Code 扩展实现和兼容行为参考 | DevTools 产品运行时 |
-| `tenlyc/starlims-mcp` | MCP 工具契约、来源/风险元数据、Profile、能力握手和公共后端扩展 | 登录凭据、服务器选择和产品 UI |
+| `tenlyc/starlims-mcp` | MCP 工具契约、来源/风险元数据、Profile、能力握手、公共后端扩展，以及经过校验的 MCP/SCM 历史快照 | 登录凭据、服务器选择和产品 UI |
 | `tenlyc/starlims-devtools` | Electron/React 产品、Agent、工作区、审批和质量门禁 | 覆盖上游 `SCM_API` |
 
 ## 工具来源
@@ -27,6 +27,16 @@ STARLIMS DevTools 使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starl
 客户端连接后先调用 `get_capabilities`，以获得实际注册的工具、来源、风险、Schema
 版本、Adapter 能力和后端组件版本。不要根据产品名称猜测能力。
 
+## 离线归档与复用
+
+`starlims-mcp` 的 `vendor/` 目录保存经过人工审查、固定到完整 Git 提交的
+`starlimsvscode` 与 `starlims-devtools` MCP/SCM 实际文件。每个快照包含来源、许可、
+文件清单、逐文件 SHA-256 和整体摘要，不使用 Git Submodule 或 Git LFS 外部指针。
+
+因此，上游仓库删除、转私有或暂时不可访问时，已归档版本仍可恢复、审计并供其他
+STARLIMS 工具复用。Vendor 快照保持不可变；新能力进入共享契约或对应产品仓库，
+再以新提交导入一个新快照，不能直接修改旧快照。
+
 ## SCM 命名空间
 
 - `SCM_API.*`：来自 `MrDoe/starlimsvscode`。以提交、许可和兼容测试锁定，只通过人工
@@ -42,7 +52,8 @@ STARLIMS DevTools 使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starl
 
 1. `npm run upstream:check` 发现 `starlimsvscode` 更新。
 2. 生成审计报告，按能力审查 `SCM_API`、MCP 契约和 VS Code UI 变化。
-3. 先在 `starlims-mcp` 更新契约、来源映射、兼容 Profile 和契约测试，发布不可变标签。
+3. 将审查通过的来源提交导入 `starlims-mcp/vendor`，校验逐文件摘要；同时更新契约、
+   来源映射、兼容 Profile 和契约测试，再发布不可变标签。
 4. DevTools 更新固定 Git 标签依赖和 `components/shared-components.lock.json`。
 5. 运行 MCP、Agent 工具、写入门禁及完整 smoke tests；通过后才推进上游基线。
 

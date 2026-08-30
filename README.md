@@ -60,7 +60,7 @@ STARLIMS DevTools 把企业树、Monaco 编辑器、SSL 语言服务、源码管
 | 会话模式 | Agent、Plan、Debug、Multitask、Ask；Plan/Ask 在运行时强制只读。 |
 | 上下文引用 | 使用 `@` 引用当前、已打开、已签出或搜索到的脚本；依赖事实按 token 预算注入，避免拼接整个工作区。 |
 | Agent 工作区 | 按服务器与用户隔离的本地 Git 工作区，可自定义根目录；远端基线与 AI 修改分开保存并提供逐文件 Diff。 |
-| 本地 MCP | `http://127.0.0.1:3102/mcp`，仅监听回环地址，复用当前 STARLIMS 登录会话；工具契约来自固定版本的 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp)。 |
+| 本地 MCP | `http://127.0.0.1:3102/mcp`，仅监听回环地址，复用当前 STARLIMS 登录会话；工具契约来自固定版本的 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp)，该仓库同时保存可离线校验的 DevTools 与上游 MCP/SCM 源码快照。 |
 | 外部 MCP | 在 AI 能力中心配置 HTTP、SSE 或 stdio 服务；敏感请求头和环境变量独立存入本机密钥存储。 |
 | 多 Agent 工作流 | 规划、实现、审查、测试角色支持任务依赖与安全并行；结果由用户确认后交给主 Agent 执行。 |
 
@@ -185,7 +185,7 @@ npm run upstream:update:lsp -- v0.22.0
 
 - [`mahoskye/starlims-lsp`](https://github.com/mahoskye/starlims-lsp)：作为受版本锁与 SHA-256 校验的语言服务组件。
 - [`MrDoe/starlimsvscode`](https://github.com/MrDoe/starlimsvscode)：作为 STARLIMS SCM 契约、语言规则和兼容测试的参考来源，按能力选择性移植，不作为运行时依赖。
-- [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp)：作为固定版本的共享 MCP 契约与运行时依赖；产品仅实现宿主 Adapter、权限和传输。
+- [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp)：作为固定版本的共享 MCP 契约与运行时依赖，并归档可离线验证的 MCP/SCM 实际源码；产品仅实现宿主 Adapter、权限和传输。
 
 ## 项目结构
 
