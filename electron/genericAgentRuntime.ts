@@ -1,5 +1,7 @@
 import { net } from 'electron';
 import { randomUUID } from 'crypto';
+import { getProfileTools } from '@tenlyc/starlims-mcp';
+import * as z from 'zod/v4';
 import type { AgentApprovalDecision, AgentEvent, AgentStartResult, AgentToolPermissionPolicy, GenericAgentConfig } from '../src/types/agent';
 import type { RendererToolCall } from './mcpServer';
 import type { ExternalMcpManager } from './externalMcpManager';
@@ -30,23 +32,15 @@ type GenericBuiltinTool = {
   readOnly: boolean;
 };
 
-const BUILTIN_TOOLS: GenericBuiltinTool[] = [
-  { name: 'browse_tree', description: 'Browse STARLIMS items below a folder URI or from the root.', parameters: { type: 'object', properties: { uri: { type: 'string' }, maxItems: { type: 'number' } } }, readOnly: true },
-  { name: 'search_by_name', description: 'Search STARLIMS items by name.', parameters: { type: 'object', properties: { query: { type: 'string' }, itemType: { type: 'string' }, exactMatch: { type: 'boolean' }, maxItems: { type: 'number' } }, required: ['query'] }, readOnly: true },
-  { name: 'global_code_search', description: 'Search for text across STARLIMS code items.', parameters: { type: 'object', properties: { searchString: { type: 'string' }, itemTypes: { type: 'array', items: { type: 'string' } }, maxItems: { type: 'number' } }, required: ['searchString'] }, readOnly: true },
-  { name: 'list_languages', description: 'List available STARLIMS languages.', parameters: { type: 'object', properties: {} }, readOnly: true },
-  { name: 'get_item_code', description: 'Read authoritative code for a STARLIMS item. Preserve the returned full code when preparing a save.', parameters: { type: 'object', properties: { uri: { type: 'string' }, language: { type: 'string' }, maxCharacters: { type: 'number' } }, required: ['uri'] }, readOnly: true },
-  { name: 'list_checked_out_items', description: 'List STARLIMS checked-out items.', parameters: { type: 'object', properties: { includeAllUsers: { type: 'boolean' } } }, readOnly: true },
-  { name: 'read_log', description: 'Read the current STARLIMS server log.', parameters: { type: 'object', properties: {} }, readOnly: true },
-  { name: 'get_table_definition', description: 'Read a STARLIMS table XML definition.', parameters: { type: 'object', properties: { uri: { type: 'string' } }, required: ['uri'] }, readOnly: true },
-  { name: 'query_checkin_history', description: 'Query check-in history by user and inclusive date range.', parameters: { type: 'object', properties: { user: { type: 'string' }, dateFrom: { type: 'string' }, dateTo: { type: 'string' } }, required: ['user', 'dateFrom', 'dateTo'] }, readOnly: true },
-  { name: 'checkout_item', description: 'Check out a STARLIMS item before editing it. Pass the requested form language when applicable.', parameters: { type: 'object', properties: { uri: { type: 'string' }, language: { type: 'string' } }, required: ['uri'] }, readOnly: false },
-  { name: 'save_item', description: 'Save the complete updated code to an already checked-out STARLIMS item. Pass the same language used to read or check out a form.', parameters: { type: 'object', properties: { uri: { type: 'string' }, code: { type: 'string' }, language: { type: 'string' }, type: { type: 'string' } }, required: ['uri', 'code'] }, readOnly: false },
-  { name: 'checkin_item', description: 'Check in a STARLIMS item after editing. Only use when the user explicitly asks to check in.', parameters: { type: 'object', properties: { uri: { type: 'string' }, reason: { type: 'string' }, language: { type: 'string' } }, required: ['uri', 'reason'] }, readOnly: false },
-  { name: 'undo_checkout', description: 'Undo checkout and discard the checked-out STARLIMS change. Only use when explicitly requested.', parameters: { type: 'object', properties: { uri: { type: 'string' } }, required: ['uri'] }, readOnly: false },
-  { name: 'execute_server_script', description: 'Execute a STARLIMS server script after the user requests execution.', parameters: { type: 'object', properties: { uri: { type: 'string' }, parameters: { type: 'array', items: {} } }, required: ['uri'] }, readOnly: false },
-  { name: 'execute_data_source', description: 'Execute a STARLIMS data source after the user requests execution.', parameters: { type: 'object', properties: { uri: { type: 'string' } }, required: ['uri'] }, readOnly: false }
-];
+const BUILTIN_TOOLS: GenericBuiltinTool[] = getProfileTools('devtools').map((tool) => {
+  const { $schema: _schema, ...parameters } = z.toJSONSchema(tool.inputSchema) as Record<string, unknown>;
+  return {
+    name: tool.id,
+    description: tool.description,
+    parameters,
+    readOnly: tool.risk === 'read'
+  };
+});
 
 export function genericBuiltinToolsForPolicy(policy: AgentToolPermissionPolicy): GenericBuiltinTool[] {
   return BUILTIN_TOOLS.filter((tool) => policy !== 'read-only' || tool.readOnly);

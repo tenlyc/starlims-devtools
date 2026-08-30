@@ -60,11 +60,13 @@ STARLIMS DevTools 把企业树、Monaco 编辑器、SSL 语言服务、源码管
 | 会话模式 | Agent、Plan、Debug、Multitask、Ask；Plan/Ask 在运行时强制只读。 |
 | 上下文引用 | 使用 `@` 引用当前、已打开、已签出或搜索到的脚本；依赖事实按 token 预算注入，避免拼接整个工作区。 |
 | Agent 工作区 | 按服务器与用户隔离的本地 Git 工作区，可自定义根目录；远端基线与 AI 修改分开保存并提供逐文件 Diff。 |
-| 本地 MCP | `http://127.0.0.1:3102/mcp`，仅监听回环地址，复用当前 STARLIMS 登录会话。 |
+| 本地 MCP | `http://127.0.0.1:3102/mcp`，仅监听回环地址，复用当前 STARLIMS 登录会话；工具契约来自固定版本的 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp)。 |
 | 外部 MCP | 在 AI 能力中心配置 HTTP、SSE 或 stdio 服务；敏感请求头和环境变量独立存入本机密钥存储。 |
 | 多 Agent 工作流 | 规划、实现、审查、测试角色支持任务依赖与安全并行；结果由用户确认后交给主 Agent 执行。 |
 
 Codex、通用 Agent 与外部 AI 客户端可复用同一 STARLIMS MCP。桌面应用不捆绑第三方模型运行时或 Claude Agent SDK；Claude Code、Cursor、ChatGPT Desktop 等如需使用，应作为独立客户端连接 MCP。
+
+连接后可调用 `get_capabilities` 查看当前工具来源、风险、Schema 版本和后端组件。`SCM_API.*` 保留上游来源，公共扩展使用 `STARLIMS_MCP_API.*`，DevTools 专属扩展使用 `STARLIMS_DEVTOOLS_API.*`；完整边界见 [`docs/MCP_ARCHITECTURE.md`](docs/MCP_ARCHITECTURE.md)。
 
 ### 规则、权限与质量门禁
 
@@ -116,7 +118,7 @@ npm run dev
 ### 检查与打包
 
 ```bash
-# ESLint、21 组 smoke tests、TypeScript、Renderer/Electron 构建
+# ESLint、22 组 smoke tests、TypeScript、Renderer/Electron 构建
 npm run check
 
 # 生成当前平台安装包
@@ -183,6 +185,7 @@ npm run upstream:update:lsp -- v0.22.0
 
 - [`mahoskye/starlims-lsp`](https://github.com/mahoskye/starlims-lsp)：作为受版本锁与 SHA-256 校验的语言服务组件。
 - [`MrDoe/starlimsvscode`](https://github.com/MrDoe/starlimsvscode)：作为 STARLIMS SCM 契约、语言规则和兼容测试的参考来源，按能力选择性移植，不作为运行时依赖。
+- [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp)：作为固定版本的共享 MCP 契约与运行时依赖；产品仅实现宿主 Adapter、权限和传输。
 
 ## 项目结构
 
@@ -194,6 +197,7 @@ src/scm_api/              需要部署到 STARLIMS 的后端脚本
 resources/starlims-lsp/   构建时准备的已校验语言服务资源
 scripts/                  smoke tests、打包准备与上游维护工具
 upstreams/                上游版本锁、能力映射和兼容记录
+components/               自有共享组件版本锁（与第三方 upstream 分开）
 docs/                     扩展示例与脱敏产品截图
 ```
 
@@ -207,6 +211,7 @@ Electron 44 · React 18 · TypeScript 5.9 · Vite 8 · Monaco Editor · Tailwind
 
 - 完整变更记录：[CHANGELOG.md](CHANGELOG.md)
 - 上游同步策略：[UPSTREAM_SYNC.md](UPSTREAM_SYNC.md)
+- MCP 来源与扩展边界：[docs/MCP_ARCHITECTURE.md](docs/MCP_ARCHITECTURE.md)
 - 开源许可：[MIT](LICENSE)
 
 项目主页：https://github.com/tenlyc/starlims-devtools

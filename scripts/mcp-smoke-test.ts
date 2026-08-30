@@ -39,6 +39,21 @@ try {
   assert.ok(tools.tools.some((tool) => tool.name === 'get_item_code'));
   assert.ok(tools.tools.some((tool) => tool.name === 'save_item'));
   assert.ok(tools.tools.some((tool) => tool.name === 'query_checkin_history'));
+  assert.ok(tools.tools.some((tool) => tool.name === 'get_capabilities'));
+
+  const capabilities = await client.callTool({ name: 'get_capabilities', arguments: {} });
+  const capabilityDocument = capabilities.structuredContent as {
+    profile?: string;
+    adapter?: string;
+    tools?: Array<{ id?: string; origin?: string; risk?: string }>;
+    backend?: Array<{ name?: string; source?: string }>;
+  };
+  assert.equal(capabilityDocument.profile, 'devtools');
+  assert.equal(capabilityDocument.adapter, 'starlims-devtools');
+  assert.ok(capabilityDocument.tools?.some((tool) => tool.id === 'save_item' && tool.origin === 'shared' && tool.risk === 'write'));
+  assert.ok(capabilityDocument.tools?.some((tool) => tool.id === 'query_checkin_history' && tool.origin === 'starlims-devtools'));
+  assert.ok(capabilityDocument.backend?.some((component) => component.name === 'SCM_API' && component.source === 'MrDoe/starlimsvscode'));
+  assert.ok(capabilityDocument.backend?.some((component) => component.name === 'STARLIMS_DEVTOOLS_API'));
 
   const result = await client.callTool({ name: 'browse_tree', arguments: { uri: '/Applications', maxItems: 10 } });
   assert.equal(result.isError, undefined);

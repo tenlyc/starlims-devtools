@@ -8,16 +8,25 @@ source of truth for automated checks and builds.
 
 The upstream project is a VS Code extension while STARLIMS DevTools is an Electron/React application. A direct file merge would replace the application shell and is therefore not safe. Updates are synchronized by capability layer.
 
+Shared MCP schemas and provenance now live in the separately versioned
+[`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp) package. The
+package version is locked in `components/shared-components.lock.json`; it does
+not replace the third-party baseline in `upstreams/upstreams.lock.json`.
+
 ## Integrated in 1.1.0
 
 - SCM_API 1.8.2 server package and all source assets under `src/scm_api`.
 - Upstream MCP transport pattern: loopback-only Streamable HTTP, stateful sessions, health endpoint, structured tool results and read-only annotations.
 - STARLIMS MCP programming workflow: browse/search, code retrieval, checkout, save, check-in, undo checkout, logs, script/data-source execution and table definitions.
 - MCP server-wide instructions telling agents to treat remote STARLIMS content as authoritative and to check out before saving.
+- Shared MCP tool catalog, risk metadata, host Profiles and `get_capabilities`
+  handshake are consumed from `@tenlyc/starlims-mcp` v0.1.2.
 
 ## Adapted for Electron
 
 - The MCP HTTP server runs in the Electron main process.
+- Electron owns the DevTools Adapter and transport; the generic Agent and MCP
+  HTTP server derive their built-in tool schemas from the same shared catalog.
 - Tool calls cross a narrow IPC bridge and execute through the existing renderer `EnterpriseService`, reusing the active login session.
 - `save_item` accepts `uri`, `code`, and optional `language`. DevTools also maintains a per-server/user Git workspace for checked-out items, but write-back still crosses the unified fingerprint and quality gate instead of allowing the LSP or filesystem to save remotely.
 - The old provider-specific AI panel is no longer loaded by the application. Model selection and credentials belong to the external MCP client.

@@ -10,7 +10,7 @@ import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import * as z from 'zod/v4';
+import { createStarlimsMcpServer, type StarlimsMcpAdapter } from '@tenlyc/starlims-mcp';
 
 // Electron 28's main process does not always expose Web Crypto as a global.
 // The MCP SDK uses globalThis.crypto during protocol initialization.
@@ -31,9 +31,23 @@ export type RendererToolCall = (tool: string, arguments_: Record<string, unknown
 
 type Session = { server: McpServer; transport: StreamableHTTPServerTransport };
 
-const uriSchema = z.object({ uri: z.string().min(1).describe('STARLIMS enterprise item URI.') });
-const optionalLimit = z.number().int().positive().max(10000).optional();
-const optionalCharacterLimit = z.number().int().positive().max(1_000_000).optional();
+const DEVTOOLS_MCP_CAPABILITIES = [
+  'items.browse',
+  'items.search',
+  'code.search',
+  'languages.list',
+  'code.read',
+  'checkout.list',
+  'logs.read',
+  'tables.read',
+  'scm.history',
+  'checkout.write',
+  'code.write',
+  'checkout.checkin',
+  'checkout.undo',
+  'scripts.execute',
+  'datasource.execute'
+] as const;
 
 export class StarlimsMcpHttpServer {
   private httpServer?: HttpServer;
@@ -132,85 +146,33 @@ export class StarlimsMcpHttpServer {
   }
 
   private createProtocolServer(): McpServer {
-    const server = new McpServer(
-      { name: 'starlims-devtools', version: this.getVersion() },
-      {
-        capabilities: { logging: {}, tools: {} },
-        instructions: 'Use STARLIMS tools as the authoritative source for remote item lookup and code. Browse or search before reading. Check out an item before saving changes. Treat save, check-in, undo-checkout, and execution tools as write or execution operations requiring user intent.'
-      }
-    );
-
-    this.register(server, 'browse_tree', 'Browse STARLIMS items below a folder URI or from the root.',
-      z.object({ uri: z.string().optional(), maxItems: optionalLimit }), true);
-    this.register(server, 'search_by_name', 'Search STARLIMS items by name.',
-      z.object({ query: z.string().min(1), itemType: z.string().optional(), exactMatch: z.boolean().optional(), maxItems: optionalLimit }), true);
-    this.register(server, 'global_code_search', 'Search for text across STARLIMS code items.',
-      z.object({ searchString: z.string().min(1), itemTypes: z.array(z.string()).optional(), maxItems: optionalLimit }), true);
-    this.register(server, 'list_languages', 'List available STARLIMS languages.', z.object({}), true);
-    this.register(server, 'get_item_code', 'Read the authoritative code for a STARLIMS item.',
-      z.object({ uri: z.string().min(1), language: z.string().optional(), maxCharacters: optionalCharacterLimit }), true);
-    this.register(server, 'list_checked_out_items', 'List STARLIMS checked-out items.',
-      z.object({ includeAllUsers: z.boolean().optional() }), true);
-    this.register(server, 'read_log', 'Read the current STARLIMS server log.', z.object({}), true);
-    this.register(server, 'get_table_definition', 'Read a STARLIMS table XML definition.', uriSchema, true);
-    this.register(server, 'query_checkin_history', 'Query STARLIMS Source Control Manager by check-in user and inclusive date range.',
-      z.object({
-        user: z.string().min(1),
-        dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
-      }), true);
-
-    this.register(server, 'checkout_item', 'Check out a STARLIMS item before editing it.',
-      z.object({ uri: z.string().min(1), language: z.string().optional() }), false);
-    this.register(server, 'save_item', 'Save code to a checked-out STARLIMS item.',
-      z.object({ uri: z.string().min(1), code: z.string(), language: z.string().optional() }), false);
-    this.register(server, 'checkin_item', 'Check in a STARLIMS item after edits are complete.',
-      z.object({ uri: z.string().min(1), reason: z.string().min(1), language: z.string().optional() }), false);
-    this.register(server, 'undo_checkout', 'Undo checkout for a STARLIMS item.', uriSchema, false);
-    this.register(server, 'execute_server_script', 'Execute a STARLIMS server script.',
-      z.object({ uri: z.string().min(1), parameters: z.array(z.unknown()).optional() }), false);
-    this.register(server, 'execute_data_source', 'Execute a STARLIMS data source.', uriSchema, false);
-
-    return server;
-  }
-
-  private register(
-    server: McpServer,
-    name: string,
-    description: string,
-    inputSchema: z.ZodObject<any>,
-    readOnly: boolean
-  ): void {
-    server.registerTool(
-      name,
-      {
-        description,
-        inputSchema,
-        annotations: {
-          readOnlyHint: readOnly,
-          destructiveHint: name === 'undo_checkout',
-          idempotentHint: readOnly || name === 'save_item',
-          openWorldHint: name === 'execute_server_script' || name === 'execute_data_source'
+    const version = this.getVersion();
+    const adapter: StarlimsMcpAdapter = {
+      id: 'starlims-devtools',
+      capabilities: DEVTOOLS_MCP_CAPABILITIES,
+      invoke: (tool, arguments_) => this.callRenderer(tool, arguments_),
+      backendComponents: () => [
+        {
+          name: 'SCM_API',
+          source: 'MrDoe/starlimsvscode',
+          commit: '92b9014244eb09a56ed589db5155c3b7914b70a2'
+        },
+        {
+          name: 'STARLIMS_DEVTOOLS_API',
+          version,
+          source: 'tenlyc/starlims-devtools'
         }
-      },
-      async (arguments_: Record<string, unknown>) => {
-        try {
-          const data = await this.callRenderer(name, arguments_);
-          const structured = this.toStructuredResult(data);
-          return { content: [{ type: 'text' as const, text: JSON.stringify(structured, null, 2) }], structuredContent: structured };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          return { isError: true, content: [{ type: 'text' as const, text: message }] };
-        }
-      }
-    );
-  }
+      ]
+    };
 
-  private toStructuredResult(data: unknown): Record<string, unknown> {
-    if (data && typeof data === 'object' && !Array.isArray(data)) {
-      return { ok: true, ...(data as Record<string, unknown>) };
-    }
-    return { ok: true, data };
+    return createStarlimsMcpServer({
+      serverName: 'starlims-devtools',
+      version,
+      profile: 'devtools',
+      adapter,
+      instructions: 'Use STARLIMS tools as the authoritative source for remote item lookup and code. Browse or search before reading. Check out an item before saving changes. Treat save, check-in, undo-checkout, and execution tools as write or execution operations requiring user intent.',
+      onError: (tool, error) => this.log(`STARLIMS MCP tool '${tool}' failed.`, error)
+    });
   }
 
   private respondError(res: Response, status: number, code: number, message: string): void {

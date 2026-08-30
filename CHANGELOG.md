@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 增加测试用例、工作区测试命令与结果留存，以及 Diff、SSL、删除、测试写回门禁
 - 增加团队、项目、个人配置分层和安全导入导出；导入的 `agent.md` 保持独立且拥有最高用户规则优先级
 - 增加版本化 AI 扩展清单，可贡献第三方 MCP、工具元数据、语言映射和工作流模板
+- 增加独立 `starlims-mcp` 共享组件，将 MCP 工具来源、风险、Schema、宿主 Profile 与后端版本握手统一管理
 
 ### Fixed | 修复
 
@@ -41,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 移除旧 AI 面板、旧提供商实现和重复配置；行内补全改为复用当前通用 Agent 平台、模型及密钥
 - 移除内置 Claude Agent SDK；Claude Code 等第三方客户端继续通过外部 MCP 使用 STARLIMS 工具，显著缩小桌面安装包
 - 启动时清理旧 AI 面板遗留的普通配置项，避免历史版本的明文密钥继续残留
+- 内置 MCP HTTP 服务与通用 Agent 改为共用固定版本的工具目录；`SCM_API`、公共 MCP 扩展和 DevTools 专属扩展使用独立命名空间
 
 ### Security | 安全
 
@@ -52,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tooling | 工程化
 
-- 增加统一 `npm run check`，串行执行 lint、21 组 smoke tests 和 TypeScript/Vite/Electron 构建
+- 增加统一 `npm run check`，串行执行 lint、22 组 smoke tests 和 TypeScript/Vite/Electron 构建
 - 增加 GitHub Actions，在 `main` 推送及 Pull Request 时执行相同检查
 
 ## [1.6.2] - 2026-08-30

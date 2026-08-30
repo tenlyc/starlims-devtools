@@ -13,6 +13,7 @@ const tests = [
   'generic-agent-tools-smoke-test.ts',
   'agent-runtime-smoke-test.ts',
   'agent-workspace-smoke-test.ts',
+  'shared-mcp-component-smoke-test.ts',
   'mcp-smoke-test.ts',
   'editor-language-smoke-test.ts',
   'editor-productivity-smoke-test.ts',
