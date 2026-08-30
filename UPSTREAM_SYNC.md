@@ -20,7 +20,7 @@ not replace the third-party baseline in `upstreams/upstreams.lock.json`.
 - STARLIMS MCP programming workflow: browse/search, code retrieval, checkout, save, check-in, undo checkout, logs, script/data-source execution and table definitions.
 - MCP server-wide instructions telling agents to treat remote STARLIMS content as authoritative and to check out before saving.
 - Shared MCP tool catalog, risk metadata, host Profiles and `get_capabilities`
-  handshake are consumed from `@tenlyc/starlims-mcp` v0.3.0.
+  handshake are consumed from `@tenlyc/starlims-mcp` v0.3.1.
 - Multilingual HTML/XFD Form Resources are exposed through explicit-language
   structured read, single-value update, and whole-document save contracts.
 - The reviewed `starlimsvscode` and DevTools MCP/SCM sources are preserved as
