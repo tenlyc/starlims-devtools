@@ -34,7 +34,10 @@ try {
     const paths = packageEntries.map((entry) => `'${join(source, entry).replaceAll("'", "''")}'`).join(',');
     await run('powershell.exe', ['-NoProfile', '-Command', `Compress-Archive -LiteralPath ${paths} -DestinationPath '${temporaryPackage.replaceAll("'", "''")}' -Force`], root);
   } else {
-    await run('zip', ['-q', '-r', temporaryPackage, ...packageEntries], source);
+    // Exclude host-specific extra fields and directory records. Directory
+    // mtimes change when the generated SDP is replaced and otherwise make an
+    // unchanged source tree produce a different archive on every build.
+    await run('zip', ['-q', '-X', '-D', '-r', temporaryPackage, ...packageEntries], source);
   }
   await rename(temporaryPackage, target);
   await mkdir(dirname(releaseTarget), { recursive: true });

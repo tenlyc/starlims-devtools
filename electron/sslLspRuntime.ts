@@ -236,6 +236,14 @@ export class SslLspRuntime {
       child.stdout.on('data', (chunk) => { stdout += chunk; });
       child.stderr.on('data', (chunk) => { stderr += chunk; });
       child.once('error', (error) => { clearTimeout(timer); reject(error); });
+      child.stdin.on('error', (error: NodeJS.ErrnoException) => {
+        // A short-lived executable may print a complete response and exit
+        // before Node finishes closing stdin. The subsequent EPIPE is benign;
+        // the close handler still validates the exit code and stdout.
+        if (error.code === 'EPIPE') return;
+        clearTimeout(timer);
+        reject(error);
+      });
       child.once('close', (code) => {
         clearTimeout(timer);
         // validate intentionally exits 1 when diagnostics contain errors, while

@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 修复 `#include "Module.Script"` 脚本引用被错误要求以分号结尾的问题
 - 修复 Data Source 运行成功但结果不可见，以及 Run 使用了错误执行契约的问题
 - 修复 Codex 模型列表在 App Server 暂时不可用时一直停留在“加载中”的问题
+- 修复短生命周期 LSP 校验进程已成功返回、但关闭 stdin 的无害 `EPIPE` 导致 Linux CI 失败的问题
 
 ### Changed | 变更
 
@@ -62,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 增加统一 `npm run check`，串行执行 lint、27 组 smoke tests 和 TypeScript/Vite/Electron 构建
 - 增加 GitHub Actions，在 `main` 推送及 Pull Request 时执行相同检查
+- 统一 `SCM_API.sdp` 在 macOS/Linux 构建时移除 ZIP 主机扩展字段和目录时间戳，保证相同源码重复构建得到相同 SHA-256
 
 ## [1.6.2] - 2026-08-30
 
