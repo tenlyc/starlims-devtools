@@ -4,7 +4,7 @@
   <ItemName>SCM_API</ItemName>
   <IsMandatory>false</IsMandatory>
   <ItemBehaviour>merge</ItemBehaviour>
-  <PackageDate>2024-09-19T15:04:37.7840997+02:00</PackageDate>
+  <PackageDate>2026-08-30T17:26:00+08:00</PackageDate>
   <PathReadMe />
   <PathEULA />
   <PathLogo />
@@ -732,6 +732,58 @@
           <ItemDescription />
           <ItemCategory>SCM_API</ItemCategory>
           <ItemContent>Server Scripts\SCM_API\Version.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>68C09B0B-92DE-4F55-8B4F-7F3218EAA003</ItemID>
+          <ItemName>McpGetSCMUsers</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription>Lists users found in Source Control check-in history for MCP hosts.</ItemDescription>
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\McpGetSCMUsers.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>68C09B0B-92DE-4F55-8B4F-7F3218EAA004</ItemID>
+          <ItemName>McpGetCheckInHistory</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription>Queries Source Control history by user and inclusive date range for MCP hosts.</ItemDescription>
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\McpGetCheckInHistory.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>68C09B0B-92DE-4F55-8B4F-7F3218EAA005</ItemID>
+          <ItemName>McpExportPackage</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription>Exports selected Source Control history entries to an SDP package for MCP hosts.</ItemDescription>
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\McpExportPackage.srvscr</ItemContent>
+          <IsMandatory>false</IsMandatory>
+          <ItemBehaviour>overwrite</ItemBehaviour>
+          <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>
+          <ItemIsOwned>N</ItemIsOwned>
+          <IsReferred>false</IsReferred>
+        </ServerScript>
+        <ServerScript>
+          <ItemID>68C09B0B-92DE-4F55-8B4F-7F3218EAA006</ItemID>
+          <ItemName>McpImportPackage</ItemName>
+          <LayerId>300</LayerId>
+          <ItemDescription>Imports an SDP package uploaded by an MCP host.</ItemDescription>
+          <ItemCategory>SCM_API</ItemCategory>
+          <ItemContent>Server Scripts\SCM_API\McpImportPackage.srvscr</ItemContent>
           <IsMandatory>false</IsMandatory>
           <ItemBehaviour>overwrite</ItemBehaviour>
           <ItemProgrammingLanguage>STARLIMS</ItemProgrammingLanguage>

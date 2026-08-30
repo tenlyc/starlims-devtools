@@ -5,6 +5,7 @@ import * as z from 'zod/v4';
 import type { AgentApprovalDecision, AgentEvent, AgentStartResult, AgentToolPermissionPolicy, GenericAgentConfig } from '../src/types/agent';
 import type { RendererToolCall } from './mcpServer';
 import type { ExternalMcpManager } from './externalMcpManager';
+import { DEVTOOLS_MCP_CAPABILITIES, SHARED_MCP_PACKAGE, SHARED_MCP_VERSION } from './mcpCapabilities';
 
 type Emit = (event: AgentEvent) => void;
 type ChatMessage = Record<string, unknown>;
@@ -32,7 +33,8 @@ type GenericBuiltinTool = {
   readOnly: boolean;
 };
 
-const BUILTIN_TOOLS: GenericBuiltinTool[] = getProfileTools('devtools').map((tool) => {
+const DEVTOOLS_PROFILE_TOOLS = getProfileTools('devtools', DEVTOOLS_MCP_CAPABILITIES);
+const BUILTIN_TOOLS: GenericBuiltinTool[] = DEVTOOLS_PROFILE_TOOLS.map((tool) => {
   const { $schema: _schema, ...parameters } = z.toJSONSchema(tool.inputSchema) as Record<string, unknown>;
   return {
     name: tool.id,
@@ -41,6 +43,28 @@ const BUILTIN_TOOLS: GenericBuiltinTool[] = getProfileTools('devtools').map((too
     readOnly: tool.risk === 'read'
   };
 });
+BUILTIN_TOOLS.unshift({
+  name: 'get_capabilities',
+  description: 'Describe the active STARLIMS tools, provenance, risk levels, adapter capabilities, and backend components.',
+  parameters: { type: 'object', properties: {}, additionalProperties: false },
+  readOnly: true
+});
+
+export function genericAgentCapabilities(): Record<string, unknown> {
+  return {
+    server: 'starlims-devtools',
+    version: SHARED_MCP_VERSION,
+    sharedPackage: `${SHARED_MCP_PACKAGE}@${SHARED_MCP_VERSION}`,
+    profile: 'devtools',
+    adapter: 'starlims-devtools-bridge',
+    capabilities: DEVTOOLS_MCP_CAPABILITIES,
+    tools: DEVTOOLS_PROFILE_TOOLS.map(({ id, title, origin, provenance, risk, capability, schemaVersion, profiles }) => ({
+      id, title, origin, provenance,
+      risk, capability, schemaVersion, profiles
+    })),
+    backend: [{ name: 'SCM_API', source: 'MrDoe/starlimsvscode + tenlyc/starlims-mcp', commit: '92b9014244eb09a56ed589db5155c3b7914b70a2' }]
+  };
+}
 
 export function genericBuiltinToolsForPolicy(policy: AgentToolPermissionPolicy): GenericBuiltinTool[] {
   return BUILTIN_TOOLS.filter((tool) => policy !== 'read-only' || tool.readOnly);
@@ -248,6 +272,8 @@ export class GenericAgentRuntime {
                 const needsApproval = !readOnly && policy !== 'full-access';
                 if (needsApproval && !await this.requestToolApproval(name, args, turnId, itemId)) throw new Error(`Tool '${name}' was declined by the user.`);
                 output = await this.externalMcp.callTool(name, args);
+              } else if (name === 'get_capabilities') {
+                output = genericAgentCapabilities();
               } else {
                 output = await this.callRenderer(name, args);
               }

@@ -3,14 +3,14 @@ import { readFileSync, readdirSync } from 'node:fs';
 
 const upstreamExport = readFileSync('src/scm_api/Server Scripts/SCM_API/ExportPackage.srvscr', 'utf8');
 const upstreamImport = readFileSync('src/scm_api/Server Scripts/SCM_API/ImportPackage.srvscr', 'utf8');
-const backend = readFileSync('src/scm_api/Server Scripts/STARLIMS_DEVTOOLS_API/DevToolsExportPackage.srvscr', 'utf8');
+const backend = readFileSync('src/scm_api/Server Scripts/SCM_API/McpExportPackage.srvscr', 'utf8');
 const panel = readFileSync('src/components/SCM/SourceControlPanel.tsx', 'utf8');
-const history = readFileSync('src/scm_api/Server Scripts/STARLIMS_DEVTOOLS_API/DevToolsGetCheckInHistory.srvscr', 'utf8');
-const users = readFileSync('src/scm_api/Server Scripts/STARLIMS_DEVTOOLS_API/DevToolsGetSCMUsers.srvscr', 'utf8');
-const importer = readFileSync('src/scm_api/Server Scripts/STARLIMS_DEVTOOLS_API/DevToolsImportPackage.srvscr', 'utf8');
+const history = readFileSync('src/scm_api/Server Scripts/SCM_API/McpGetCheckInHistory.srvscr', 'utf8');
+const users = readFileSync('src/scm_api/Server Scripts/SCM_API/McpGetSCMUsers.srvscr', 'utf8');
+const importer = readFileSync('src/scm_api/Server Scripts/SCM_API/McpImportPackage.srvscr', 'utf8');
 const service = readFileSync('src/services/enterpriseService.ts', 'utf8');
 const electronMain = readFileSync('electron/main.ts', 'utf8');
-const devToolsApiDir = 'src/scm_api/Server Scripts/STARLIMS_DEVTOOLS_API';
+const devToolsApiDir = 'src/scm_api/Server Scripts/SCM_API';
 
 assert.match(backend, /:PARAMETERS sSelectedItems, bHistoryMode, sSelectedLanguages/);
 assert.doesNotMatch(backend, /Request:QueryString/);
@@ -40,8 +40,8 @@ assert.match(panel, /exportPackage\(tokens, true, languageIds\)/);
 assert.match(panel, /handleImportFile/);
 assert.match(panel, /importPackage\(file\)/);
 assert.match(service, /bodyBase64: this\.arrayBufferToBase64\(await file\.arrayBuffer\(\)\)/);
-assert.match(service, /STARLIMS_DEVTOOLS_API\.DevToolsExportPackage/);
-assert.match(service, /URI: '\/ServerScripts\/STARLIMS_DEVTOOLS_API\/DevToolsExportPackage'/);
+assert.match(service, /SCM_API\.McpExportPackage/);
+assert.match(service, /URI: '\/ServerScripts\/SCM_API\/McpExportPackage'/);
 assert.match(service, /Parameters: \[items\?\.join\(','\) \|\| '', history, languages\.join\(','\)\]/);
 assert.match(history, /:PARAMETERS sUser, sDateFrom, sDateTo/);
 assert.doesNotMatch(history, /Request:QueryString/);
@@ -49,11 +49,11 @@ assert.match(history, /RunDS\("SourceControlMgmt\.dsGetItemsFromSearch", aParams
 assert.match(history, /"<DataSet" \$ sXML/);
 assert.match(history, /"FULLMODULE"/);
 assert.match(history, /\{"source", "SourceControlMgmt\.dsGetItemsFromSearch"\}/);
-assert.match(service, /URI: '\/ServerScripts\/STARLIMS_DEVTOOLS_API\/DevToolsGetCheckInHistory'/);
+assert.match(service, /URI: '\/ServerScripts\/SCM_API\/McpGetCheckInHistory'/);
 assert.match(service, /Parameters: \[filter\.user, filter\.dateFrom, filter\.dateTo\]/);
-assert.match(service, /URI: '\/ServerScripts\/STARLIMS_DEVTOOLS_API\/DevToolsGetSCMUsers'/);
+assert.match(service, /URI: '\/ServerScripts\/SCM_API\/McpGetSCMUsers'/);
 assert.match(service, /SCM_API\.ImportPackage/);
-assert.doesNotMatch(service, /STARLIMS_DEVTOOLS_API\.DevToolsImportPackage\.\$\{this\.urlSuffix\}/);
+assert.doesNotMatch(service, /SCM_API\.McpImportPackage\.\$\{this\.urlSuffix\}/);
 assert.match(service, /summarizeHttpError/);
 assert.match(electronMain, /Buffer\.from\(options\.bodyBase64, 'base64'\)/);
 assert.doesNotMatch(upstreamExport, /bHistoryMode|CheckInHistory_|Request:QueryString:IsProperty\("items"\)/);
@@ -62,6 +62,7 @@ assert.doesNotMatch(service, /formData\.append\('file'/);
 assert.doesNotMatch(panel, /showArchives|showLabels|handleRecover|handleCompare/);
 
 for (const fileName of readdirSync(devToolsApiDir)) {
+  if (!fileName.startsWith('Mcp')) continue;
   if (!fileName.endsWith('.ver') && !fileName.endsWith('.comments')) continue;
   const metadataSql = readFileSync(`${devToolsApiDir}/${fileName}`, 'utf8').trim();
   assert.match(metadataSql, /^update lims(?:VERSIONS|SOURCECONTROL) set /i, `${fileName} must contain import metadata SQL`);

@@ -1,8 +1,13 @@
 # STARLIMS MCP 架构与来源边界
 
 STARLIMS DevTools 使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp)
-作为共享 MCP 契约和宿主无关运行时。DevTools 保留 Electron HTTP 传输、当前登录会话、
-权限审批、写入门禁和 Renderer IPC 适配器，不直接依赖 VS Code API。
+作为共享 MCP 契约和宿主无关运行时。DevTools 自动启动该共享包构建出的独立 HTTP
+Server 子进程；Electron 主进程保留当前登录会话、权限审批、写入门禁和 Renderer IPC
+适配器，不直接依赖 VS Code API。
+
+独立 Server 与产品权限层之间使用仅监听回环地址、带随机 Bearer Token 的内部桥接。
+STARLIMS 密码不会传入子进程。共享进程启动或健康检查失败时，DevTools 自动启用内置
+兼容 Server，保证 Codex 和通用 Agent 仍可使用；应用退出时同时关闭子进程与桥接端口。
 
 ## 仓库职责
 
@@ -14,17 +19,19 @@ STARLIMS DevTools 使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starl
 
 ## 工具来源
 
-共享核心为每个工具公开 `origin`：
+共享核心为每个工具公开代码归属 `origin`，值只保留两类：
 
-- `shared`：两个宿主应采用的统一契约，例如 `get_item_code`、`checkout_item` 和
-  `save_item(uri, code, language, expectedVersion?)`。
+- `starlimsvscode`：来自或派生自上游的基础能力，例如 `get_item_code`、`checkout_item`
+  和 `save_item(uri, code, language, expectedVersion?)`。
 - 多语言表单资源使用共享的 `get_form_resources`、`set_form_resource` 和
   `save_form_resources` 契约；`language` 必填，写入带版本冲突和保存后回读校验。
-- `starlimsvscode`：上游宿主专属能力；本地路径保存使用独立名称
+- 上游宿主专属能力仍归属 `starlimsvscode`；本地路径保存使用独立名称
   `vscode_save_local_item`，避免与统一 `save_item` 参数冲突。
-- `starlims-devtools`：DevTools 专属能力，例如 `list_checked_out_items` 和
-  `query_checkin_history`。
-- `starlims-mcp`：未来由共享仓库独立发展的公共工具。
+- `starlims-mcp`：所有自有能力，包括最初在 DevTools 中实现的
+  `list_checked_out_items` 和 `query_checkin_history`。
+
+工具能否在某个宿主运行由 `profiles` 和 Adapter capabilities 单独表达。DevTools 是
+`devtools` Profile/Adapter，不是第三种来源。
 
 客户端连接后先调用 `get_capabilities`，以获得实际注册的工具、来源、风险、Schema
 版本、Adapter 能力和后端组件版本。不要根据产品名称猜测能力。
@@ -39,16 +46,18 @@ STARLIMS DevTools 使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starl
 STARLIMS 工具复用。Vendor 快照保持不可变；新能力进入共享契约或对应产品仓库，
 再以新提交导入一个新快照，不能直接修改旧快照。
 
-## SCM 命名空间
+## 单一 SCM_API 部署包
 
-- `SCM_API.*`：来自 `MrDoe/starlimsvscode`。以提交、许可和兼容测试锁定，只通过人工
-  审查同步，不在 DevTools 或共享仓库直接改名覆盖。
-- `STARLIMS_MCP_API.*`：多个宿主都需要的新后端能力，放在 `starlims-mcp`。
-- `STARLIMS_DEVTOOLS_API.*`：仅服务 DevTools UI、Agent 工作区或质量门禁，继续放在
-  DevTools。
+- STARLIMS 侧只部署 `SCM_API.*` 命名空间和一个 `SCM_API.sdp`。
+- 上游脚本保持原名称；自有扩展使用 `Mcp*` 前缀避免与后续上游新增脚本冲突。
+- `npm run build:scm-api` 从 `src/scm_api` 构建合并包，同时更新应用内资源和
+  `release/SCM_API.sdp`。
+- 当前自有脚本为 `McpGetSCMUsers`、`McpGetCheckInHistory`、`McpExportPackage` 和
+  `McpImportPackage`，代码归属 `tenlyc/starlims-mcp`，宿主实现仍在 DevTools Adapter。
 
-新能力先判断是否需要 STARLIMS 后端脚本。纯契约或客户端编排优先加入共享核心；只有
-跨宿主都需要的后端逻辑才进入 `STARLIMS_MCP_API`。
+来源通过 MCP `origin`/`provenance`、锁文件和审计文档区分，而不是通过多个 SDP
+区分。新增后端接口时使用 `Mcp*` 名称、更新同一个 manifest/content，并重新构建
+`SCM_API.sdp`。
 
 ## 更新流程
 
@@ -56,8 +65,21 @@ STARLIMS 工具复用。Vendor 快照保持不可变；新能力进入共享契�
 2. 生成审计报告，按能力审查 `SCM_API`、MCP 契约和 VS Code UI 变化。
 3. 将审查通过的来源提交导入 `starlims-mcp/vendor`，校验逐文件摘要；同时更新契约、
    来源映射、兼容 Profile 和契约测试，再发布不可变标签。
-4. DevTools 更新固定 Git 标签依赖和 `components/shared-components.lock.json`。
+4. DevTools 更新固定 Git 标签依赖和 `components/shared-components.lock.json`，并把共享
+   Server CLI 打包成独立子进程入口。
 5. 运行 MCP、Agent 工具、写入门禁及完整 smoke tests；通过后才推进上游基线。
 
-这样既能持续吸收上游更新，也不会把 VS Code 实现细节或上游 SCM 修改与 DevTools
-自有能力混在一起。
+这样既能持续吸收上游更新，也能只向 STARLIMS 管理员交付一个包，同时通过元数据清楚
+区分上游与自有能力。
+
+## 运行时 Server 更新
+
+AI 能力中心的 MCP 页面只展示当前 DevTools Adapter 实际支持的接口，并同时显示工具
+风险、Capability 和来源；共享契约中尚未由当前宿主实现的接口不会被误标为可用。
+
+“上游组件”页面可检查 `tenlyc/starlims-mcp` 官方 GitHub Release，并由用户手动安装
+独立 Server。Release 必须同时提供 `starlims-mcp-devtools-server.cjs` 与对应
+`.sha256` 文件。程序在执行远程 JavaScript 前验证 SHA-256，按版本写入本机缓存，校验
+失败时拒绝安装；缓存文件被篡改、所选 Server 无法启动或健康检查失败时，自动退回随
+程序提供的版本或内置兼容 Server。更新 Server 不会替换 DevTools 的登录、审批和写入
+门禁，也不会自动更新 STARLIMS 后端 SDP。

@@ -60,13 +60,23 @@ STARLIMS DevTools 把企业树、Monaco 编辑器、SSL 语言服务、源码管
 | 会话模式 | Agent、Plan、Debug、Multitask、Ask；Plan/Ask 在运行时强制只读。 |
 | 上下文引用 | 使用 `@` 引用当前、已打开、已签出或搜索到的脚本；依赖事实按 token 预算注入，避免拼接整个工作区。 |
 | Agent 工作区 | 按服务器与用户隔离的本地 Git 工作区，可自定义根目录；远端基线与 AI 修改分开保存并提供逐文件 Diff。 |
-| 本地 MCP | `http://127.0.0.1:3102/mcp`，仅监听回环地址，复用当前 STARLIMS 登录会话；工具契约来自固定版本的 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp)，该仓库同时保存可离线校验的 DevTools 与上游 MCP/SCM 源码快照。 |
+| 本地 MCP | DevTools 当前固定使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp) v0.5.1，并自动启动其独立子进程，地址为 `http://127.0.0.1:3102/mcp`；协议进程通过一次性本地令牌桥接当前登录会话和应用内审批，异常时自动回退到内置兼容服务。 |
 | 外部 MCP | 在 AI 能力中心配置 HTTP、SSE 或 stdio 服务；敏感请求头和环境变量独立存入本机密钥存储。 |
 | 多 Agent 工作流 | 规划、实现、审查、测试角色支持任务依赖与安全并行；结果由用户确认后交给主 Agent 执行。 |
 
 Codex、通用 Agent 与外部 AI 客户端可复用同一 STARLIMS MCP。桌面应用不捆绑第三方模型运行时或 Claude Agent SDK；Claude Code、Cursor、ChatGPT Desktop 等如需使用，应作为独立客户端连接 MCP。
 
-连接后可调用 `get_capabilities` 查看当前工具来源、风险、Schema 版本和后端组件。`SCM_API.*` 保留上游来源，公共扩展使用 `STARLIMS_MCP_API.*`，DevTools 专属扩展使用 `STARLIMS_DEVTOOLS_API.*`；完整边界见 [`docs/MCP_ARCHITECTURE.md`](docs/MCP_ARCHITECTURE.md)。
+连接后可调用 `get_capabilities` 查看当前工具来源、风险、Schema 版本、Profile 和后端组件。工具归属只分为 `starlimsvscode` 与 `starlims-mcp`，DevTools 只作为宿主 Profile/Adapter。STARLIMS 侧统一使用一个 `SCM_API.*` 命名空间和一个 `SCM_API.sdp`；构建时会把固定的上游基础脚本与本项目的 `Mcp*` 扩展合并，避免用户维护多套 SDP。完整边界见 [`docs/MCP_ARCHITECTURE.md`](docs/MCP_ARCHITECTURE.md)。
+
+### STARLIMS 后端包
+
+构建项目时执行 `npm run build:scm-api`，生成并随程序提供唯一的 `SCM_API.sdp`。它包含：
+
+- `MrDoe/starlimsvscode` 的 `SCM_API` 基础包内容；
+- `tenlyc/starlims-mcp` 归属、当前由 DevTools Adapter 使用的 `McpGetSCMUsers`、`McpGetCheckInHistory`、`McpExportPackage` 与 `McpImportPackage`；
+- Form Designer、相关客户端脚本、资源、图片与 `CONTROL_PROPERTIES` 表定义等上游包依赖内容。
+
+不再要求安装 `STARLIMS-DevTools-API.sdp`、`STARLIMS_MCP_API.sdp` 或历史功能补丁。来源归属保留在 MCP 能力元数据和文档中，但部署产物只有一个。
 
 多语言 HTML/XFD Form Resources 使用专用的 `get_form_resources`、`set_form_resource` 和 `save_form_resources` 工具。语言参数为必填项；单个文案修改优先使用 `set_form_resource`，避免 AI 重写或覆盖其他语言、其他 ResourceId。
 
@@ -86,8 +96,8 @@ flowchart LR
   MAIN --> API[STARLIMS SCM_API]
   MAIN --> LSP[starlims-lsp]
   MAIN --> WS[隔离的 Git Agent 工作区]
-  AGENT[Codex / 通用 Agent] --> MCP[本地 STARLIMS MCP]
-  MCP --> MAIN
+  AGENT[Codex / 通用 Agent] --> MCP[独立 starlims-mcp 子进程]
+  MCP -->|令牌化回环桥接| MAIN
   EXT[外部 MCP / AI 客户端] --> MCP
   WS --> GATE[Diff + 指纹 + 诊断 + 测试门禁]
   GATE --> API
@@ -120,14 +130,19 @@ npm run dev
 ### 检查与打包
 
 ```bash
-# ESLint、22 组 smoke tests、TypeScript、Renderer/Electron 构建
+# ESLint、27 组 smoke tests、TypeScript、Renderer/Electron 构建
 npm run check
 
 # 生成当前平台安装包
 npm run build
+
+# 应用启动并登录后，验证真实 MCP 握手与只读 STARLIMS 调用
+npm run test:mcp-live
 ```
 
-构建产物位于 `release/`，不会提交到 Git。发布前还建议运行：
+`test:mcp-live` 会连接本机 `127.0.0.1:3102/mcp`，检查 `get_capabilities`、Profile、Adapter、工具来源和后端组件，并实际调用 `browse_tree`、`list_checked_out_items`、`query_checkin_history`。测试只执行读取操作，输出仅保留项目数量，不打印名称、代码、服务器地址或账号。
+
+构建产物位于 `release/`，不会提交到 Git。macOS 构建同时生成 DMG、ZIP 和唯一的 `SCM_API.sdp`。发布前还建议运行：
 
 ```bash
 npm audit --registry=https://registry.npmjs.org
@@ -161,7 +176,7 @@ npm audit --registry=https://registry.npmjs.org
 ## 安全与隐私
 
 - STARLIMS 密码、通用 Agent API Key 和外部 MCP secrets 使用 Electron 本机密钥存储，不写入普通配置或导出文件。
-- 本地 MCP 默认只监听 `127.0.0.1`；不要把端口转发到不受信任网络。
+- 本地 MCP 与内部工具桥接都只监听 `127.0.0.1`；桥接令牌仅存在于子进程环境和内存，不写入配置。不要把端口转发到不受信任网络。
 - Plan/Ask 强制只读；未知外部 MCP 工具不默认视为安全读操作。
 - 完全访问会允许写入、运行或删除等高风险操作，只应在受控工作区和测试环境短时开启。
 - 提交 Issue、日志与截图前，请移除服务器地址、用户名、脚本内容、内部路径、对话、Token 和 API Key。
@@ -185,9 +200,9 @@ npm run upstream:accept:starlimsvscode -- <40位commit> --confirm-reviewed
 npm run upstream:update:lsp -- v0.22.0
 ```
 
-- [`mahoskye/starlims-lsp`](https://github.com/mahoskye/starlims-lsp)：作为受版本锁与 SHA-256 校验的语言服务组件。
+- [`mahoskye/starlims-lsp`](https://github.com/mahoskye/starlims-lsp)：作为受版本锁与 SHA-256 校验的语言服务组件；“上游组件”可检查官方 Release、手动安装通过兼容测试的当前平台版本，并回退到任一本地校验版本。
 - [`MrDoe/starlimsvscode`](https://github.com/MrDoe/starlimsvscode)：作为 STARLIMS SCM 契约、语言规则和兼容测试的参考来源，按能力选择性移植，不作为运行时依赖。
-- [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp)：作为固定版本的共享 MCP 契约与运行时依赖，并归档可离线验证的 MCP/SCM 实际源码；产品仅实现宿主 Adapter、权限和传输。
+- [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp)：作为固定基线的共享 MCP 契约与运行时依赖，并归档可离线验证的 MCP/SCM 实际源码；AI 能力中心可检查其官方 Release，只有带 SHA-256 的独立 Server 包才允许安装，失败会退回随程序提供的版本。产品继续负责宿主 Adapter、权限和传输。
 
 ## 项目结构
 

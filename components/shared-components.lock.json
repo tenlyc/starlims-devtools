@@ -4,9 +4,9 @@
     "starlims-mcp": {
       "repository": "tenlyc/starlims-mcp",
       "package": "@tenlyc/starlims-mcp",
-      "version": "0.3.1",
-      "tag": "v0.3.1",
-      "commit": "ef13b897d1f839c583645f438aba39424f5f938c",
+      "version": "0.5.1",
+      "tag": "v0.5.1",
+      "commit": "96c3d168b2840a47dd38c42301d9e81117c2ffc9",
       "role": "shared MCP contracts and host-neutral runtime"
     }
   }

@@ -2,12 +2,17 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceChange, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, AgentWorkspaceSyncResult, ExternalMcpServers, GenericAgentConfig } from '../src/types/agent';
 import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
 import type { QualityTestRunResult } from '../src/types/aiPlatform';
-import type { NativeLspLocation, NativeLspPosition, NativeLspSessionStatus, NativeLspUpstreamMetadata, NativeLspVersionInfo, NativeLspWorkspaceDocument, NativeLspWorkspaceEdit, NativeLspWorkspaceSymbol, NativeSslFormatResult, NativeSslInventory, NativeSslValidationResult } from '../src/types/sslLsp';
+import type { NativeLspLocation, NativeLspPosition, NativeLspReleaseInfo, NativeLspSessionStatus, NativeLspUpstreamMetadata, NativeLspVersionInfo, NativeLspWorkspaceDocument, NativeLspWorkspaceEdit, NativeLspWorkspaceSymbol, NativeSslFormatResult, NativeSslInventory, NativeSslValidationResult } from '../src/types/sslLsp';
+import type { SharedMcpDetails } from '../src/types/sharedMcp';
 
 // Type definitions for exposed API
 export interface ElectronAPI {
   // STARLIMS MCP bridge
   mcpGetStatus: () => Promise<{ enabled: boolean; running: boolean; host: string; port: number; url: string; error?: string }>;
+  mcpGetDetails: () => Promise<SharedMcpDetails>;
+  mcpCheckForUpdates: () => Promise<SharedMcpDetails>;
+  mcpInstallLatest: () => Promise<SharedMcpDetails>;
+  mcpSelectVersion: (version: string) => Promise<SharedMcpDetails>;
   onMcpRequest: (callback: (request: { id: string; tool: string; arguments: Record<string, unknown> }) => void) => () => void;
   respondToMcpRequest: (response: { id: string; result?: unknown; error?: string }) => void;
   onDiagnosticLog: (callback: (event: DiagnosticLogEvent) => void) => () => void;
@@ -19,6 +24,8 @@ export interface ElectronAPI {
   sslLspSessionRestart: () => Promise<NativeLspSessionStatus>;
   sslLspVersions: () => Promise<NativeLspVersionInfo[]>;
   sslLspUpstreamMetadata: () => Promise<NativeLspUpstreamMetadata>;
+  sslLspCheckForUpdates: () => Promise<NativeLspReleaseInfo>;
+  sslLspInstallLatest: () => Promise<{ versions: NativeLspVersionInfo[]; status: NativeLspSessionStatus; release?: NativeLspReleaseInfo }>;
   sslLspSelectVersion: (version: string) => Promise<{ versions: NativeLspVersionInfo[]; status: NativeLspSessionStatus }>;
   sslLspWorkspaceDocuments: () => Promise<NativeLspWorkspaceDocument[]>;
   sslLspWorkspaceDocument: (uri: string) => Promise<(NativeLspWorkspaceDocument & { content: string }) | null>;
@@ -124,6 +131,10 @@ export interface ElectronAPI {
 contextBridge.exposeInMainWorld('electronAPI', {
   // STARLIMS MCP bridge
   mcpGetStatus: () => ipcRenderer.invoke('mcp:getStatus'),
+  mcpGetDetails: () => ipcRenderer.invoke('mcp:getDetails'),
+  mcpCheckForUpdates: () => ipcRenderer.invoke('mcp:checkForUpdates'),
+  mcpInstallLatest: () => ipcRenderer.invoke('mcp:installLatest'),
+  mcpSelectVersion: (version: string) => ipcRenderer.invoke('mcp:selectVersion', version),
   onMcpRequest: (callback: (request: { id: string; tool: string; arguments: Record<string, unknown> }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, request: { id: string; tool: string; arguments: Record<string, unknown> }) => callback(request);
     ipcRenderer.on('mcp:request', listener);
@@ -143,6 +154,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sslLspSessionRestart: () => ipcRenderer.invoke('ssl-lsp:sessionRestart'),
   sslLspVersions: () => ipcRenderer.invoke('ssl-lsp:versions'),
   sslLspUpstreamMetadata: () => ipcRenderer.invoke('ssl-lsp:upstreamMetadata'),
+  sslLspCheckForUpdates: () => ipcRenderer.invoke('ssl-lsp:checkForUpdates'),
+  sslLspInstallLatest: () => ipcRenderer.invoke('ssl-lsp:installLatest'),
   sslLspSelectVersion: (version: string) => ipcRenderer.invoke('ssl-lsp:selectVersion', version),
   sslLspWorkspaceDocuments: () => ipcRenderer.invoke('ssl-lsp:workspaceDocuments'),
   sslLspWorkspaceDocument: (uri: string) => ipcRenderer.invoke('ssl-lsp:workspaceDocument', uri),

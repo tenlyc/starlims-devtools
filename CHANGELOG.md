@@ -24,9 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 增加版本化 AI 扩展清单，可贡献第三方 MCP、工具元数据、语言映射和工作流模板
 - 增加独立 `starlims-mcp` 共享组件，将 MCP 工具来源、风险、Schema、宿主 Profile 与后端版本握手统一管理
 - 增加按明确语言读取、结构化修改和完整保存 HTML/XFD Form Resources 的 MCP 工具，并提供内容版本冲突检查与保存后语义回读验证
+- DevTools 自动启动 `starlims-mcp` v0.5.1 独立 Server 子进程，通过令牌化本地桥接保留当前登录会话和对话内审批，并在健康检查失败或进程退出时回退到内置服务
+- “上游组件”统一支持检查 MCP Server 与 `starlims-lsp` GitHub Release、手动安装经过 SHA-256/兼容性校验的版本、切换本地版本和启动失败自动回退
+- 构建时生成唯一的合并 `SCM_API.sdp`，同时包含固定的 `starlimsvscode` 上游基础包与 `starlims-mcp` 自有 `Mcp*` 后端扩展
 
 ### Fixed | 修复
 
+- 修复通用 OpenAI-compatible Agent 只暴露业务工具、无法调用 MCP `get_capabilities` 能力发现工具的问题
 - 修复 HTML Form 保存时误将文件类型作为 `UserLang` 的问题
 - 修复 MCP 签出与检入声明了语言参数、但执行阶段丢失参数的问题
 - 修复切换到服务器专属 Agent 工作区时，Codex 正常重启被错误显示为 `exited with code null` 的问题
@@ -43,8 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 移除旧 AI 面板、旧提供商实现和重复配置；行内补全改为复用当前通用 Agent 平台、模型及密钥
 - 移除内置 Claude Agent SDK；Claude Code 等第三方客户端继续通过外部 MCP 使用 STARLIMS 工具，显著缩小桌面安装包
 - 启动时清理旧 AI 面板遗留的普通配置项，避免历史版本的明文密钥继续残留
-- 内置 MCP HTTP 服务与通用 Agent 改为共用固定版本的工具目录；`SCM_API`、公共 MCP 扩展和 DevTools 专属扩展使用独立命名空间
-- 将共享组件升级到 `starlims-mcp` v0.2.0；DevTools 与上游 MCP/SCM 实际源码现在按提交和 SHA-256 归档，可离线恢复并供其他 STARLIMS 工具复用
+- 内置 MCP HTTP 服务与通用 Agent 改为共用固定版本的工具目录；工具归属只保留 `starlimsvscode` 与 `starlims-mcp`，DevTools 作为 Profile/Adapter，STARLIMS 侧统一部署单一 `SCM_API` 命名空间
+- 将共享组件升级到 `starlims-mcp` v0.5.1；DevTools 与上游 MCP/SCM 实际源码现在按提交和 SHA-256 归档，可离线恢复并供其他 STARLIMS 工具复用
 
 ### Security | 安全
 
@@ -56,7 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tooling | 工程化
 
-- 增加统一 `npm run check`，串行执行 lint、22 组 smoke tests 和 TypeScript/Vite/Electron 构建
+- 增加统一 `npm run check`，串行执行 lint、27 组 smoke tests 和 TypeScript/Vite/Electron 构建
 - 增加 GitHub Actions，在 `main` 推送及 Pull Request 时执行相同检查
 
 ## [1.6.2] - 2026-08-30

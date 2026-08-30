@@ -20,7 +20,7 @@ not replace the third-party baseline in `upstreams/upstreams.lock.json`.
 - STARLIMS MCP programming workflow: browse/search, code retrieval, checkout, save, check-in, undo checkout, logs, script/data-source execution and table definitions.
 - MCP server-wide instructions telling agents to treat remote STARLIMS content as authoritative and to check out before saving.
 - Shared MCP tool catalog, risk metadata, host Profiles and `get_capabilities`
-  handshake are consumed from `@tenlyc/starlims-mcp` v0.3.1.
+  handshake are consumed from `@tenlyc/starlims-mcp` v0.5.1.
 - Multilingual HTML/XFD Form Resources are exposed through explicit-language
   structured read, single-value update, and whole-document save contracts.
 - The reviewed `starlimsvscode` and DevTools MCP/SCM sources are preserved as
@@ -59,6 +59,7 @@ not replace the third-party baseline in `upstreams/upstreams.lock.json`.
 - Cross-file rename opens affected scripts as reviewable local dirty buffers; it never writes directly to STARLIMS.
 - Customize exposes LSP health, document count, workspace-symbol search, the locked `starlimsvscode` audit commit, restart, and version selection.
 - Bundled LSP binaries are cached by version only after SHA-256 verification. Previous verified versions remain selectable after an application upgrade.
+- Customize can check the official `mahoskye/starlims-lsp` GitHub Release, but installation is always user-triggered. The current-platform asset must have a GitHub SHA-256 digest or matching checksum asset, pass `--version`, Designer `#include`, validation and formatting contracts, and start successfully before it remains selected. Failed installs and starts restore the previous verified version.
 
 ## Deferred compatibility work
 

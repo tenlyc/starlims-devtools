@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 
 const tests = [
   'ssl-lsp-smoke-test.ts',
+  'ssl-lsp-package-runtime-smoke-test.ts',
   'upstream-management-smoke-test.ts',
   'starlims-lsp-upstream-smoke-test.ts',
   'ssl-lsp-session-smoke-test.ts',
@@ -14,6 +15,9 @@ const tests = [
   'agent-runtime-smoke-test.ts',
   'agent-workspace-smoke-test.ts',
   'shared-mcp-component-smoke-test.ts',
+  'shared-mcp-runtime-smoke-test.ts',
+  'shared-mcp-fallback-smoke-test.ts',
+  'shared-mcp-package-runtime-smoke-test.ts',
   'mcp-smoke-test.ts',
   'form-resources-mcp-smoke-test.ts',
   'editor-language-smoke-test.ts',

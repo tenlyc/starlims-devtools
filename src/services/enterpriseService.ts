@@ -641,7 +641,7 @@ export class EnterpriseService implements IEnterpriseService {
   /**
    * Export checked out items as an SDP package and download it.
    *
-   * STARLIMS_DEVTOOLS_API.DevToolsExportPackage is executed through the
+   * SCM_API.McpExportPackage is executed through the
    * established SCM_API.RunScript endpoint and returns a file name with base64
    * SDP content. The result is validated to be a ZIP before it is downloaded.
    *
@@ -653,7 +653,7 @@ export class EnterpriseService implements IEnterpriseService {
       const invocation = await this.apiRequest<any>('RunScript', {
         method: 'POST',
         body: JSON.stringify({
-          URI: '/ServerScripts/STARLIMS_DEVTOOLS_API/DevToolsExportPackage',
+          URI: '/ServerScripts/SCM_API/McpExportPackage',
           Parameters: [items?.join(',') || '', history, languages.join(',')]
         })
       });
@@ -689,7 +689,7 @@ export class EnterpriseService implements IEnterpriseService {
     try {
       const data = await this.apiRequest<any>('RunScript', {
         method: 'POST',
-        body: JSON.stringify({ URI: '/ServerScripts/STARLIMS_DEVTOOLS_API/DevToolsGetSCMUsers' })
+        body: JSON.stringify({ URI: '/ServerScripts/SCM_API/McpGetSCMUsers' })
       });
       const users = data?.data?.users;
       if (Array.isArray(users)) {
@@ -708,7 +708,7 @@ export class EnterpriseService implements IEnterpriseService {
     const data = await this.apiRequest<any>('RunScript', {
       method: 'POST',
       body: JSON.stringify({
-        URI: '/ServerScripts/STARLIMS_DEVTOOLS_API/DevToolsGetCheckInHistory',
+        URI: '/ServerScripts/SCM_API/McpGetCheckInHistory',
         Parameters: [filter.user, filter.dateFrom, filter.dateTo]
       })
     });

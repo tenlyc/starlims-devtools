@@ -1,19 +1,26 @@
 import { spawn } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import type { NativeLspUpstreamMetadata, NativeLspVersionInfo, NativeSslFormatResult, NativeSslInventory, NativeSslValidationResult } from '../src/types/sslLsp';
+import type { NativeLspReleaseInfo, NativeLspUpstreamMetadata, NativeLspVersionInfo, NativeSslFormatResult, NativeSslInventory, NativeSslValidationResult } from '../src/types/sslLsp';
 
 type CommandResult = { stdout: string; stderr: string; code: number | null };
 
 function fileSha256(path: string): string { return createHash('sha256').update(readFileSync(path)).digest('hex'); }
+const githubHeaders = (): Record<string, string> => ({
+  accept: 'application/vnd.github+json',
+  'user-agent': 'STARLIMS-DevTools',
+  ...(process.env.GITHUB_TOKEN ? { authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {})
+});
 
 export class SslLspRuntime {
   private readonly bundledVersion: string;
   private selectedVersion: string;
   private cachedInventory?: NativeSslInventory;
   private readonly upstreamMetadata: NativeLspUpstreamMetadata;
+  private latestRelease?: NativeLspReleaseInfo;
+  private latestReleaseDocument?: GitHubRelease;
 
   constructor(private readonly resourcePath: string, private readonly cacheRoot: string = join(tmpdir(), 'starlims-devtools-lsp-cache'), selectedVersion?: string) {
     try {
@@ -31,6 +38,8 @@ export class SslLspRuntime {
   get version(): string { return this.selectedVersion; }
 
   metadata(): NativeLspUpstreamMetadata { return structuredClone(this.upstreamMetadata); }
+
+  release(): NativeLspReleaseInfo | undefined { return this.latestRelease ? { ...this.latestRelease } : undefined; }
 
   private platformKey(): string { return `${process.platform}-${process.arch}`; }
 
@@ -67,7 +76,10 @@ export class SslLspRuntime {
   }
 
   executablePath(): string {
-    return this.cachedExecutablePath(this.selectedVersion) || this.bundledExecutablePath();
+    const cached = this.cachedExecutablePath(this.selectedVersion);
+    if (cached) return cached;
+    this.selectedVersion = this.bundledVersion;
+    return this.bundledExecutablePath();
   }
 
   listVersions(): NativeLspVersionInfo[] {
@@ -86,6 +98,80 @@ export class SslLspRuntime {
     this.selectedVersion = version;
     this.cachedInventory = undefined;
     return true;
+  }
+
+  async checkForUpdates(): Promise<NativeLspReleaseInfo> {
+    const repository = this.repositorySlug();
+    const response = await fetch(`https://api.github.com/repos/${repository}/releases/latest`, {
+      headers: githubHeaders(),
+      signal: AbortSignal.timeout(15_000)
+    });
+    if (!response.ok) throw new Error(`GitHub release check failed with HTTP ${response.status}.`);
+    const release = await response.json() as GitHubRelease;
+    const version = String(release.tag_name || '').replace(/^v/i, '');
+    if (!version) throw new Error('The latest starlims-lsp release has no version tag.');
+    const expectedName = this.upstreamMetadata.assets?.[this.platformKey()]?.name || this.defaultAssetName();
+    const asset = (release.assets || []).find((item) => item.name === expectedName);
+    const checksumAsset = this.findChecksumAsset(release.assets || [], expectedName);
+    const githubDigest = this.githubSha256(asset?.digest);
+    this.latestReleaseDocument = release;
+    this.latestRelease = {
+      version,
+      releaseUrl: String(release.html_url || `https://github.com/${repository}/releases/tag/v${version}`),
+      installable: Boolean(asset?.browser_download_url && (githubDigest || checksumAsset?.browser_download_url)),
+      ...(asset?.name ? { assetName: asset.name } : {}),
+      ...(release.published_at ? { publishedAt: release.published_at } : {}),
+      ...(githubDigest ? { verification: 'github-digest' as const } : checksumAsset ? { verification: 'checksum-asset' as const } : {})
+    };
+    return { ...this.latestRelease };
+  }
+
+  async installLatest(): Promise<string> {
+    const info = this.latestRelease || await this.checkForUpdates();
+    const release = this.latestReleaseDocument;
+    if (!release || !info.installable || !info.assetName) throw new Error(`starlims-lsp ${info.version} does not provide a verifiable ${this.platformKey()} asset.`);
+    const asset = (release.assets || []).find((item) => item.name === info.assetName);
+    if (!asset?.browser_download_url) throw new Error(`Release asset '${info.assetName}' is missing.`);
+    const response = await fetch(asset.browser_download_url, { headers: { 'user-agent': 'STARLIMS-DevTools' }, signal: AbortSignal.timeout(60_000) });
+    if (!response.ok) throw new Error(`starlims-lsp download failed with HTTP ${response.status}.`);
+    const content = Buffer.from(await response.arrayBuffer());
+    const actualDigest = createHash('sha256').update(content).digest('hex');
+    let expectedDigest = this.githubSha256(asset.digest);
+    if (!expectedDigest) {
+      const checksumAsset = this.findChecksumAsset(release.assets || [], info.assetName);
+      if (!checksumAsset?.browser_download_url) throw new Error('The release has no trusted checksum for this platform asset.');
+      const checksumResponse = await fetch(checksumAsset.browser_download_url, { headers: { 'user-agent': 'STARLIMS-DevTools' }, signal: AbortSignal.timeout(15_000) });
+      if (!checksumResponse.ok) throw new Error(`Checksum download failed with HTTP ${checksumResponse.status}.`);
+      const checksumText = await checksumResponse.text();
+      expectedDigest = checksumText.split(/\r?\n/).find((line) => line.includes(info.assetName!))?.match(/\b[a-f0-9]{64}\b/i)?.[0]?.toLowerCase()
+        || checksumText.match(/\b[a-f0-9]{64}\b/i)?.[0]?.toLowerCase();
+    }
+    if (!expectedDigest || expectedDigest !== actualDigest) throw new Error('starlims-lsp SHA-256 verification failed.');
+
+    const directory = join(this.cacheRoot, info.version, this.platformKey());
+    const target = join(directory, this.binaryName());
+    const temporary = `${target}.download`;
+    mkdirSync(directory, { recursive: true });
+    try {
+      writeFileSync(temporary, content, { mode: 0o700 });
+      if (process.platform !== 'win32') chmodSync(temporary, 0o700);
+      const versionResult = await this.runExecutable(temporary, ['--version'], '');
+      if (!`${versionResult.stdout}${versionResult.stderr}`.includes(info.version)) throw new Error(`Downloaded starlims-lsp reports an unexpected version.`);
+      const validation = await this.runExecutable(temporary, ['--validate', '--stdin'], '#include "AUDIT.HTML_EnterpriseAudit"\n:DECLARE sName;\nsName := "ok";\n', true);
+      const parsed = JSON.parse(validation.stdout) as Array<{ diagnostics?: Array<{ message?: string }> }>;
+      const messages = (parsed[0]?.diagnostics || []).map((item) => item.message || '').join('\n');
+      if (/include.*semicolon|unknown.*include/i.test(messages)) throw new Error('Downloaded starlims-lsp is incompatible with STARLIMS Designer include syntax.');
+      const formatted = await this.runExecutable(temporary, ['--format', '--stdin'], ':DECLARE sName;\nsName:="ok";\n');
+      if (!formatted.stdout.trim()) throw new Error('Downloaded starlims-lsp failed the formatting contract.');
+      renameSync(temporary, target);
+      if (process.platform !== 'win32') chmodSync(target, 0o755);
+      writeFileSync(join(directory, 'manifest.json'), JSON.stringify({ version: info.version, platform: this.platformKey(), source: info.releaseUrl, asset: info.assetName, sha256: actualDigest }, null, 2));
+    } finally {
+      if (existsSync(temporary)) unlinkSync(temporary);
+    }
+    this.selectedVersion = info.version;
+    this.cachedInventory = undefined;
+    return info.version;
   }
 
   isAvailable(): boolean {
@@ -133,8 +219,12 @@ export class SslLspRuntime {
   }
 
   private run(args: string[], input: string): Promise<CommandResult> {
+    return this.runExecutable(this.executablePath(), args, input, args[0] === '--validate');
+  }
+
+  private runExecutable(executable: string, args: string[], input: string, allowValidationFailure = false): Promise<CommandResult> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.executablePath(), args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      const child = spawn(executable, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
       let stdout = '';
       let stderr = '';
       const timer = setTimeout(() => {
@@ -150,10 +240,35 @@ export class SslLspRuntime {
         clearTimeout(timer);
         // validate intentionally exits 1 when diagnostics contain errors, while
         // still returning valid JSON on stdout.
-        if ((code === 0 || (args[0] === '--validate' && code === 1)) && stdout.trim()) resolve({ stdout, stderr, code });
+        if ((code === 0 || (allowValidationFailure && code === 1)) && stdout.trim()) resolve({ stdout, stderr, code });
         else reject(new Error(stderr.trim() || `starlims-lsp exited with code ${code}.`));
       });
       child.stdin.end(input, 'utf8');
     });
   }
+
+  private repositorySlug(): string {
+    const match = String(this.upstreamMetadata.repository || '').match(/github\.com\/([^/]+\/[^/#]+?)(?:\.git)?$/i);
+    return match?.[1] || 'mahoskye/starlims-lsp';
+  }
+
+  private defaultAssetName(): string {
+    const arch = process.arch === 'x64' ? 'amd64' : process.arch;
+    if (process.platform === 'win32') return `starlims-lsp-windows-${arch}.exe`;
+    const platform = process.platform === 'darwin' ? 'darwin' : process.platform;
+    return `starlims-lsp-${platform}-${arch}`;
+  }
+
+  private githubSha256(value?: string): string | undefined {
+    const match = String(value || '').match(/^sha256:([a-f0-9]{64})$/i);
+    return match?.[1]?.toLowerCase();
+  }
+
+  private findChecksumAsset(assets: GitHubAsset[], binaryName: string): GitHubAsset | undefined {
+    return assets.find((asset) => asset.name === `${binaryName}.sha256`)
+      || assets.find((asset) => /^(?:sha256sums|checksums)(?:\.txt)?$/i.test(String(asset.name || '')));
+  }
 }
+
+type GitHubAsset = { name?: string; browser_download_url?: string; digest?: string };
+type GitHubRelease = { tag_name?: string; html_url?: string; published_at?: string; assets?: GitHubAsset[] };

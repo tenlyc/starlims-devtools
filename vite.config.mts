@@ -32,6 +32,20 @@ export default defineConfig({
             }
           }
         }
+      },
+      {
+        entry: 'electron/sharedMcpCli.ts',
+        vite: {
+          ssr: {
+            noExternal: ['@tenlyc/starlims-mcp', '@modelcontextprotocol/sdk', 'express', 'zod']
+          },
+          build: {
+            outDir: 'dist-electron',
+            rollupOptions: {
+              external: ['electron']
+            }
+          }
+        }
       }
     ]),
     renderer()

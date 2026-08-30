@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { GENERIC_AGENT_SYSTEM_PROMPT, genericBuiltinToolsForPolicy } from '../electron/genericAgentRuntime';
+import { GENERIC_AGENT_SYSTEM_PROMPT, genericAgentCapabilities, genericBuiltinToolsForPolicy } from '../electron/genericAgentRuntime';
 import { isEnterpriseItemCheckedOut } from '../src/services/enterpriseService';
 import { permissionPolicyForMode, requiresMcpApproval } from '../src/services/agentPermissions';
 import { readFileSync } from 'node:fs';
@@ -8,9 +8,20 @@ const names = (policy: 'read-only' | 'ask-writes' | 'auto-safe' | 'full-access')
   genericBuiltinToolsForPolicy(policy).map((tool) => tool.name);
 
 assert.ok(names('read-only').includes('get_item_code'));
+assert.ok(names('read-only').includes('get_capabilities'));
 assert.ok(names('read-only').includes('get_form_resources'));
 assert.ok(!names('read-only').includes('checkout_item'));
 assert.ok(!names('read-only').includes('save_item'));
+
+const capabilities = genericAgentCapabilities() as {
+  adapter: string;
+  sharedPackage: string;
+  tools: Array<{ id: string; risk: string; provenance: { repository: string } }>;
+};
+assert.equal(capabilities.adapter, 'starlims-devtools-bridge');
+assert.equal(capabilities.sharedPackage, '@tenlyc/starlims-mcp@0.5.1');
+assert.ok(capabilities.tools.some((tool) => tool.id === 'get_form_resources' && tool.risk === 'read'));
+assert.ok(capabilities.tools.every((tool) => tool.provenance.repository.startsWith('https://github.com/')));
 
 for (const policy of ['ask-writes', 'auto-safe', 'full-access'] as const) {
   assert.ok(names(policy).includes('checkout_item'));

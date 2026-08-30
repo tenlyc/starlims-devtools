@@ -11,6 +11,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { createStarlimsMcpServer, type StarlimsMcpAdapter } from '@tenlyc/starlims-mcp';
+import { DEVTOOLS_MCP_CAPABILITIES, DEVTOOLS_MCP_INSTRUCTIONS } from './mcpCapabilities';
 
 // Electron 28's main process does not always expose Web Crypto as a global.
 // The MCP SDK uses globalThis.crypto during protocol initialization.
@@ -30,26 +31,6 @@ export interface McpStatus {
 export type RendererToolCall = (tool: string, arguments_: Record<string, unknown>) => Promise<unknown>;
 
 type Session = { server: McpServer; transport: StreamableHTTPServerTransport };
-
-const DEVTOOLS_MCP_CAPABILITIES = [
-  'items.browse',
-  'items.search',
-  'code.search',
-  'languages.list',
-  'code.read',
-  'forms.resources.read',
-  'checkout.list',
-  'logs.read',
-  'tables.read',
-  'scm.history',
-  'checkout.write',
-  'code.write',
-  'forms.resources.write',
-  'checkout.checkin',
-  'checkout.undo',
-  'scripts.execute',
-  'datasource.execute'
-] as const;
 
 export class StarlimsMcpHttpServer {
   private httpServer?: HttpServer;
@@ -153,18 +134,9 @@ export class StarlimsMcpHttpServer {
       id: 'starlims-devtools',
       capabilities: DEVTOOLS_MCP_CAPABILITIES,
       invoke: (tool, arguments_) => this.callRenderer(tool, arguments_),
-      backendComponents: () => [
-        {
-          name: 'SCM_API',
-          source: 'MrDoe/starlimsvscode',
-          commit: '92b9014244eb09a56ed589db5155c3b7914b70a2'
-        },
-        {
-          name: 'STARLIMS_DEVTOOLS_API',
-          version,
-          source: 'tenlyc/starlims-devtools'
-        }
-      ]
+      backendComponents: () => [{
+        name: 'SCM_API', version, source: 'MrDoe/starlimsvscode + tenlyc/starlims-mcp', commit: '92b9014244eb09a56ed589db5155c3b7914b70a2'
+      }]
     };
 
     return createStarlimsMcpServer({
@@ -172,7 +144,7 @@ export class StarlimsMcpHttpServer {
       version,
       profile: 'devtools',
       adapter,
-      instructions: 'Use STARLIMS tools as the authoritative source for remote item lookup and code. Browse or search before reading. For multilingual HTML/XFD resources, use get_form_resources and set_form_resource with the explicit language instead of editing an unspecified generic document. Check out an item before saving changes. Treat save, check-in, undo-checkout, and execution tools as write or execution operations requiring user intent.',
+      instructions: DEVTOOLS_MCP_INSTRUCTIONS,
       onError: (tool, error) => this.log(`STARLIMS MCP tool '${tool}' failed.`, error)
     });
   }

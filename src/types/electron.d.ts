@@ -4,11 +4,16 @@
 import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceChange, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, AgentWorkspaceSyncResult, ExternalMcpServers, GenericAgentConfig } from './agent';
 import type { DiagnosticLogEvent } from './diagnosticLog';
 import type { QualityTestRunResult } from './aiPlatform';
-import type { NativeLspLocation, NativeLspPosition, NativeLspSessionStatus, NativeLspUpstreamMetadata, NativeLspVersionInfo, NativeLspWorkspaceDocument, NativeLspWorkspaceEdit, NativeLspWorkspaceSymbol, NativeSslFormatResult, NativeSslInventory, NativeSslValidationResult } from './sslLsp';
+import type { NativeLspLocation, NativeLspPosition, NativeLspReleaseInfo, NativeLspSessionStatus, NativeLspUpstreamMetadata, NativeLspVersionInfo, NativeLspWorkspaceDocument, NativeLspWorkspaceEdit, NativeLspWorkspaceSymbol, NativeSslFormatResult, NativeSslInventory, NativeSslValidationResult } from './sslLsp';
+import type { SharedMcpDetails } from './sharedMcp';
 
 export interface ElectronAPI {
   // STARLIMS MCP bridge
   mcpGetStatus: () => Promise<{ enabled: boolean; running: boolean; host: string; port: number; url: string; error?: string }>;
+  mcpGetDetails: () => Promise<SharedMcpDetails>;
+  mcpCheckForUpdates: () => Promise<SharedMcpDetails>;
+  mcpInstallLatest: () => Promise<SharedMcpDetails>;
+  mcpSelectVersion: (version: string) => Promise<SharedMcpDetails>;
   onMcpRequest: (callback: (request: { id: string; tool: string; arguments: Record<string, unknown> }) => void) => () => void;
   respondToMcpRequest: (response: { id: string; result?: unknown; error?: string }) => void;
   onDiagnosticLog: (callback: (event: DiagnosticLogEvent) => void) => () => void;
@@ -20,6 +25,8 @@ export interface ElectronAPI {
   sslLspSessionRestart: () => Promise<NativeLspSessionStatus>;
   sslLspVersions: () => Promise<NativeLspVersionInfo[]>;
   sslLspUpstreamMetadata: () => Promise<NativeLspUpstreamMetadata>;
+  sslLspCheckForUpdates: () => Promise<NativeLspReleaseInfo>;
+  sslLspInstallLatest: () => Promise<{ versions: NativeLspVersionInfo[]; status: NativeLspSessionStatus; release?: NativeLspReleaseInfo }>;
   sslLspSelectVersion: (version: string) => Promise<{ versions: NativeLspVersionInfo[]; status: NativeLspSessionStatus }>;
   sslLspWorkspaceDocuments: () => Promise<NativeLspWorkspaceDocument[]>;
   sslLspWorkspaceDocument: (uri: string) => Promise<(NativeLspWorkspaceDocument & { content: string }) | null>;

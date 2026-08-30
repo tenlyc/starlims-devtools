@@ -6,6 +6,10 @@ import { spawn } from 'child_process';
 import Store from 'electron-store';
 import log from 'electron-log';
 import { StarlimsMcpHttpServer } from './mcpServer';
+import { SharedMcpRuntime } from './sharedMcpRuntime';
+import { SharedMcpPackageRuntime } from './sharedMcpPackageRuntime';
+import { DEVTOOLS_MCP_CAPABILITIES, SHARED_MCP_PACKAGE, SHARED_MCP_VERSION } from './mcpCapabilities';
+import { getProfileTools } from '@tenlyc/starlims-mcp';
 import { AgentRuntimeManager } from './agentRuntime';
 import { withLocalMcpNoProxy } from './localMcpEnv';
 import { GenericAgentRuntime } from './genericAgentRuntime';
@@ -15,6 +19,7 @@ import { SslLspRuntime } from './sslLspRuntime';
 import { SslLspSession } from './sslLspSession';
 import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentProvider, AgentRuntimeStatus, AgentToolPermissionPolicy, AgentWorkspaceContext, AgentWorkspaceFile, ExternalMcpServers } from '../src/types/agent';
 import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
+import type { SharedMcpDetails, SharedMcpToolInfo } from '../src/types/sharedMcp';
 
 // Configure logging
 log.transports.file.level = 'info';
@@ -118,20 +123,72 @@ const callRenderer = (tool: string, arguments_: Record<string, unknown>): Promis
   });
 };
 
-const mcpServer = new StarlimsMcpHttpServer(
+const logMcpRuntime = (message: string, error?: unknown): void => {
+  if (error) log.error(message, error);
+  else log.info(message);
+  emitDiagnosticLog({
+    channel: 'mcp-server', level: error ? 'error' : 'info', source: 'MCP Server',
+    message: error ? `${message} ${error instanceof Error ? error.message : String(error)}` : message
+  });
+};
+
+const embeddedMcpServer = new StarlimsMcpHttpServer(
   callRenderer,
   () => app.getVersion(),
-  (message, error) => {
-    if (error) log.error(message, error);
-    else log.info(message);
-    emitDiagnosticLog({
-      channel: 'mcp-server', level: error ? 'error' : 'info', source: 'MCP Server',
-      message: error ? `${message} ${error instanceof Error ? error.message : String(error)}` : message
-    });
-  },
+  logMcpRuntime,
   '127.0.0.1',
   getMcpPort()
 );
+const SHARED_MCP_SELECTED_VERSION_KEY = 'sharedMcpSelectedVersion.v1';
+const sharedMcpPackageRuntime = new SharedMcpPackageRuntime(
+  join(__dirname, 'sharedMcpCli.js'),
+  join(app.getPath('userData'), 'shared-mcp-cache'),
+  String(store.get(SHARED_MCP_SELECTED_VERSION_KEY) || '') || undefined
+);
+const mcpRuntime = new SharedMcpRuntime(
+  callRenderer,
+  embeddedMcpServer,
+  () => app.getVersion(),
+  getMcpPort,
+  logMcpRuntime,
+  () => sharedMcpPackageRuntime.executablePath(),
+  () => sharedMcpPackageRuntime.version
+);
+
+const sharedMcpTools = (): SharedMcpToolInfo[] => [
+  {
+    id: 'get_capabilities',
+    title: 'Get capabilities',
+    description: 'Describe active tools, origins, risk levels, adapter capabilities, and backend component versions.',
+    origin: 'starlims-mcp',
+    repository: 'https://github.com/tenlyc/starlims-mcp',
+    risk: 'read',
+    capability: 'meta.capabilities',
+    schemaVersion: '1.0',
+    profiles: ['unified', 'devtools', 'vscode-compat']
+  },
+  ...getProfileTools('devtools', DEVTOOLS_MCP_CAPABILITIES).map((tool) => ({
+    id: tool.id,
+    title: tool.title,
+    description: tool.description,
+    origin: tool.origin,
+    repository: tool.provenance.repository,
+    risk: tool.risk,
+    capability: tool.capability,
+    schemaVersion: tool.schemaVersion,
+    profiles: [...tool.profiles]
+  }))
+];
+
+const sharedMcpDetails = (): SharedMcpDetails => ({
+  status: mcpRuntime.getStatus(),
+  packageName: SHARED_MCP_PACKAGE,
+  bundledVersion: SHARED_MCP_VERSION,
+  activeVersion: sharedMcpPackageRuntime.version,
+  versions: sharedMcpPackageRuntime.listVersions(),
+  tools: sharedMcpTools(),
+  ...(sharedMcpPackageRuntime.release() ? { latestRelease: sharedMcpPackageRuntime.release() } : {})
+});
 
 // Get resource path for production
 const RESOURCE_PATH = app.isPackaged
@@ -268,7 +325,7 @@ function showAboutDialog() {
 app.whenReady().then(() => {
   log.info('App ready');
   createWindow();
-  void mcpServer.start();
+  void mcpRuntime.start();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -286,7 +343,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   agentRuntime?.dispose();
   genericAgentRuntime?.interrupt();
-  void mcpServer.stop();
+  void mcpRuntime.stop();
   void sslLspSession.stop();
 });
 
@@ -301,7 +358,40 @@ ipcMain.on('mcp:response', (_event, response: { id: string; result?: unknown; er
   else pending.resolve(response.result);
 });
 
-ipcMain.handle('mcp:getStatus', () => mcpServer.getStatus());
+ipcMain.handle('mcp:getStatus', () => mcpRuntime.getStatus());
+ipcMain.handle('mcp:getDetails', () => sharedMcpDetails());
+ipcMain.handle('mcp:checkForUpdates', async () => {
+  await sharedMcpPackageRuntime.checkForUpdates();
+  return sharedMcpDetails();
+});
+ipcMain.handle('mcp:installLatest', async () => {
+  const previousVersion = sharedMcpPackageRuntime.version;
+  const version = await sharedMcpPackageRuntime.installLatest();
+  store.set(SHARED_MCP_SELECTED_VERSION_KEY, version);
+  await mcpRuntime.restart();
+  if (mcpRuntime.getStatus().implementation !== 'shared-process') {
+    sharedMcpPackageRuntime.selectVersion(previousVersion);
+    store.set(SHARED_MCP_SELECTED_VERSION_KEY, sharedMcpPackageRuntime.version);
+    await mcpRuntime.restart();
+    throw new Error(`starlims-mcp ${version} failed its health check; restored ${sharedMcpPackageRuntime.version}.`);
+  }
+  return sharedMcpDetails();
+});
+ipcMain.handle('mcp:selectVersion', async (_, version: string) => {
+  const previousVersion = sharedMcpPackageRuntime.version;
+  if (!sharedMcpPackageRuntime.selectVersion(String(version || ''))) {
+    throw new Error(`starlims-mcp ${version} is not available in the verified local cache.`);
+  }
+  store.set(SHARED_MCP_SELECTED_VERSION_KEY, sharedMcpPackageRuntime.version);
+  await mcpRuntime.restart();
+  if (mcpRuntime.getStatus().implementation !== 'shared-process') {
+    sharedMcpPackageRuntime.selectVersion(previousVersion);
+    store.set(SHARED_MCP_SELECTED_VERSION_KEY, sharedMcpPackageRuntime.version);
+    await mcpRuntime.restart();
+    throw new Error(`starlims-mcp ${version} failed its health check; restored ${sharedMcpPackageRuntime.version}.`);
+  }
+  return sharedMcpDetails();
+});
 
 // Dialog handlers
 ipcMain.handle('dialog:showOpenDialog', async (_, options) => {
@@ -636,7 +726,7 @@ const getAgentRuntime = (): AgentRuntimeManager => {
   if (!agentRuntime) {
     agentRuntime = new AgentRuntimeManager({
       codexCommand: resolveCodexCommand,
-      mcpUrl: () => mcpServer.getStatus().url,
+      mcpUrl: () => mcpRuntime.getStatus().url,
       externalMcpServers: () => activeToolPermissionPolicy === 'read-only' ? {} : getResolvedExternalMcpServers(),
       cwd: () => agentWorkspace.currentPath(),
       getVersion: () => app.getVersion(),
@@ -695,8 +785,8 @@ const checkCli = (provider: CliProvider): Promise<{ available: boolean; version?
 
 const executeCli = async (provider: CliProvider, prompt: string): Promise<string> => {
   if (provider === 'codex') {
-    await mcpServer.start();
-    const status = mcpServer.getStatus();
+    await mcpRuntime.start();
+    const status = mcpRuntime.getStatus();
     if (!status.running) {
       throw new Error(`STARLIMS MCP is not running: ${status.error || status.url}`);
     }
@@ -844,10 +934,32 @@ ipcMain.handle('ssl-lsp:sessionRestart', async () => {
 });
 ipcMain.handle('ssl-lsp:versions', async () => sslLspRuntime.listVersions());
 ipcMain.handle('ssl-lsp:upstreamMetadata', async () => sslLspRuntime.metadata());
+ipcMain.handle('ssl-lsp:checkForUpdates', async () => sslLspRuntime.checkForUpdates());
+ipcMain.handle('ssl-lsp:installLatest', async () => {
+  const previousVersion = sslLspRuntime.version;
+  const installedVersion = await sslLspRuntime.installLatest();
+  store.set(SSL_LSP_SELECTED_VERSION_KEY, installedVersion);
+  try {
+    await sslLspSession.restart();
+  } catch (error) {
+    sslLspRuntime.selectVersion(previousVersion);
+    store.set(SSL_LSP_SELECTED_VERSION_KEY, sslLspRuntime.version);
+    await sslLspSession.restart().catch(() => undefined);
+    throw new Error(`starlims-lsp ${installedVersion} failed to start; restored ${sslLspRuntime.version}. ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return { versions: sslLspRuntime.listVersions(), status: sslLspSession.status(sslLspRuntime.isAvailable()), release: sslLspRuntime.release() };
+});
 ipcMain.handle('ssl-lsp:selectVersion', async (_, version: string) => {
+  const previousVersion = sslLspRuntime.version;
   if (!sslLspRuntime.selectVersion(String(version || ''))) throw new Error(`starlims-lsp version ${version} is not available in the verified local cache.`);
   store.set(SSL_LSP_SELECTED_VERSION_KEY, sslLspRuntime.version);
-  await sslLspSession.restart();
+  try { await sslLspSession.restart(); }
+  catch (error) {
+    sslLspRuntime.selectVersion(previousVersion);
+    store.set(SSL_LSP_SELECTED_VERSION_KEY, sslLspRuntime.version);
+    await sslLspSession.restart().catch(() => undefined);
+    throw new Error(`starlims-lsp ${version} failed to start; restored ${sslLspRuntime.version}. ${error instanceof Error ? error.message : String(error)}`);
+  }
   return { versions: sslLspRuntime.listVersions(), status: sslLspSession.status(sslLspRuntime.isAvailable()) };
 });
 ipcMain.handle('ssl-lsp:workspaceDocuments', async () => sslLspSession.workspaceDocuments());
@@ -869,8 +981,8 @@ ipcMain.handle('ssl-lsp:workspaceSymbols', async (_, query: string) => sslLspSes
 ipcMain.handle('agent:start', async (_, provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => {
   if (provider !== 'codex') throw new Error('This provider does not support rich agent sessions yet.');
   if (!prompt.trim()) throw new Error('Prompt is required.');
-  await mcpServer.start();
-  const status = mcpServer.getStatus();
+  await mcpRuntime.start();
+  const status = mcpRuntime.getStatus();
   if (!status.running) throw new Error(`STARLIMS MCP is not running: ${status.error || status.url}`);
   const normalizedPolicy = normalizeToolPermissionPolicy(toolPermissionPolicy);
   store.set(MCP_TOOL_PERMISSION_STORE_KEY, normalizedPolicy);

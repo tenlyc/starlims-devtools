@@ -53,11 +53,11 @@ try {
   };
   assert.equal(capabilityDocument.profile, 'devtools');
   assert.equal(capabilityDocument.adapter, 'starlims-devtools');
-  assert.ok(capabilityDocument.tools?.some((tool) => tool.id === 'save_item' && tool.origin === 'shared' && tool.risk === 'write'));
-  assert.ok(capabilityDocument.tools?.some((tool) => tool.id === 'get_form_resources' && tool.origin === 'shared' && tool.risk === 'read'));
-  assert.ok(capabilityDocument.tools?.some((tool) => tool.id === 'query_checkin_history' && tool.origin === 'starlims-devtools'));
-  assert.ok(capabilityDocument.backend?.some((component) => component.name === 'SCM_API' && component.source === 'MrDoe/starlimsvscode'));
-  assert.ok(capabilityDocument.backend?.some((component) => component.name === 'STARLIMS_DEVTOOLS_API'));
+  assert.ok(capabilityDocument.tools?.some((tool) => tool.id === 'save_item' && tool.origin === 'starlimsvscode' && tool.risk === 'write'));
+  assert.ok(capabilityDocument.tools?.some((tool) => tool.id === 'get_form_resources' && tool.origin === 'starlims-mcp' && tool.risk === 'read'));
+  assert.ok(capabilityDocument.tools?.some((tool) => tool.id === 'query_checkin_history' && tool.origin === 'starlims-mcp'));
+  assert.ok(capabilityDocument.backend?.some((component) => component.name === 'SCM_API' && component.source?.includes('MrDoe/starlimsvscode') && component.source?.includes('tenlyc/starlims-mcp')));
+  assert.equal(capabilityDocument.backend?.filter((component) => component.name === 'SCM_API').length, 1);
 
   const result = await client.callTool({ name: 'browse_tree', arguments: { uri: '/Applications', maxItems: 10 } });
   assert.equal(result.isError, undefined);

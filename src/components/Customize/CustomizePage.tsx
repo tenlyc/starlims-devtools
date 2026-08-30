@@ -10,7 +10,8 @@ import { editorStore } from '../../stores/editorStore';
 import { AiPlatformSection } from './AiPlatformSection';
 import { evaluateQualityGate, loadAiLayers, mergeAiLayers, qualityReviewStoreKey } from '../../services/aiPlatform';
 import type { WorkspaceReviewState } from '../../types/aiPlatform';
-import type { NativeLspSessionStatus, NativeLspUpstreamMetadata, NativeLspVersionInfo, NativeLspWorkspaceSymbol } from '../../types/sslLsp';
+import type { NativeLspReleaseInfo, NativeLspSessionStatus, NativeLspUpstreamMetadata, NativeLspVersionInfo, NativeLspWorkspaceSymbol } from '../../types/sslLsp';
+import type { SharedMcpDetails, SharedMcpToolRisk } from '../../types/sharedMcp';
 
 const AGENT_RULES_STORE_KEY = 'agentWorkspaceInstructions.v1';
 const AGENT_WORKSPACE_ROOT_STORE_KEY = 'agentWorkspaceRoot.v1';
@@ -21,6 +22,14 @@ type StoredGenericProfile = { id: string; name?: string; baseUrl?: string; model
 type StoredGenericProfiles = { activeProfileId?: string; profiles?: StoredGenericProfile[] };
 
 const emptyRules: LocalAgentRules = { enabled: false, name: '', content: '', updatedAt: 0 };
+const isNewerVersion = (candidate: string, current: string): boolean => {
+  const left = candidate.replace(/^v/i, '').split('.').map((value) => Number(value) || 0);
+  const right = current.replace(/^v/i, '').split('.').map((value) => Number(value) || 0);
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    if ((left[index] || 0) !== (right[index] || 0)) return (left[index] || 0) > (right[index] || 0);
+  }
+  return false;
+};
 
 function DependencyList({ title, empty, edges }: { title: string; empty: string; edges: Array<{ id: string; label: string; meta: string; onClick?: () => void }> }) {
   return <div className="mb-5"><h4 className="mb-2 text-xs font-medium text-slate-600 dark:text-[#aaa]">{title} <span className="text-slate-400">{edges.length}</span></h4>{edges.length === 0 ? <div className="rounded border border-dashed border-slate-200 px-3 py-5 text-center text-[11px] text-slate-500 dark:border-[#383838]">{empty}</div> : <div className="overflow-hidden rounded border border-slate-200 dark:border-[#383838]">{edges.map((edge) => <button key={edge.id} disabled={!edge.onClick} onClick={edge.onClick} className="block w-full border-b border-slate-100 px-3 py-2 text-left last:border-b-0 enabled:hover:bg-slate-50 disabled:cursor-default dark:border-[#303030] dark:enabled:hover:bg-[#252526]"><div className="truncate text-xs">{edge.label}</div><div className="mt-0.5 text-[10px] text-slate-500">{edge.meta}</div></button>)}</div>}</div>;
@@ -40,6 +49,9 @@ export function CustomizePage() {
   const [rules, setRules] = useState<LocalAgentRules>(emptyRules);
   const [mcpServers, setMcpServers] = useState<ExternalMcpServers>({});
   const [mcpDraft, setMcpDraft] = useState<McpDraft | null>(null);
+  const [mcpDetails, setMcpDetails] = useState<SharedMcpDetails | null>(null);
+  const [mcpExpanded, setMcpExpanded] = useState(true);
+  const [mcpUpdateBusy, setMcpUpdateBusy] = useState(false);
   const [workspaceRoot, setWorkspaceRoot] = useState('');
   const [currentWorkspacePath, setCurrentWorkspacePath] = useState(() => localStorage.getItem('gitWorkspacePath') || '');
   const [workspaceChanges, setWorkspaceChanges] = useState<AgentWorkspaceChange[]>([]);
@@ -51,6 +63,8 @@ export function CustomizePage() {
   const [genericProfiles, setGenericProfiles] = useState<StoredGenericProfiles>({});
   const [lspStatus, setLspStatus] = useState<NativeLspSessionStatus | null>(null);
   const [lspVersions, setLspVersions] = useState<NativeLspVersionInfo[]>([]);
+  const [lspRelease, setLspRelease] = useState<NativeLspReleaseInfo | null>(null);
+  const [lspUpdateBusy, setLspUpdateBusy] = useState(false);
   const [upstreamMetadata, setUpstreamMetadata] = useState<NativeLspUpstreamMetadata>({});
   const [symbolQuery, setSymbolQuery] = useState('');
   const [workspaceSymbols, setWorkspaceSymbols] = useState<NativeLspWorkspaceSymbol[]>([]);
@@ -121,9 +135,79 @@ export function CustomizePage() {
 
   useEffect(() => { if (window.electronAPI) void refreshLspStatus().catch(() => undefined); }, []);
 
+  const refreshMcpDetails = async () => setMcpDetails(await window.electronAPI.mcpGetDetails());
+
+  useEffect(() => { if (window.electronAPI) void refreshMcpDetails().catch(() => undefined); }, []);
+
+  const checkMcpUpdates = async () => {
+    setMcpUpdateBusy(true);
+    try {
+      const details = await window.electronAPI.mcpCheckForUpdates();
+      setMcpDetails(details);
+      setMessage(details.latestRelease?.installable
+        ? t('customize.mcpUpdateChecked').replace('{version}', details.latestRelease.version)
+        : t('customize.mcpUpdateNoAsset'));
+    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+    finally { setMcpUpdateBusy(false); }
+  };
+
+  const installMcpUpdate = async () => {
+    setMcpUpdateBusy(true);
+    try {
+      const details = await window.electronAPI.mcpInstallLatest();
+      setMcpDetails(details);
+      setMessage(t('customize.mcpUpdateInstalled').replace('{version}', details.activeVersion));
+    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+    finally { setMcpUpdateBusy(false); }
+  };
+
+  const selectMcpVersion = async (version: string) => {
+    setMcpUpdateBusy(true);
+    try {
+      const details = await window.electronAPI.mcpSelectVersion(version);
+      setMcpDetails(details);
+      setMessage(t('customize.mcpVersionChanged').replace('{version}', details.activeVersion));
+    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+    finally { setMcpUpdateBusy(false); }
+  };
+
+  const mcpRiskClass = (risk: SharedMcpToolRisk): string => risk === 'read'
+    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400'
+    : risk === 'write'
+      ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+      : 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300';
+
   const restartLsp = async () => {
     try { setLspStatus(await window.electronAPI.sslLspSessionRestart()); setMessage(t('customize.lspRestarted')); }
     catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+  };
+
+  const checkLspUpdates = async () => {
+    setLspUpdateBusy(true);
+    try {
+      const release = await window.electronAPI.sslLspCheckForUpdates();
+      setLspRelease(release);
+      setMessage(release.installable
+        ? t('customize.lspUpdateChecked').replace('{version}', release.version)
+        : t('customize.lspUpdateNoAsset').replace('{version}', release.version));
+    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+    finally { setLspUpdateBusy(false); }
+  };
+
+  const installLspUpdate = async () => {
+    setLspUpdateBusy(true);
+    try {
+      const result = await window.electronAPI.sslLspInstallLatest();
+      setLspVersions(result.versions);
+      setLspStatus(result.status);
+      if (result.release) setLspRelease(result.release);
+      setMessage(t('customize.lspUpdateInstalled').replace('{version}', result.status.version));
+    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+    finally { setLspUpdateBusy(false); }
+  };
+
+  const refreshUpstreamComponents = async () => {
+    await Promise.all([refreshLspStatus(), refreshMcpDetails()]);
   };
 
   const selectLspVersion = async (version: string) => {
@@ -315,7 +399,7 @@ export function CustomizePage() {
         <button onClick={() => { setCategory('mcp'); setMcpDraft(null); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'mcp' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>MCPs <span className="text-slate-500">{Object.keys(mcpServers).length + 1}</span></button>
         <button onClick={() => { setCategory('rules'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'rules' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.rules')} <span className="text-slate-500">{rules.content.trim() ? 1 : 0}</span></button>
         <button onClick={() => { setCategory('index'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'index' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.index')} <span className="text-slate-500">{dependencyIndex?.nodes.length || 0}</span></button>
-        <button onClick={() => { setCategory('upstreams'); setMessage(''); void refreshLspStatus(); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'upstreams' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.upstreams')}</button>
+        <button onClick={() => { setCategory('upstreams'); setMessage(''); void refreshUpstreamComponents(); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'upstreams' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.upstreams')}</button>
         <button onClick={() => { setCategory('workflows'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'workflows' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.workflows')}</button>
         <button onClick={() => { setCategory('quality'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'quality' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.quality')}</button>
         <button onClick={() => { setCategory('layers'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'layers' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.layers')}</button>
@@ -341,11 +425,16 @@ export function CustomizePage() {
           ].map((card) => <button key={card.category} onClick={() => setCategory(card.category)} className="min-h-28 rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:border-slate-400 hover:bg-slate-50 dark:border-[#303030] dark:bg-[#202020] dark:hover:border-[#666] dark:hover:bg-[#252526]"><div className="mb-3 flex h-8 w-8 items-center justify-center rounded bg-slate-100 text-xs font-semibold dark:bg-[#2b2b2b]">{card.icon}</div><div className="text-sm font-medium">{card.title}</div><div className="mt-1 truncate text-xs text-slate-500 dark:text-[#888]">{card.value}</div></button>)}
         </div>
       </section> : category === 'upstreams' ? <section>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-medium">{t('customize.upstreamsTitle')}</h2><p className="mt-1 text-xs text-slate-500 dark:text-[#888]">{t('customize.upstreamsHint')}</p></div><div className="flex gap-2"><button onClick={() => void refreshLspStatus()} className="min-h-9 rounded border border-slate-300 px-3 text-xs dark:border-[#444]">{t('common.refresh')}</button><button onClick={() => void restartLsp()} className="min-h-9 rounded border border-slate-300 px-3 text-xs dark:border-[#444]">{t('customize.restartLsp')}</button></div></div>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-medium">{t('customize.upstreamsTitle')}</h2><p className="mt-1 text-xs text-slate-500 dark:text-[#888]">{t('customize.upstreamsHint')}</p></div><button onClick={() => void refreshUpstreamComponents()} className="min-h-9 rounded border border-slate-300 px-3 text-xs dark:border-[#444]">{t('common.refresh')}</button></div>
         <div className="rounded-lg border border-slate-200 bg-white dark:border-[#303030] dark:bg-[#202020]">
-          <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-[#303030]"><div className={`h-2.5 w-2.5 rounded-full ${lspStatus?.running ? 'bg-emerald-500' : 'bg-amber-500'}`} /><div className="min-w-0 flex-1"><div className="text-sm">starlims-lsp {lspStatus?.version || '—'}</div><div className="truncate text-xs text-slate-500 dark:text-[#888]">{lspStatus?.workspaceRoot || t('customize.workspaceNotReady')} · {lspStatus?.documents || 0} {t('customize.documents')}</div></div><select value={lspStatus?.version || ''} onChange={(event) => void selectLspVersion(event.target.value)} className="h-9 rounded border border-slate-300 bg-transparent px-3 text-xs dark:border-[#444]">{lspVersions.map((item) => <option key={item.version} value={item.version}>{item.version}{item.bundled ? ` · ${t('customize.bundled')}` : ` · ${t('customize.cached')}`}</option>)}</select></div>
+          <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-[#303030]"><div className={`h-2.5 w-2.5 rounded-full ${lspStatus?.running ? 'bg-emerald-500' : 'bg-amber-500'}`} /><div className="min-w-0 flex-1"><div className="text-sm">starlims-lsp {lspStatus?.version || '—'}</div><div className="truncate text-xs text-slate-500 dark:text-[#888]">{lspStatus?.workspaceRoot || t('customize.workspaceNotReady')} · {lspStatus?.documents || 0} {t('customize.documents')}</div></div><select disabled={lspUpdateBusy} value={lspStatus?.version || ''} onChange={(event) => void selectLspVersion(event.target.value)} className="h-9 rounded border border-slate-300 bg-transparent px-3 text-xs dark:border-[#444]">{lspVersions.map((item) => <option key={item.version} value={item.version}>{item.version}{item.bundled ? ` · ${t('customize.bundled')}` : ` · ${t('customize.cached')}`}</option>)}</select><button disabled={lspUpdateBusy} onClick={() => void checkLspUpdates()} className="min-h-9 rounded border border-slate-300 px-3 text-xs disabled:opacity-50 dark:border-[#444]">{lspUpdateBusy ? t('customize.loading') : t('customize.checkUpdate')}</button>{lspRelease?.installable && lspStatus && isNewerVersion(lspRelease.version, lspStatus.version) && <button disabled={lspUpdateBusy} onClick={() => void installLspUpdate()} className="min-h-9 rounded bg-blue-600 px-3 text-xs text-white disabled:opacity-50 dark:bg-[#0e639c]">{t('customize.installVersion').replace('{version}', lspRelease.version)}</button>}<button disabled={lspUpdateBusy} onClick={() => void restartLsp()} className="min-h-9 rounded border border-slate-300 px-3 text-xs disabled:opacity-50 dark:border-[#444]">{t('customize.restartLsp')}</button></div>
           {lspStatus?.error && <div className="border-b border-slate-200 px-4 py-3 text-xs text-red-600 dark:border-[#303030] dark:text-red-400">{lspStatus.error}</div>}
+          {lspRelease && <div className="border-b border-slate-200 px-4 py-2 text-[11px] text-slate-500 dark:border-[#303030] dark:text-[#888]">{t('customize.latestVersion').replace('{version}', lspRelease.version)} · {lspRelease.installable ? t('customize.verifiedDownload') : t('customize.unverifiedDownload')}</div>}
           <div className="px-4 py-3 text-xs text-slate-500 dark:text-[#888]"><div>starlimsvscode · {t('customize.auditOnly')}</div><div className="mt-1 font-mono text-[10px]">{upstreamMetadata.auditSources?.starlimsvscode?.commit || '—'}</div></div>
+        </div>
+        <div className="mt-4 rounded-lg border border-slate-200 bg-white dark:border-[#303030] dark:bg-[#202020]">
+          <div className="flex flex-wrap items-center gap-3 px-4 py-3"><div className={`h-2.5 w-2.5 rounded-full ${mcpDetails?.status.running ? 'bg-emerald-500' : 'bg-amber-500'}`} /><div className="min-w-0 flex-1"><div className="text-sm">starlims-mcp {mcpDetails?.activeVersion || '—'}</div><div className="truncate text-xs text-slate-500 dark:text-[#888]">{mcpDetails?.packageName || '@tenlyc/starlims-mcp'} · {mcpDetails?.status.implementation || t('customize.loading')}</div></div>{mcpDetails && <select disabled={mcpUpdateBusy} value={mcpDetails.activeVersion} onChange={(event) => void selectMcpVersion(event.target.value)} className="h-9 rounded border border-slate-300 bg-transparent px-3 text-xs dark:border-[#444]">{mcpDetails.versions.map((item) => <option key={item.version} value={item.version}>{item.version}{item.bundled ? ` · ${t('customize.bundled')}` : ` · ${t('customize.cached')}`}</option>)}</select>}<button disabled={mcpUpdateBusy} onClick={() => void checkMcpUpdates()} className="min-h-9 rounded border border-slate-300 px-3 text-xs disabled:opacity-50 dark:border-[#444]">{mcpUpdateBusy ? t('customize.loading') : t('customize.checkUpdate')}</button>{mcpDetails?.latestRelease?.installable && isNewerVersion(mcpDetails.latestRelease.version, mcpDetails.activeVersion) && <button disabled={mcpUpdateBusy} onClick={() => void installMcpUpdate()} className="min-h-9 rounded bg-blue-600 px-3 text-xs text-white disabled:opacity-50 dark:bg-[#0e639c]">{t('customize.installVersion').replace('{version}', mcpDetails.latestRelease.version)}</button>}</div>
+          {mcpDetails?.latestRelease && <div className="border-t border-slate-200 px-4 py-2 text-[11px] text-slate-500 dark:border-[#303030] dark:text-[#888]">{t('customize.latestVersion').replace('{version}', mcpDetails.latestRelease.version)} · {mcpDetails.latestRelease.installable ? t('customize.verifiedDownload') : t('customize.unverifiedDownload')}</div>}
         </div>
         <div className="mt-5 rounded-lg border border-slate-200 bg-white dark:border-[#303030] dark:bg-[#202020]">
           <div className="flex gap-2 border-b border-slate-200 p-3 dark:border-[#303030]"><input value={symbolQuery} onChange={(event) => setSymbolQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void searchWorkspaceSymbols(); }} placeholder={t('customize.symbolSearch')} className="h-9 min-w-0 flex-1 rounded border border-slate-300 bg-transparent px-3 text-xs outline-none dark:border-[#444]" /><button onClick={() => void searchWorkspaceSymbols()} className="rounded border border-slate-300 px-3 text-xs dark:border-[#444]">{t('common.search')}</button></div>
@@ -412,7 +501,20 @@ export function CustomizePage() {
       </section> : <section>
         <div className="mb-3 flex items-center justify-between"><div><h2 className="text-sm font-medium">{t('customize.mcpServers')}</h2><p className="mt-1 text-xs text-slate-500 dark:text-[#888]">{t('customize.mcpHint')}</p></div><button onClick={addMcp} className="rounded border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-100 dark:border-[#444] dark:hover:bg-[#252526]">＋ {t('customize.new')}</button></div>
         <div className="mb-5 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-[#303030] dark:bg-[#202020]">
-          <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-[#303030]"><div className="flex h-8 w-8 items-center justify-center rounded bg-slate-100 dark:bg-[#2b2b2b]">SL</div><div className="flex-1"><div className="text-sm">STARLIMS</div><div className="text-xs text-slate-500 dark:text-[#888]">{t('customize.builtInMcp')}</div></div><span className="text-xs text-emerald-600 dark:text-[#3fb950]">{t('customize.builtIn')}</span></div>
+          <button onClick={() => setMcpExpanded((value) => !value)} className="flex w-full items-center gap-3 border-b border-slate-200 px-4 py-3 text-left hover:bg-slate-50 dark:border-[#303030] dark:hover:bg-[#252526]"><div className="flex h-8 w-8 items-center justify-center rounded bg-slate-100 dark:bg-[#2b2b2b]">SL</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="text-sm">STARLIMS</span>{mcpDetails && <span className={`h-2 w-2 rounded-full ${mcpDetails.status.running ? 'bg-emerald-500' : 'bg-slate-400'}`} />}</div><div className="truncate text-xs text-slate-500 dark:text-[#888]">{t('customize.builtInMcp')} · {mcpDetails ? `${mcpDetails.packageName}@${mcpDetails.activeVersion}` : t('customize.loading')}</div></div>{mcpDetails && <span className="text-[11px] text-slate-500">{mcpDetails.tools.length} {t('customize.mcpTools')}</span>}<span className="text-xs text-emerald-600 dark:text-[#3fb950]">{t('customize.builtIn')}</span><span className="text-slate-400">{mcpExpanded ? '⌃' : '⌄'}</span></button>
+          {mcpExpanded && <div className="border-b border-slate-200 bg-slate-50/60 px-4 py-4 dark:border-[#303030] dark:bg-[#1b1b1b]">
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <span className={`rounded-full px-2 py-1 text-[11px] ${mcpDetails?.status.running ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400' : 'bg-slate-200 text-slate-600 dark:bg-[#303030] dark:text-[#aaa]'}`}>{mcpDetails?.status.running ? t('customize.running') : t('customize.stopped')}</span>
+              {mcpDetails?.status.implementation && <span className="rounded-full bg-slate-200 px-2 py-1 text-[11px] text-slate-600 dark:bg-[#303030] dark:text-[#aaa]">{mcpDetails.status.implementation}</span>}
+            </div>
+            <div className="mb-2 flex items-center justify-between"><h3 className="text-xs font-medium">{t('customize.availableMcpTools')}</h3><span className="text-[11px] text-slate-500">{t('customize.adapterFiltered')}</span></div>
+            <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">{mcpDetails?.tools.filter((tool) => !search.trim() || `${tool.id} ${tool.title} ${tool.description} ${tool.capability}`.toLowerCase().includes(search.trim().toLowerCase())).map((tool) => <div key={tool.id} className="min-w-0 rounded border border-slate-200 bg-white px-3 py-2 dark:border-[#333] dark:bg-[#202020]">
+              <div className="flex items-center gap-2"><code className="min-w-0 flex-1 truncate text-[11px] text-blue-700 dark:text-[#4daafc]" title={tool.id}>{tool.id}</code><span className={`rounded px-1.5 py-0.5 text-[9px] uppercase ${mcpRiskClass(tool.risk)}`}>{tool.risk}</span></div>
+              <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-slate-600 dark:text-[#bbb]" title={tool.description}>{tool.description}</div>
+              <div className="mt-1.5 flex min-w-0 items-center gap-2 text-[9px] text-slate-400"><span className="truncate" title={tool.capability}>{tool.capability}</span><span>·</span><span className="truncate" title={tool.repository}>{tool.origin}</span><span>·</span><span className="truncate" title={tool.profiles.join(', ')}>{tool.profiles.join(' / ')}</span></div>
+            </div>)}</div>
+            {!mcpDetails && <div className="py-6 text-center text-xs text-slate-500">{t('customize.loading')}</div>}
+          </div>}
           {filteredServers.map(([name, config]) => <div key={name} className="flex items-center gap-3 border-b border-slate-200 px-4 py-3 last:border-b-0 dark:border-[#303030]"><div className="flex h-8 w-8 items-center justify-center rounded bg-slate-100 text-xs dark:bg-[#2b2b2b]">M</div><div className="min-w-0 flex-1"><div className="truncate text-sm">{name}</div><div className="truncate text-xs text-slate-500 dark:text-[#888]">{config.transport || (config.command ? 'stdio' : 'http')} · {config.url || [config.command, ...(config.args || [])].filter(Boolean).join(' ')}</div></div><label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={config.enabled !== false} onChange={(event) => void persistMcp({ ...mcpServers, [name]: { ...config, enabled: event.target.checked } })} />{t('agent.rulesEnabled')}</label><button onClick={() => editMcp(name, config)} className="min-h-8 rounded px-2 text-xs text-blue-600 hover:bg-slate-100 dark:text-[#4daafc] dark:hover:bg-[#2a2d2e]">{t('customize.edit')}</button><button onClick={() => { const next = { ...mcpServers }; delete next[name]; void persistMcp(next); }} className="icon-button text-lg hover:text-red-600" title={t('server.delete')}>×</button></div>)}
         </div>
 

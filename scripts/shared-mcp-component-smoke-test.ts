@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { getProfileTools } from '@tenlyc/starlims-mcp';
+import '../electron/mcpCapabilities';
 
 const require = createRequire(import.meta.url);
 const applicationPackage = JSON.parse(readFileSync('package.json', 'utf8'));
@@ -21,10 +22,10 @@ assert.equal(
 assert.equal(typeof commonJsCore.createStarlimsMcpServer, 'function');
 
 const devtoolsTools = getProfileTools('devtools');
-assert.ok(devtoolsTools.some((tool) => tool.id === 'save_item' && tool.origin === 'shared'));
-assert.ok(devtoolsTools.some((tool) => tool.id === 'query_checkin_history' && tool.origin === 'starlims-devtools'));
-assert.ok(devtoolsTools.some((tool) => tool.id === 'get_form_resources' && tool.origin === 'shared' && tool.risk === 'read'));
-assert.ok(devtoolsTools.some((tool) => tool.id === 'set_form_resource' && tool.origin === 'shared' && tool.risk === 'write'));
+assert.ok(devtoolsTools.some((tool) => tool.id === 'save_item' && tool.origin === 'starlimsvscode'));
+assert.ok(devtoolsTools.some((tool) => tool.id === 'query_checkin_history' && tool.origin === 'starlims-mcp'));
+assert.ok(devtoolsTools.some((tool) => tool.id === 'get_form_resources' && tool.origin === 'starlims-mcp' && tool.risk === 'read'));
+assert.ok(devtoolsTools.some((tool) => tool.id === 'set_form_resource' && tool.origin === 'starlims-mcp' && tool.risk === 'write'));
 assert.ok(!devtoolsTools.some((tool) => tool.id === 'vscode_save_local_item'));
 
 console.log(`Shared MCP component smoke test passed (${component.tag}, ${devtoolsTools.length} DevTools tools).`);

@@ -68,6 +68,15 @@ export type NativeLspVersionInfo = {
   cached: boolean;
 };
 
+export type NativeLspReleaseInfo = {
+  version: string;
+  releaseUrl: string;
+  installable: boolean;
+  assetName?: string;
+  publishedAt?: string;
+  verification?: 'github-digest' | 'checksum-asset';
+};
+
 export type NativeLspUpstreamMetadata = {
   repository?: string;
   release?: string;

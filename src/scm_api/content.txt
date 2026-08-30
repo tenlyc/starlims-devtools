@@ -1,5 +1,5 @@
 Package Name: SCM_API
-Package Date: 2024-09-19 15:04:37
+Package Date: 2026-08-30 17:26:00
 
 Exported languages: English.
 
@@ -64,6 +64,10 @@ Server Script Category: SCM_API
 	- Utils
 	- Version
 	- GetTickets
+	- McpGetSCMUsers
+	- McpGetCheckInHistory
+	- McpExportPackage
+	- McpImportPackage
 
 
 Table database: DICTIONARY
