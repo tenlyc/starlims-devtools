@@ -194,6 +194,9 @@ const sharedMcpDetails = (): SharedMcpDetails => ({
 const RESOURCE_PATH = app.isPackaged
   ? join(process.resourcesPath, 'resources')
   : join(__dirname, '..', 'resources');
+const WINDOW_ICON_PATH = app.isPackaged
+  ? join(process.resourcesPath, 'icon.ico')
+  : join(app.getAppPath(), 'build', 'icon.ico');
 const SSL_LSP_SELECTED_VERSION_KEY = 'sslLspSelectedVersion.v1';
 const sslLspRuntime = new SslLspRuntime(
   RESOURCE_PATH,
@@ -211,6 +214,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     title: 'STARLIMS DevTools',
+    ...(process.platform === 'win32' ? { icon: WINDOW_ICON_PATH } : {}),
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -503,6 +507,7 @@ ipcMain.handle('window:openDebugWindow', async (_, options: {
     width,
     height,
     title,
+    ...(process.platform === 'win32' ? { icon: WINDOW_ICON_PATH } : {}),
     webPreferences: {
       devTools: true,
       contextIsolation: true,

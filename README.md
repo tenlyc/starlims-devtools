@@ -132,7 +132,7 @@ npm run dev
 ### 检查与打包
 
 ```bash
-# 准备校验过的 LSP、运行 ESLint、27 组 smoke tests 和 Renderer/Electron 构建
+# 准备校验过的 LSP、运行 ESLint、28 组 smoke tests 和 Renderer/Electron 构建
 npm run check
 
 # 生成当前平台安装包

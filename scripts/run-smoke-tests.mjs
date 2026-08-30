@@ -7,6 +7,7 @@ const tests = [
   'starlims-lsp-upstream-smoke-test.ts',
   'ssl-lsp-session-smoke-test.ts',
   'server-config-smoke-test.ts',
+  'windows-icon-smoke-test.ts',
   'ai-context-smoke-test.ts',
   'dependency-index-smoke-test.ts',
   'ai-platform-smoke-test.ts',

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] | 未发布
 
+## [1.7.0-beta.2] - 2026-08-30
+
+### Fixed | 修复
+
+- 修复 Windows 安装包与 EXE 因关闭资源编辑而继续显示 Electron 默认图标的问题
+- Windows 主窗口、调试窗口、任务栏、安装器和卸载程序现在统一使用 STARLIMS DevTools 图标
+
+### Tooling | 工程化
+
+- Windows ICO 现在包含 16、24、32、48、64、128 和 256 像素七档资源
+- 增加 Windows 图标与打包配置 smoke test，完整检查增至 28 组
+
 ## [1.7.0-beta.1] - 2026-08-30
 
 ### Added | 新增

@@ -116,7 +116,7 @@ npm run dev
 Verification and packaging:
 
 ```bash
-# Prepare the verified LSP, lint, run 27 smoke-test groups, and build Renderer/Electron
+# Prepare the verified LSP, lint, run 28 smoke-test groups, and build Renderer/Electron
 npm run check
 
 # Build the installer for the current platform

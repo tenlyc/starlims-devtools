@@ -58,9 +58,11 @@ jobs:
       - name: Create GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME" release-files/*
-          --repo "$GITHUB_REPOSITORY"
-          --title "STARLIMS DevTools 1.7.0 Beta 1"
-          --notes-file docs/releases/v1.7.0-beta.1.md
-          --prerelease
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TITLE_VERSION="${VERSION/-beta./ Beta }"
+          gh release create "$GITHUB_REF_NAME" release-files/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "STARLIMS DevTools ${TITLE_VERSION}" \
+            --notes-file "docs/releases/${GITHUB_REF_NAME}.md" \
+            --prerelease

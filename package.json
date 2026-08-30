@@ -1,6 +1,6 @@
 {
   "name": "starlims-devtools",
-  "version": "1.7.0-beta.1",
+  "version": "1.7.0-beta.2",
   "description": "Cross-platform STARLIMS Development Tools with MCP integration | 跨平台 STARLIMS 开发工具",
   "main": "dist-electron/main.js",
   "author": "STARLIMS DevTools Team",
@@ -118,6 +118,10 @@
       {
         "from": "resources/starlims-lsp",
         "to": "resources/starlims-lsp"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "mac": {
@@ -125,7 +129,6 @@
     },
     "win": {
       "icon": "build/icon.ico",
-      "signAndEditExecutable": false,
       "target": [
         {
           "target": "nsis",
@@ -143,7 +146,10 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
     },
     "linux": {
       "icon": "build/icon.png"
