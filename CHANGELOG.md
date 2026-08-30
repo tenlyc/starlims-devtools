@@ -72,6 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 统一 `SCM_API.sdp` 在 macOS/Linux 构建时移除 ZIP 主机扩展字段和目录时间戳，保证相同源码重复构建得到相同 SHA-256
 - 增加独立中英文 README、双语文档索引、MCP 架构与上游同步双语版本，并清理 Node 18 和独立 SCM 补丁等过时说明
 - 修复 Windows Beta 门禁启动 `npm` 失败及标签构建触发 electron-builder 隐式发布的问题
+- 修复 Windows Runner 在跨磁盘移动生成的 `SCM_API.sdp` 时发生 `EXDEV`、无法打包的问题
 
 ## [1.6.2] - 2026-08-30
 

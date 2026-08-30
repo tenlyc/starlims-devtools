@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp, mkdir, rename, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -39,7 +39,9 @@ try {
     // unchanged source tree produce a different archive on every build.
     await run('zip', ['-q', '-X', '-D', '-r', temporaryPackage, ...packageEntries], source);
   }
-  await rename(temporaryPackage, target);
+  // The Windows hosted runner keeps the repository and OS temp directory on
+  // different drives. copyFile works across volumes; rename fails with EXDEV.
+  await copyFile(temporaryPackage, target);
   await mkdir(dirname(releaseTarget), { recursive: true });
   await copyFile(target, releaseTarget);
   console.log(`Built unified ${target}`);
