@@ -61,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tooling | 工程化
 
-- 增加统一 `npm run check`，先准备并校验当前平台 LSP，再串行执行 lint、27 组 smoke tests 和 TypeScript/Vite/Electron 构建
+- 增加统一 `npm run check`，先准备并校验当前平台 LSP，再串行执行 lint、TypeScript/Vite/Electron 构建和 27 组 smoke tests；干净环境不依赖历史构建产物
 - 增加 GitHub Actions，在 `main` 推送及 Pull Request 时执行相同检查
 - 统一 `SCM_API.sdp` 在 macOS/Linux 构建时移除 ZIP 主机扩展字段和目录时间戳，保证相同源码重复构建得到相同 SHA-256
 

@@ -42,7 +42,7 @@
     "test:scm-export": "tsx scripts/scm-export-smoke-test.ts",
     "test:bottom-panel": "tsx scripts/bottom-panel-smoke-test.ts",
     "test:smoke": "node scripts/run-smoke-tests.mjs",
-    "check": "npm run prepare:lsp && npm run lint && npm run test:smoke && npm run build:vite",
+    "check": "npm run prepare:lsp && npm run lint && npm run build:vite && npm run test:smoke",
     "preview": "vite preview",
     "electron:dev": "npm run prepare:lsp && concurrently \"vite\" \"electron .\"",
     "lint": "eslint src --ext ts,tsx"
