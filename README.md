@@ -1,8 +1,19 @@
-# STARLIMS DevTools
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="src/assets/starlims-devtools-mark-white.svg">
+    <source media="(prefers-color-scheme: light)" srcset="src/assets/starlims-devtools-mark-black.svg">
+    <img src="src/assets/starlims-devtools-mark-black.svg" width="104" height="104" alt="STARLIMS DevTools 图标">
+  </picture>
+</p>
 
-面向 STARLIMS 的 AI 原生跨平台开发工作台。它把企业树、Monaco 编辑器、SSL 语言服务、源码管理、Agent 工作区和 MCP 工具整合在一个桌面应用中，让 AI 能在明确的权限与质量门禁下理解、修改、验证并写回 STARLIMS 脚本。
+<h1 align="center">STARLIMS DevTools</h1>
 
-> STARLIMS DevTools is an AI-native desktop workbench for STARLIMS development, combining the Enterprise tree, Monaco, SSL language tooling, source control, Agent workspaces and MCP-backed automation.
+<p align="center">
+  面向 STARLIMS 的 AI 原生跨平台开发工作台<br>
+  <sub>AI-native cross-platform development workbench for STARLIMS</sub>
+</p>
+
+STARLIMS DevTools 把企业树、Monaco 编辑器、SSL 语言服务、源码管理、Agent 工作区和 MCP 工具整合在一个桌面应用中，让 AI 能在明确的权限与质量门禁下理解、修改、验证并写回 STARLIMS 脚本。
 
 > [!WARNING]
 > 本项目是非官方社区工具，与 STARLIMS Corporation 无隶属或支持关系。请先在测试环境验证，并依据组织的变更流程使用写入、运行、检入和撤销签出功能。
