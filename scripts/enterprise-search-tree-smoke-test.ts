@@ -17,8 +17,11 @@ const tree = buildEnterpriseSearchTree([
 ]);
 
 assert.equal(tree[0].label, 'Applications');
+assert.equal(tree[0].uri, '/Applications');
 assert.equal(tree[0].children?.[0].label, 'ProductProcessApplications');
 assert.equal(tree[0].children?.[0].children?.[0].label, 'BatchManager');
+assert.equal(tree[0].children?.[0].children?.[0].type, 'APP');
+assert.equal(tree[0].children?.[0].children?.[0].uri, '/Applications/ProductProcessApplications/BatchManager');
 const appFolders = tree[0].children?.[0].children?.[0].children || [];
 assert.deepEqual(appFolders.map(item => item.label), ['Client Scripts', 'HTML Forms']);
 assert.equal(appFolders[1].children?.[0].label, 'BatchManager [Guide]');

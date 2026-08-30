@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] | 未发布
 
+## [1.7.0-beta.1] - 2026-08-30
+
 ### Added | 新增
 
 - 增加平台原生编辑器快捷键、Data Source SQL 智能提示、执行结果表格/原始数据视图，以及可直接保存的 `Ctrl/Cmd+S`
@@ -30,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed | 修复
 
+- 修复“新增企业项目”仍发送旧版小写参数、无法调用当前合并 `SCM_API.Add` 的问题，同时保留对旧服务端的兼容
+- 修复企业名称搜索结果中的应用/分类节点缺少真实 URI、从搜索结果右键新增会失败的问题
+- 修复 DevTools MCP `get_item_code` 未返回内容版本、`save_item` 声明了 `expectedVersion` 却未在桥接层阻止过期写入的问题
 - 修复通用 OpenAI-compatible Agent 只暴露业务工具、无法调用 MCP `get_capabilities` 能力发现工具的问题
 - 修复 HTML Form 保存时误将文件类型作为 `UserLang` 的问题
 - 修复 MCP 签出与检入声明了语言参数、但执行阶段丢失参数的问题
@@ -61,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tooling | 工程化
 
+- 增加 Beta 发布验收命令、真实 STARLIMS 写入链路脚本、正式版平台门禁文档和 ESLint warning 不增量基线
 - 增加统一 `npm run check`，先准备并校验当前平台 LSP，再串行执行 lint、TypeScript/Vite/Electron 构建和 27 组 smoke tests；干净环境不依赖历史构建产物
 - 增加 GitHub Actions，在 `main` 推送及 Pull Request 时执行相同检查
 - 统一 `SCM_API.sdp` 在 macOS/Linux 构建时移除 ZIP 主机扩展字段和目录时间戳，保证相同源码重复构建得到相同 SHA-256

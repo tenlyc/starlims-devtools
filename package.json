@@ -1,6 +1,6 @@
 {
   "name": "starlims-devtools",
-  "version": "1.6.2",
+  "version": "1.7.0-beta.1",
   "description": "Cross-platform STARLIMS Development Tools with MCP integration | 跨平台 STARLIMS 开发工具",
   "main": "dist-electron/main.js",
   "author": "STARLIMS DevTools Team",
@@ -45,7 +45,10 @@
     "check": "npm run prepare:lsp && npm run lint && npm run build:vite && npm run test:smoke",
     "preview": "vite preview",
     "electron:dev": "npm run prepare:lsp && concurrently \"vite\" \"electron .\"",
-    "lint": "eslint src --ext ts,tsx"
+    "lint": "eslint src --ext ts,tsx",
+    "lint:baseline": "node scripts/check-eslint-baseline.mjs",
+    "test:mcp-live-write": "node scripts/live-mcp-write-acceptance.mjs",
+    "release:beta:check": "node scripts/beta-release-check.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -125,7 +128,13 @@
       "signAndEditExecutable": false,
       "target": [
         {
-          "target": "dir",
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
           "arch": [
             "x64"
           ]

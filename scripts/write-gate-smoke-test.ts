@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { contentVersionFingerprint } from '../src/services/writeGateService';
+import { assertExpectedContentVersion, contentVersion, contentVersionFingerprint } from '../src/services/writeGateService';
 
 async function main() {
   const base = await contentVersionFingerprint({ server: 'DEMO', user: 'DEMO_USER', uri: '/Applications/A', language: 'CHS', action: 'save', before: 'old', after: 'new' });
@@ -12,6 +12,11 @@ async function main() {
   assert.notEqual(base, changedContent);
   assert.notEqual(base, changedLanguage);
   assert.notEqual(base, changedServer);
+  const version = await contentVersion('same remote content');
+  assert.equal(version, await contentVersion('same remote content'));
+  assert.notEqual(version, await contentVersion('changed remote content'));
+  assert.equal(await assertExpectedContentVersion(version, 'same remote content'), version);
+  await assert.rejects(() => assertExpectedContentVersion('0'.repeat(64), 'same remote content'), /changed after it was read/);
   console.log('Unified write gate fingerprint smoke test passed.');
 }
 

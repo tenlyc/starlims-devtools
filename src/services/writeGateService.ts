@@ -43,6 +43,20 @@ export async function contentVersionFingerprint(input: { server?: string; user?:
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
 }
 
+export async function contentVersion(content: string): Promise<string> {
+  const bytes = new TextEncoder().encode(content);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+export async function assertExpectedContentVersion(expectedVersion: unknown, currentContent: string): Promise<string> {
+  const currentVersion = await contentVersion(currentContent);
+  if (expectedVersion && String(expectedVersion) !== currentVersion) {
+    throw new Error('STARLIMS item changed after it was read. Read it again before saving.');
+  }
+  return currentVersion;
+}
+
 export async function saveItemWithGate(input: SaveGateInput): Promise<{ saved: boolean; fingerprint: string }> {
   assertAuthorized(input);
   const service = getEnterpriseService();

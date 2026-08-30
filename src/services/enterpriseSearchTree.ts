@@ -31,11 +31,24 @@ function leafLabel(item: SearchTreeItem, parts: string[]): string {
   return name;
 }
 
-function contextSegments(parts: string[]): string[] {
-  if (parts[0] === 'Applications' && parts.length >= 5) {
-    return [parts[0], parts[1], parts[2], FOLDER_LABELS[parts[3]] || parts[3]];
-  }
-  return parts.slice(0, -1).map(part => FOLDER_LABELS[part] || part);
+interface ContextSegment {
+  raw: string;
+  label: string;
+  type: string;
+}
+
+function contextSegments(parts: string[]): ContextSegment[] {
+  const rawSegments = parts[0] === 'Applications' && parts.length >= 5
+    ? parts.slice(0, 4)
+    : parts.slice(0, -1);
+
+  return rawSegments.map((raw, index) => ({
+    raw,
+    label: FOLDER_LABELS[raw] || raw,
+    type: parts[0] === 'Applications' && index === 2
+      ? 'APP'
+      : (index === rawSegments.length - 1 && /Forms$|Scripts$|Sources$/.test(raw) ? 'FOLDER' : 'CATEGORY')
+  }));
 }
 
 /** Build the same compact hierarchy as the VS Code enterprise search:
@@ -57,11 +70,18 @@ export function buildEnterpriseSearchTree(items: SearchTreeItem[]): SearchTreeIt
     let level = roots;
     let path = '';
     for (const segment of contextSegments(parts)) {
-      path += `/${segment}`;
+      path += `/${segment.raw}`;
       const id = `search-folder:${path}`;
       let folder = level.find(item => item.id === id);
       if (!folder) {
-        folder = { id, label: segment, type: 'CATEGORY', hasChildren: true, children: [] };
+        folder = {
+          id,
+          label: segment.label,
+          type: segment.type,
+          uri: path,
+          hasChildren: true,
+          children: []
+        };
         level.push(folder);
       }
       level = folder.children!;

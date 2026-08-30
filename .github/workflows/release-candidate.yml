@@ -1,0 +1,66 @@
+name: Release Candidate Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*-beta.*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package unsigned candidate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run release:beta:check
+      - name: Build unsigned candidate artifacts
+        run: npm run build
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: starlims-devtools-${{ runner.os }}-candidate
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.blockmap
+            release/SCM_API.sdp
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub prerelease
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: starlims-devtools-*-candidate
+          path: release-files
+          merge-multiple: true
+      - name: Create GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" release-files/*
+          --repo "$GITHUB_REPOSITORY"
+          --title "STARLIMS DevTools 1.7.0 Beta 1"
+          --notes-file docs/releases/v1.7.0-beta.1.md
+          --prerelease

@@ -21,6 +21,45 @@ export function isEnterpriseItemCheckedOut(item: Record<string, unknown>): boole
     || (typeof checkedOutBy === 'string' && checkedOutBy.trim().length > 0);
 }
 
+export interface AddEnterpriseItemPayload {
+  lid: string;
+  name: string;
+  itemType: string;
+  ItemName: string;
+  ItemType: string;
+  Language: string;
+  Category: string;
+  AppName: string;
+}
+
+/**
+ * Build an Add payload understood by both the legacy SCM_API endpoint and the
+ * current shared SCM_API package. Keeping the legacy keys allows DevTools to
+ * create items before a server has imported the latest SDP package.
+ */
+export function buildAddEnterpriseItemPayload(
+  parentUri: string,
+  itemName: string,
+  itemType: string,
+  language = 'ENG'
+): AddEnterpriseItemPayload {
+  const segments = parentUri.split('/').filter(Boolean);
+  const root = segments[0]?.toLowerCase();
+  const category = segments[1] || '';
+  const appName = root === 'applications' ? (segments[2] || '') : '';
+
+  return {
+    lid: parentUri,
+    name: itemName,
+    itemType,
+    ItemName: itemName,
+    ItemType: itemType,
+    Language: language || 'ENG',
+    Category: category,
+    AppName: appName
+  };
+}
+
 export class EnterpriseService implements IEnterpriseService {
   private config: ServerConfig | null = null;
   private password = '';
@@ -1770,11 +1809,12 @@ export class EnterpriseService implements IEnterpriseService {
     try {
       const data = await this.apiRequest<any>('Add', {
         method: 'POST',
-        body: JSON.stringify({
-          lid: parentUri,
-          name: itemName,
-          itemType
-        })
+        body: JSON.stringify(buildAddEnterpriseItemPayload(
+          parentUri,
+          itemName,
+          itemType,
+          this.sessionInfo?.langid || 'ENG'
+        ))
       });
 
       return data?.success === true;

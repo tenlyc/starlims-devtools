@@ -3,7 +3,7 @@ import { getEnterpriseService } from '../../services/enterpriseService';
 import { useOutputLogStore } from '../../services/outputLogStore';
 import { isStateChangingMcpTool, requiresMcpApproval } from '../../services/agentPermissions';
 import { requestInlineMcpApproval } from '../../services/mcpApprovalStore';
-import { checkInItemWithGate, checkoutItemWithGate, executeDataSourceWithGate, executeServerScriptWithGate, saveItemWithGate, undoCheckoutWithGate } from '../../services/writeGateService';
+import { assertExpectedContentVersion, checkInItemWithGate, checkoutItemWithGate, contentVersion, executeDataSourceWithGate, executeServerScriptWithGate, saveItemWithGate, undoCheckoutWithGate } from '../../services/writeGateService';
 import { formResourceVersion, normalizeFormResourcesUri, parseFormResources, setFormResourceValue } from '../../services/formResources';
 
 type McpRequest = { id: string; tool: string; arguments: Record<string, unknown> };
@@ -84,7 +84,7 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
     case 'get_item_code': {
       const code = await service.getItemCode(uri(), args.language ? String(args.language) : undefined);
       const output = truncate(code, args.maxCharacters);
-      return { uri: uri(), language: args.language, code: output.value, totalCharacters: output.totalCharacters, truncated: output.truncated };
+      return { uri: uri(), language: args.language, code: output.value, version: await contentVersion(code), totalCharacters: output.totalCharacters, truncated: output.truncated };
     }
     case 'get_form_resources': {
       const resourceUri = normalizeFormResourcesUri(uri());
@@ -123,8 +123,12 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
       return { uri: uri(), ...result };
     }
     case 'save_item': {
-      const result = await saveItemWithGate({ source: 'agent', action: 'save', uri: uri(), language: args.language ? String(args.language) : undefined, type: args.type ? String(args.type) : undefined, code: String(args.code ?? ''), approved: true });
-      return { uri: uri(), ...result };
+      const language = args.language ? String(args.language) : undefined;
+      const remoteBefore = await service.getItemCode(uri(), language);
+      await assertExpectedContentVersion(args.expectedVersion, remoteBefore);
+      const result = await saveItemWithGate({ source: 'agent', action: 'save', uri: uri(), language, type: args.type ? String(args.type) : undefined, code: String(args.code ?? ''), expectedRemoteContent: remoteBefore, approved: true });
+      const remoteAfter = await service.getItemCode(uri(), language);
+      return { uri: uri(), language, ...result, version: await contentVersion(remoteAfter) };
     }
     case 'save_form_resources': {
       const resourceUri = normalizeFormResourcesUri(uri());

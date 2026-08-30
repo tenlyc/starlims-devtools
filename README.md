@@ -226,9 +226,12 @@ Electron 44 · React 18 · TypeScript 5.9 · Vite 8 · Monaco Editor · Tailwind
 
 欢迎通过 [Issues](https://github.com/tenlyc/starlims-devtools/issues) 报告兼容问题或提出改进，也欢迎提交 Pull Request。请为新功能补充 smoke test，并确保 `npm run check` 通过。
 
+准备 Beta 时运行 `npm run release:beta:check`；真实 STARLIMS 写入验收、macOS 签名公证和 Windows 实机门禁见 [发布验收说明](docs/RELEASE_READINESS.md)。
+
 - 完整变更记录：[CHANGELOG.md](CHANGELOG.md)
 - 上游同步策略：[UPSTREAM_SYNC.md](UPSTREAM_SYNC.md)
 - MCP 来源与扩展边界：[docs/MCP_ARCHITECTURE.md](docs/MCP_ARCHITECTURE.md)
+- Beta 与正式版发布门禁：[docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md)
 - 开源许可：[MIT](LICENSE)
 
 项目主页：https://github.com/tenlyc/starlims-devtools

@@ -42,6 +42,19 @@ async function main(): Promise<void> {
       assert.equal(release.verification, 'github-digest');
       assert.equal(await runtime.installLatest(), '9.9.9');
       assert.equal(runtime.version, '9.9.9');
+
+      const rejected = new SslLspRuntime(resourceRoot, join(root, 'rejected-cache'));
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.includes('/releases/latest')) return new Response(JSON.stringify({
+          tag_name: 'v10.0.0', assets: [{ name: 'fixture', browser_download_url: 'https://example.test/bad-fixture', digest: `sha256:${'0'.repeat(64)}` }]
+        }), { status: 200 });
+        if (url === 'https://example.test/bad-fixture') return new Response(releaseBinary, { status: 200 });
+        throw new Error(`Unexpected test URL ${url}`);
+      }) as typeof fetch;
+      await rejected.checkForUpdates();
+      await assert.rejects(() => rejected.installLatest(), /SHA-256 verification failed/);
+      assert.equal(rejected.version, '1.0.0');
     } finally { globalThis.fetch = originalFetch; }
   }
 

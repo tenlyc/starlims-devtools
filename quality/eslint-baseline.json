@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "maxWarnings": 219,
+  "maxErrors": 0,
+  "policy": "Existing warnings may be reduced but must never increase."
+}
