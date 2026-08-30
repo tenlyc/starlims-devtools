@@ -1,5 +1,7 @@
 # STARLIMS MCP 架构与来源边界
 
+**简体中文** · [English](MCP_ARCHITECTURE.en.md)
+
 STARLIMS DevTools 使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp)
 作为共享 MCP 契约和宿主无关运行时。DevTools 自动启动该共享包构建出的独立 HTTP
 Server 子进程；Electron 主进程保留当前登录会话、权限审批、写入门禁和 Renderer IPC

@@ -70,6 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 增加统一 `npm run check`，先准备并校验当前平台 LSP，再串行执行 lint、TypeScript/Vite/Electron 构建和 27 组 smoke tests；干净环境不依赖历史构建产物
 - 增加 GitHub Actions，在 `main` 推送及 Pull Request 时执行相同检查
 - 统一 `SCM_API.sdp` 在 macOS/Linux 构建时移除 ZIP 主机扩展字段和目录时间戳，保证相同源码重复构建得到相同 SHA-256
+- 增加独立中英文 README、双语文档索引、MCP 架构与上游同步双语版本，并清理 Node 18 和独立 SCM 补丁等过时说明
+- 修复 Windows Beta 门禁启动 `npm` 失败及标签构建触发 electron-builder 隐式发布的问题
 
 ## [1.6.2] - 2026-08-30
 

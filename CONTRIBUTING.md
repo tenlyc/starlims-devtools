@@ -6,7 +6,7 @@
 
 ### 前置要求 / Prerequisites
 
-- Node.js (18.x 或更高版本)
+- Node.js (22.12 或更高版本)
 - npm (随 Node.js 一起安装)
 - Git
 
@@ -38,10 +38,10 @@ git checkout -b my-new-feature
 - 为复杂逻辑添加注释
 - 保持函数专注于单一职责
 
-### 3. 运行代码检查 / Run Linter
+### 3. 运行完整检查 / Run the Full Check
 
 ```bash
-npm run lint
+npm run check
 ```
 
 ### 4. 开发模式运行 / Run Development Mode
@@ -76,7 +76,8 @@ git push origin my-new-feature
 |------|------|
 | `npm run dev` | 启动开发服务器 |
 | `npm run build` | 构建生产版本 |
-| `npm run lint` | 运行 ESLint 代码检查 |
+| `npm run check` | 准备 LSP，运行 ESLint、构建和 smoke tests |
+| `npm run lint` | 仅运行 ESLint 代码检查 |
 | `npm run electron:dev` | 启动 Electron 开发模式 |
 
 ## 代码风格 / Code Style
@@ -131,9 +132,9 @@ Thank you for your interest in contributing to STARLIMS DevTools!
 
 2. **Make your changes** following the project's coding standards
 
-3. **Run linter** to check code quality:
+3. **Run the complete verification suite**:
    ```bash
-   npm run lint
+   npm run check
    ```
 
 4. **Compile and test** your changes:
@@ -157,7 +158,8 @@ Thank you for your interest in contributing to STARLIMS DevTools!
 
 - `npm run dev` - Start development server
 - `npm run build` - Build for production
-- `npm run lint` - Check code quality with ESLint
+- `npm run check` - Prepare LSP, lint, build, and run smoke tests
+- `npm run lint` - Run ESLint only
 - `npm run electron:dev` - Start Electron in development mode
 
 ## Code Style

@@ -1,5 +1,7 @@
 # starlimsvscode upstream sync
 
+[简体中文](UPSTREAM_SYNC.zh-CN.md) · **English**
+
 Baseline: `MrDoe/starlimsvscode` commit `92b9014244eb09a56ed589db5155c3b7914b70a2`, version 1.8.2, fetched 2026-08-29.
 
 The machine-readable baseline is maintained in `upstreams/upstreams.lock.json`.

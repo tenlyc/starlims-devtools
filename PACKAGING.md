@@ -21,7 +21,7 @@
 
 打包和发布应用程序之前，请确保已安装以下工具：
 
-- **Node.js** (18.x 或更高版本)
+- **Node.js** (22.12 或更高版本)
 - **npm** (随 Node.js 一起安装)
 - **Git** (用于版本控制)
 
@@ -38,7 +38,8 @@ npm install
 
 ### 本地打包
 
-使用 electron-builder 进行打包。
+使用 electron-builder 进行打包。发布前先运行 `npm run release:beta:check`，
+正式版还必须完成 [`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md) 中的平台实机门禁。
 
 #### 构建前端和 Electron 代码
 
@@ -55,7 +56,9 @@ npm run build
 
 打包后的文件位于 `release` 目录：
 - `release/win-unpacked/` - 便携版（无需安装）
-- `release/` - Windows 安装包（如果配置了 NSIS）
+- `release/*.exe` - Windows NSIS 安装包
+- `release/*.dmg`、`release/*-mac.zip` - macOS 安装包
+- `release/SCM_API.sdp` - 唯一 STARLIMS 后端部署包
 
 ### Windows 安装程序
 
@@ -86,7 +89,7 @@ npm version major
 
 Before packaging and publishing the application, ensure you have the following tools installed:
 
-- **Node.js** (18.x or higher)
+- **Node.js** (22.12 or higher)
 - **npm** (included with Node.js)
 - **Git** (for version control)
 
@@ -103,7 +106,9 @@ npm install
 
 ### Local Packaging
 
-The project uses electron-builder for packaging.
+The project uses electron-builder for packaging. Run `npm run release:beta:check`
+before a prerelease. Stable releases must also pass the real-platform gates in
+[`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md).
 
 #### Build Frontend and Electron Code
 
@@ -120,7 +125,9 @@ This command will:
 
 Packaged files are located in the `release` directory:
 - `release/win-unpacked/` - Portable version (no installation required)
-- `release/` - Windows installer (if NSIS is configured)
+- `release/*.exe` - Windows NSIS installer
+- `release/*.dmg`, `release/*-mac.zip` - macOS packages
+- `release/SCM_API.sdp` - Unified STARLIMS backend deployment package
 
 ### Windows Installer
 

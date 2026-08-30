@@ -5,19 +5,21 @@ import { spawnSync } from 'node:child_process';
 const root = resolve('.');
 const outputDirectory = resolve(root, 'release-readiness');
 const checks = [];
+const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 const run = (id, title, command, args) => {
   const startedAt = Date.now();
   const result = spawnSync(command, args, { cwd: root, encoding: 'utf8', stdio: 'inherit', env: process.env });
+  if (result.error) console.error(`${title}: ${result.error.message}`);
   checks.push({ id, title, status: result.status === 0 ? 'passed' : 'failed', durationMs: Date.now() - startedAt });
   return result.status === 0;
 };
 
-let automatedOk = run('project-check', 'TypeScript, build and smoke tests', 'npm', ['run', 'check']);
-automatedOk = run('eslint-baseline', 'ESLint warning baseline', 'npm', ['run', 'lint:baseline']) && automatedOk;
+let automatedOk = run('project-check', 'TypeScript, build and smoke tests', npmCommand, ['run', 'check']);
+automatedOk = run('eslint-baseline', 'ESLint warning baseline', npmCommand, ['run', 'lint:baseline']) && automatedOk;
 
 if (process.env.BETA_INCLUDE_LIVE_WRITE === '1') {
-  automatedOk = run('live-write', 'Live STARLIMS write-path acceptance', 'npm', ['run', 'test:mcp-live-write']) && automatedOk;
+  automatedOk = run('live-write', 'Live STARLIMS write-path acceptance', npmCommand, ['run', 'test:mcp-live-write']) && automatedOk;
 } else {
   checks.push({ id: 'live-write', title: 'Live STARLIMS write-path acceptance', status: 'manual', note: 'Run twice on disposable items: once with FINALIZE=undo and once with FINALIZE=checkin.' });
 }
