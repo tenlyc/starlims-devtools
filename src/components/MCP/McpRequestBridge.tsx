@@ -4,6 +4,7 @@ import { useOutputLogStore } from '../../services/outputLogStore';
 import { isStateChangingMcpTool, requiresMcpApproval } from '../../services/agentPermissions';
 import { requestInlineMcpApproval } from '../../services/mcpApprovalStore';
 import { checkInItemWithGate, checkoutItemWithGate, executeDataSourceWithGate, executeServerScriptWithGate, saveItemWithGate, undoCheckoutWithGate } from '../../services/writeGateService';
+import { formResourceVersion, normalizeFormResourcesUri, parseFormResources, setFormResourceValue } from '../../services/formResources';
 
 type McpRequest = { id: string; tool: string; arguments: Record<string, unknown> };
 type McpToolPermissionPolicy = 'read-only' | 'ask-writes' | 'auto-safe' | 'full-access';
@@ -27,6 +28,17 @@ const limitArray = <T,>(items: T[], requested?: unknown): T[] => {
 const truncate = (text: string, requested?: unknown): { value: string; totalCharacters: number; truncated: boolean } => {
   const max = typeof requested === 'number' ? requested : 50_000;
   return { value: text.slice(0, max), totalCharacters: text.length, truncated: text.length > max };
+};
+
+const sameFormResources = (left: string, right: string): boolean => {
+  try {
+    const canonical = (value: string) => parseFormResources(value).resources
+      .map(({ resourceId, resourceValue, guid }) => ({ resourceId, resourceValue, guid: guid || '' }))
+      .sort((a, b) => a.resourceId.localeCompare(b.resourceId));
+    return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+  } catch {
+    return false;
+  }
 };
 
 async function ensureMcpToolAllowed(request: McpRequest): Promise<void> {
@@ -74,6 +86,20 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
       const output = truncate(code, args.maxCharacters);
       return { uri: uri(), language: args.language, code: output.value, totalCharacters: output.totalCharacters, truncated: output.truncated };
     }
+    case 'get_form_resources': {
+      const resourceUri = normalizeFormResourcesUri(uri());
+      const language = String(args.language || '').trim();
+      const parsed = parseFormResources(await service.getItemCode(resourceUri, language));
+      const output = truncate(parsed.xml, args.maxCharacters);
+      return {
+        uri: resourceUri,
+        language,
+        version: await formResourceVersion(parsed.xml),
+        resources: parsed.resources,
+        totalItems: parsed.resources.length,
+        ...(args.includeXml === true ? { resourceXml: output.value, totalCharacters: output.totalCharacters, truncated: output.truncated } : {})
+      };
+    }
     case 'list_checked_out_items': {
       const items = await service.getCheckedOutItems(args.includeAllUsers === true);
       return { items, totalItems: items.length };
@@ -99,6 +125,42 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
     case 'save_item': {
       const result = await saveItemWithGate({ source: 'agent', action: 'save', uri: uri(), language: args.language ? String(args.language) : undefined, type: args.type ? String(args.type) : undefined, code: String(args.code ?? ''), approved: true });
       return { uri: uri(), ...result };
+    }
+    case 'save_form_resources': {
+      const resourceUri = normalizeFormResourcesUri(uri());
+      const language = String(args.language || '').trim();
+      const resourceXml = String(args.resourceXml || '');
+      const desired = parseFormResources(resourceXml);
+      const current = parseFormResources(await service.getItemCode(resourceUri, language));
+      const currentVersion = await formResourceVersion(current.xml);
+      if (args.expectedVersion && String(args.expectedVersion) !== currentVersion) {
+        throw new Error('Form Resources changed after they were read. Read the selected language again before saving.');
+      }
+      const result = await saveItemWithGate({
+        source: 'agent', action: 'save', uri: resourceUri, language, type: 'HTMLFORMRESOURCES', code: desired.xml,
+        expectedRemoteContent: current.xml, approved: true, verifyReadBack: sameFormResources
+      });
+      const saved = parseFormResources(await service.getItemCode(resourceUri, language));
+      return { uri: resourceUri, language, ...result, version: await formResourceVersion(saved.xml), totalItems: saved.resources.length };
+    }
+    case 'set_form_resource': {
+      const resourceUri = normalizeFormResourcesUri(uri());
+      const language = String(args.language || '').trim();
+      const current = parseFormResources(await service.getItemCode(resourceUri, language));
+      const currentVersion = await formResourceVersion(current.xml);
+      if (args.expectedVersion && String(args.expectedVersion) !== currentVersion) {
+        throw new Error('Form Resources changed after they were read. Read the selected language again before updating a value.');
+      }
+      const updated = setFormResourceValue(current.xml, String(args.resourceId || ''), String(args.resourceValue ?? ''));
+      const result = await saveItemWithGate({
+        source: 'agent', action: 'save', uri: resourceUri, language, type: 'HTMLFORMRESOURCES', code: updated.xml,
+        expectedRemoteContent: current.xml, approved: true, verifyReadBack: sameFormResources
+      });
+      const saved = parseFormResources(await service.getItemCode(resourceUri, language));
+      return {
+        uri: resourceUri, language, resourceId: String(args.resourceId), created: updated.created, ...result,
+        version: await formResourceVersion(saved.xml), totalItems: saved.resources.length
+      };
     }
     case 'checkin_item': {
       const result = await checkInItemWithGate({ source: 'agent', action: 'checkin', uri: uri(), reason: String(args.reason), language: args.language ? String(args.language) : undefined, approved: true });

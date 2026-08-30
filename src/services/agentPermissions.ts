@@ -5,6 +5,8 @@ export type ConversationMode = 'agent' | 'plan' | 'debug' | 'multitask' | 'ask';
 const STATE_CHANGING_TOOLS = new Set([
   'checkout_item',
   'save_item',
+  'save_form_resources',
+  'set_form_resource',
   'checkin_item',
   'undo_checkout',
   'execute_server_script',

@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 增加团队、项目、个人配置分层和安全导入导出；导入的 `agent.md` 保持独立且拥有最高用户规则优先级
 - 增加版本化 AI 扩展清单，可贡献第三方 MCP、工具元数据、语言映射和工作流模板
 - 增加独立 `starlims-mcp` 共享组件，将 MCP 工具来源、风险、Schema、宿主 Profile 与后端版本握手统一管理
+- 增加按明确语言读取、结构化修改和完整保存 HTML/XFD Form Resources 的 MCP 工具，并提供内容版本冲突检查与保存后语义回读验证
 
 ### Fixed | 修复
 

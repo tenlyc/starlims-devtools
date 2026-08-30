@@ -9,6 +9,7 @@ import { normalizeDataSourceOutput } from './dataSourceResult';
 import { cleanUrl, isJson, getErrorMessage } from './miscUtils';
 import { isBridgeRunning, launchXFDForm, launchHTMLForm } from './bridge';
 import { useOutputLogStore } from './outputLogStore';
+import { decodeFormResourcePayload } from './formResources';
 
 export function isEnterpriseItemCheckedOut(item: Record<string, unknown>): boolean {
   const flag = item.isCheckedOut ?? item.checkedOut;
@@ -506,7 +507,8 @@ export class EnterpriseService implements IEnterpriseService {
       });
 
       if (data && data.success !== false) {
-        return data.data?.code || '';
+        const code = data.data?.code || '';
+        return /\/(?:HTMLForms|XFDForms)\/Resources\//i.test(uri) ? decodeFormResourcePayload(code) : code;
       }
       return '';
     } catch (error) {

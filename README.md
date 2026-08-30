@@ -68,6 +68,8 @@ Codex、通用 Agent 与外部 AI 客户端可复用同一 STARLIMS MCP。桌面
 
 连接后可调用 `get_capabilities` 查看当前工具来源、风险、Schema 版本和后端组件。`SCM_API.*` 保留上游来源，公共扩展使用 `STARLIMS_MCP_API.*`，DevTools 专属扩展使用 `STARLIMS_DEVTOOLS_API.*`；完整边界见 [`docs/MCP_ARCHITECTURE.md`](docs/MCP_ARCHITECTURE.md)。
 
+多语言 HTML/XFD Form Resources 使用专用的 `get_form_resources`、`set_form_resource` 和 `save_form_resources` 工具。语言参数为必填项；单个文案修改优先使用 `set_form_resource`，避免 AI 重写或覆盖其他语言、其他 ResourceId。
+
 ### 规则、权限与质量门禁
 
 - 团队、项目、个人规则按层合并；用户导入或粘贴的 `agent.md` 独立保存，并保持最高用户规则优先级。

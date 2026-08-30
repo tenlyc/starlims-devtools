@@ -38,6 +38,9 @@ try {
   const tools = await client.listTools();
   assert.ok(tools.tools.some((tool) => tool.name === 'get_item_code'));
   assert.ok(tools.tools.some((tool) => tool.name === 'save_item'));
+  assert.ok(tools.tools.some((tool) => tool.name === 'get_form_resources'));
+  assert.ok(tools.tools.some((tool) => tool.name === 'save_form_resources'));
+  assert.ok(tools.tools.some((tool) => tool.name === 'set_form_resource'));
   assert.ok(tools.tools.some((tool) => tool.name === 'query_checkin_history'));
   assert.ok(tools.tools.some((tool) => tool.name === 'get_capabilities'));
 
@@ -51,6 +54,7 @@ try {
   assert.equal(capabilityDocument.profile, 'devtools');
   assert.equal(capabilityDocument.adapter, 'starlims-devtools');
   assert.ok(capabilityDocument.tools?.some((tool) => tool.id === 'save_item' && tool.origin === 'shared' && tool.risk === 'write'));
+  assert.ok(capabilityDocument.tools?.some((tool) => tool.id === 'get_form_resources' && tool.origin === 'shared' && tool.risk === 'read'));
   assert.ok(capabilityDocument.tools?.some((tool) => tool.id === 'query_checkin_history' && tool.origin === 'starlims-devtools'));
   assert.ok(capabilityDocument.backend?.some((component) => component.name === 'SCM_API' && component.source === 'MrDoe/starlimsvscode'));
   assert.ok(capabilityDocument.backend?.some((component) => component.name === 'STARLIMS_DEVTOOLS_API'));

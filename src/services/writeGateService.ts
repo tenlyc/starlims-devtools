@@ -19,6 +19,7 @@ export type SaveGateInput = MutationContext & {
   code: string;
   type?: string;
   expectedRemoteContent?: string;
+  verifyReadBack?: (expected: string, actual: string) => boolean;
 };
 
 const SSL_TYPES = new Set(['SS', 'APPSS', 'SRVSCR', 'SERVERSCRIPT', 'APPSERVERSCRIPT', 'SSL']);
@@ -76,7 +77,7 @@ export async function saveItemWithGate(input: SaveGateInput): Promise<{ saved: b
     throw new Error('STARLIMS SaveCode 返回失败。');
   }
   const remoteAfter = await service.getItemCode(input.uri, input.language);
-  if (remoteAfter !== input.code) {
+  if (!(input.verifyReadBack ? input.verifyReadBack(input.code, remoteAfter) : remoteAfter === input.code)) {
     audit(input, 'error', 'read-back verification mismatch', fingerprint);
     throw new Error('保存后回读内容不一致，写入结果无法确认。');
   }

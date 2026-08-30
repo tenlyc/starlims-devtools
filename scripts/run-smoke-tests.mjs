@@ -15,6 +15,7 @@ const tests = [
   'agent-workspace-smoke-test.ts',
   'shared-mcp-component-smoke-test.ts',
   'mcp-smoke-test.ts',
+  'form-resources-mcp-smoke-test.ts',
   'editor-language-smoke-test.ts',
   'editor-productivity-smoke-test.ts',
   'context-menu-smoke-test.ts',

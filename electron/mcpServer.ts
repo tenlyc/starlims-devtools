@@ -37,12 +37,14 @@ const DEVTOOLS_MCP_CAPABILITIES = [
   'code.search',
   'languages.list',
   'code.read',
+  'forms.resources.read',
   'checkout.list',
   'logs.read',
   'tables.read',
   'scm.history',
   'checkout.write',
   'code.write',
+  'forms.resources.write',
   'checkout.checkin',
   'checkout.undo',
   'scripts.execute',
@@ -170,7 +172,7 @@ export class StarlimsMcpHttpServer {
       version,
       profile: 'devtools',
       adapter,
-      instructions: 'Use STARLIMS tools as the authoritative source for remote item lookup and code. Browse or search before reading. Check out an item before saving changes. Treat save, check-in, undo-checkout, and execution tools as write or execution operations requiring user intent.',
+      instructions: 'Use STARLIMS tools as the authoritative source for remote item lookup and code. Browse or search before reading. For multilingual HTML/XFD resources, use get_form_resources and set_form_resource with the explicit language instead of editing an unspecified generic document. Check out an item before saving changes. Treat save, check-in, undo-checkout, and execution tools as write or execution operations requiring user intent.',
       onError: (tool, error) => this.log(`STARLIMS MCP tool '${tool}' failed.`, error)
     });
   }

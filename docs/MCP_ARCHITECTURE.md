@@ -18,6 +18,8 @@ STARLIMS DevTools 使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starl
 
 - `shared`：两个宿主应采用的统一契约，例如 `get_item_code`、`checkout_item` 和
   `save_item(uri, code, language, expectedVersion?)`。
+- 多语言表单资源使用共享的 `get_form_resources`、`set_form_resource` 和
+  `save_form_resources` 契约；`language` 必填，写入带版本冲突和保存后回读校验。
 - `starlimsvscode`：上游宿主专属能力；本地路径保存使用独立名称
   `vscode_save_local_item`，避免与统一 `save_item` 参数冲突。
 - `starlims-devtools`：DevTools 专属能力，例如 `list_checked_out_items` 和

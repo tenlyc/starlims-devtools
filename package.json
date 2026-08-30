@@ -16,6 +16,7 @@
     "build": "npm run prepare:lsp && tsc && vite build && electron-builder",
     "build:vite": "tsc && vite build",
     "test:mcp": "tsx scripts/mcp-smoke-test.ts",
+    "test:form-resources": "tsx scripts/form-resources-mcp-smoke-test.ts",
     "test:ssl": "tsx scripts/ssl-lsp-smoke-test.ts",
     "test:ssl-upstream": "tsx scripts/starlims-lsp-upstream-smoke-test.ts",
     "test:ssl-session": "tsx scripts/ssl-lsp-session-smoke-test.ts",
@@ -43,7 +44,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@monaco-editor/react": "^4.6.0",
-    "@tenlyc/starlims-mcp": "https://github.com/tenlyc/starlims-mcp/archive/refs/tags/v0.2.0.tar.gz",
+    "@tenlyc/starlims-mcp": "https://github.com/tenlyc/starlims-mcp/archive/refs/tags/v0.3.0.tar.gz",
     "@vscode/webview-ui-toolkit": "^1.4.0",
     "dompurify": "^3.4.14",
     "electron-log": "^5.0.0",
