@@ -1,31 +1,63 @@
 import { net } from 'electron';
 import { randomUUID } from 'crypto';
-import type { AgentEvent, AgentStartResult, AgentToolPermissionPolicy, GenericAgentConfig } from '../src/types/agent';
+import type { AgentApprovalDecision, AgentEvent, AgentStartResult, AgentToolPermissionPolicy, GenericAgentConfig } from '../src/types/agent';
 import type { RendererToolCall } from './mcpServer';
 import type { ExternalMcpManager } from './externalMcpManager';
 
 type Emit = (event: AgentEvent) => void;
-type ConfirmToolCall = (name: string, args: Record<string, unknown>) => Promise<boolean>;
 type ChatMessage = Record<string, unknown>;
 const DEFAULT_MAX_TOOL_ROUNDS = 16;
 const MAX_TOOL_ROUNDS_LIMIT = 64;
+
+function approvalDetail(args: Record<string, unknown>): string {
+  const safe = Object.fromEntries(Object.entries(args).map(([key, value]) => {
+    if (/password|pass|token|cookie|secret|key|code|body/i.test(key)) return [key, '[hidden]'];
+    if (typeof value === 'string' && value.length > 1000) return [key, `${value.slice(0, 1000)}…`];
+    return [key, value];
+  }));
+  return JSON.stringify(safe, null, 2);
+}
 
 function resolveMaxToolRounds(value?: number): number {
   if (!Number.isFinite(value)) return DEFAULT_MAX_TOOL_ROUNDS;
   return Math.min(MAX_TOOL_ROUNDS_LIMIT, Math.max(1, Math.floor(Number(value))));
 }
 
-const READ_TOOLS = [
-  ['browse_tree', 'Browse STARLIMS items below a folder URI or from the root.', { type: 'object', properties: { uri: { type: 'string' }, maxItems: { type: 'number' } } }],
-  ['search_by_name', 'Search STARLIMS items by name.', { type: 'object', properties: { query: { type: 'string' }, itemType: { type: 'string' }, exactMatch: { type: 'boolean' }, maxItems: { type: 'number' } }, required: ['query'] }],
-  ['global_code_search', 'Search for text across STARLIMS code items.', { type: 'object', properties: { searchString: { type: 'string' }, itemTypes: { type: 'array', items: { type: 'string' } }, maxItems: { type: 'number' } }, required: ['searchString'] }],
-  ['list_languages', 'List available STARLIMS languages.', { type: 'object', properties: {} }],
-  ['get_item_code', 'Read authoritative code for a STARLIMS item.', { type: 'object', properties: { uri: { type: 'string' }, language: { type: 'string' }, maxCharacters: { type: 'number' } }, required: ['uri'] }],
-  ['list_checked_out_items', 'List STARLIMS checked-out items.', { type: 'object', properties: { includeAllUsers: { type: 'boolean' } } }],
-  ['read_log', 'Read the current STARLIMS server log.', { type: 'object', properties: {} }],
-  ['get_table_definition', 'Read a STARLIMS table XML definition.', { type: 'object', properties: { uri: { type: 'string' } }, required: ['uri'] }],
-  ['query_checkin_history', 'Query check-in history by user and inclusive date range.', { type: 'object', properties: { user: { type: 'string' }, dateFrom: { type: 'string' }, dateTo: { type: 'string' } }, required: ['user', 'dateFrom', 'dateTo'] }]
-] as const;
+type GenericBuiltinTool = {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  readOnly: boolean;
+};
+
+const BUILTIN_TOOLS: GenericBuiltinTool[] = [
+  { name: 'browse_tree', description: 'Browse STARLIMS items below a folder URI or from the root.', parameters: { type: 'object', properties: { uri: { type: 'string' }, maxItems: { type: 'number' } } }, readOnly: true },
+  { name: 'search_by_name', description: 'Search STARLIMS items by name.', parameters: { type: 'object', properties: { query: { type: 'string' }, itemType: { type: 'string' }, exactMatch: { type: 'boolean' }, maxItems: { type: 'number' } }, required: ['query'] }, readOnly: true },
+  { name: 'global_code_search', description: 'Search for text across STARLIMS code items.', parameters: { type: 'object', properties: { searchString: { type: 'string' }, itemTypes: { type: 'array', items: { type: 'string' } }, maxItems: { type: 'number' } }, required: ['searchString'] }, readOnly: true },
+  { name: 'list_languages', description: 'List available STARLIMS languages.', parameters: { type: 'object', properties: {} }, readOnly: true },
+  { name: 'get_item_code', description: 'Read authoritative code for a STARLIMS item. Preserve the returned full code when preparing a save.', parameters: { type: 'object', properties: { uri: { type: 'string' }, language: { type: 'string' }, maxCharacters: { type: 'number' } }, required: ['uri'] }, readOnly: true },
+  { name: 'list_checked_out_items', description: 'List STARLIMS checked-out items.', parameters: { type: 'object', properties: { includeAllUsers: { type: 'boolean' } } }, readOnly: true },
+  { name: 'read_log', description: 'Read the current STARLIMS server log.', parameters: { type: 'object', properties: {} }, readOnly: true },
+  { name: 'get_table_definition', description: 'Read a STARLIMS table XML definition.', parameters: { type: 'object', properties: { uri: { type: 'string' } }, required: ['uri'] }, readOnly: true },
+  { name: 'query_checkin_history', description: 'Query check-in history by user and inclusive date range.', parameters: { type: 'object', properties: { user: { type: 'string' }, dateFrom: { type: 'string' }, dateTo: { type: 'string' } }, required: ['user', 'dateFrom', 'dateTo'] }, readOnly: true },
+  { name: 'checkout_item', description: 'Check out a STARLIMS item before editing it. Pass the requested form language when applicable.', parameters: { type: 'object', properties: { uri: { type: 'string' }, language: { type: 'string' } }, required: ['uri'] }, readOnly: false },
+  { name: 'save_item', description: 'Save the complete updated code to an already checked-out STARLIMS item. Pass the same language used to read or check out a form.', parameters: { type: 'object', properties: { uri: { type: 'string' }, code: { type: 'string' }, language: { type: 'string' }, type: { type: 'string' } }, required: ['uri', 'code'] }, readOnly: false },
+  { name: 'checkin_item', description: 'Check in a STARLIMS item after editing. Only use when the user explicitly asks to check in.', parameters: { type: 'object', properties: { uri: { type: 'string' }, reason: { type: 'string' }, language: { type: 'string' } }, required: ['uri', 'reason'] }, readOnly: false },
+  { name: 'undo_checkout', description: 'Undo checkout and discard the checked-out STARLIMS change. Only use when explicitly requested.', parameters: { type: 'object', properties: { uri: { type: 'string' } }, required: ['uri'] }, readOnly: false },
+  { name: 'execute_server_script', description: 'Execute a STARLIMS server script after the user requests execution.', parameters: { type: 'object', properties: { uri: { type: 'string' }, parameters: { type: 'array', items: {} } }, required: ['uri'] }, readOnly: false },
+  { name: 'execute_data_source', description: 'Execute a STARLIMS data source after the user requests execution.', parameters: { type: 'object', properties: { uri: { type: 'string' } }, required: ['uri'] }, readOnly: false }
+];
+
+export function genericBuiltinToolsForPolicy(policy: AgentToolPermissionPolicy): GenericBuiltinTool[] {
+  return BUILTIN_TOOLS.filter((tool) => policy !== 'read-only' || tool.readOnly);
+}
+
+export const GENERIC_AGENT_SYSTEM_PROMPT = [
+  'You are an AI coding agent inside STARLIMS DevTools. Use the available STARLIMS tools for authoritative remote data and changes.',
+  'For a remote edit: resolve and read the item, check it out when needed, save the complete updated code with the same language, then read it again to verify the saved result.',
+  'Never check in or undo checkout unless the user explicitly requests it. Never claim a remote change succeeded unless the corresponding tool confirms it.',
+  'If a write tool is unavailable, explain that the current conversation mode is read-only instead of pretending to edit. Answer in the user\'s language.'
+].join(' ');
 
 function endpoint(baseUrl: string, suffix: string): string {
   const base = baseUrl.trim().replace(/\/+$/, '');
@@ -104,8 +136,31 @@ async function streamChatRequest(url: string, apiKey: string, body: Record<strin
 export class GenericAgentRuntime {
   private controller?: AbortController;
   private sessionId?: string;
+  private readonly approvals = new Map<string, { name: string; resolve: (allowed: boolean) => void }>();
+  private readonly sessionAllowedTools = new Set<string>();
 
-  constructor(private readonly callRenderer: RendererToolCall, private readonly externalMcp: ExternalMcpManager, private readonly emit: Emit, private readonly confirmToolCall: ConfirmToolCall) {}
+  constructor(private readonly callRenderer: RendererToolCall, private readonly externalMcp: ExternalMcpManager, private readonly emit: Emit) {}
+
+  private requestToolApproval(name: string, args: Record<string, unknown>, turnId: string, itemId: string): Promise<boolean> {
+    if (this.sessionAllowedTools.has(name)) return Promise.resolve(true);
+    const requestId = `generic:${randomUUID()}`;
+    return new Promise<boolean>((resolve) => {
+      this.approvals.set(requestId, { name, resolve });
+      this.emit({
+        provider: 'generic', type: 'approval', requestId, kind: 'permissions',
+        sessionId: this.sessionId, turnId, itemId,
+        title: `Allow MCP tool “${name}”?`, detail: approvalDetail(args), canAcceptForSession: true
+      });
+    });
+  }
+
+  respond(requestId: string, decision: AgentApprovalDecision): void {
+    const approval = this.approvals.get(requestId);
+    if (!approval) throw new Error('Approval request is no longer active.');
+    this.approvals.delete(requestId);
+    if (decision === 'acceptForSession') this.sessionAllowedTools.add(approval.name);
+    approval.resolve(decision === 'accept' || decision === 'acceptForSession');
+  }
 
   async listModels(config: Pick<GenericAgentConfig, 'baseUrl' | 'apiKey'>): Promise<string[]> {
     const data = await jsonRequest(endpoint(config.baseUrl, 'models'), config.apiKey);
@@ -156,14 +211,14 @@ export class GenericAgentRuntime {
     this.controller = controller;
     this.emit({ provider: 'generic', type: 'session', sessionId: this.sessionId, title: 'OpenAI-compatible Agent connected' });
 
+    const policy: AgentToolPermissionPolicy = config.toolPermissionPolicy || 'ask-writes';
     const messages: ChatMessage[] = [
-      { role: 'system', content: 'You are an AI coding agent inside STARLIMS DevTools. Use the available STARLIMS read tools for authoritative remote data. Never claim a remote change succeeded. Answer in the user\'s language.' },
+      { role: 'system', content: GENERIC_AGENT_SYSTEM_PROMPT },
       { role: 'user', content: prompt }
     ];
-    const policy: AgentToolPermissionPolicy = config.toolPermissionPolicy || 'ask-writes';
     const externalTools = (await this.externalMcp.listTools()).filter((tool) => policy !== 'read-only' || tool.readOnly);
     const tools = [
-      ...READ_TOOLS.map(([name, description, parameters]) => ({ type: 'function', function: { name, description, parameters } })),
+      ...genericBuiltinToolsForPolicy(policy).map(({ name, description, parameters }) => ({ type: 'function', function: { name, description, parameters } })),
       ...externalTools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } }))
     ];
     const maxToolRounds = resolveMaxToolRounds(config.maxToolRounds);
@@ -195,7 +250,8 @@ export class GenericAgentRuntime {
               if (this.externalMcp.hasTool(name)) {
                 const readOnly = this.externalMcp.isToolReadOnly(name);
                 if (!readOnly && policy === 'read-only') throw new Error(`Tool '${name}' is blocked by read-only mode.`);
-                if (!readOnly && policy === 'ask-writes' && !await this.confirmToolCall(name, args)) throw new Error(`Tool '${name}' was declined by the user.`);
+                const needsApproval = !readOnly && policy !== 'full-access';
+                if (needsApproval && !await this.requestToolApproval(name, args, turnId, itemId)) throw new Error(`Tool '${name}' was declined by the user.`);
                 output = await this.externalMcp.callTool(name, args);
               } else {
                 output = await this.callRenderer(name, args);
@@ -220,5 +276,5 @@ export class GenericAgentRuntime {
   }
 
   interrupt(): void { this.controller?.abort(); }
-  newSession(): void { this.interrupt(); this.sessionId = undefined; }
+  newSession(): void { this.interrupt(); this.sessionId = undefined; this.sessionAllowedTools.clear(); }
 }

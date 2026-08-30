@@ -7,7 +7,7 @@ const xml = `
   <PendingCheckins>
     <CHILDID>form-guid</CHILDID>
     <CHILDNAME>BatchManager</CHILDNAME>
-    <CHECKEDOUTBY>LIYC</CHECKEDOUTBY>
+    <CHECKEDOUTBY>DEMO_USER</CHECKEDOUTBY>
     <CHILDTYPE>FORM</CHILDTYPE>
     <ParentName>BatchManager</ParentName>
     <PARENTTYPE>APP</PARENTTYPE>
@@ -68,7 +68,7 @@ assert.equal(new Set(items.map(item => item.id)).size, 4);
 
 const shuffled = [items[1], items[3], items[2], items[0]].map((item): CheckedOutItem => ({
   ...item,
-  user: 'LIYC',
+  user: 'DEMO_USER',
   date: '',
   path: item.displayPath
 }));

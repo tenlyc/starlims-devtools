@@ -6,6 +6,10 @@ import { ContextMenu, ContextMenuItem } from '../ContextMenu';
 import { VersionHistoryDialog } from '../SCM/VersionHistoryDialog';
 import { useI18n } from '../../i18n';
 import { buildEnterpriseSearchTree, collectSearchFolderIds } from '../../services/enterpriseSearchTree';
+import { checkInItemWithGate, checkoutItemWithGate, executeDataSourceWithGate, executeServerScriptWithGate, undoCheckoutWithGate } from '../../services/writeGateService';
+import { primaryShortcut } from '../../services/platformShortcuts';
+import { useOutputLogStore } from '../../services/outputLogStore';
+import { TreeItemIcon } from './TreeItemIcon';
 
 export interface TreeItem {
   id: string;
@@ -31,31 +35,6 @@ function resultLeafCount(items: TreeItem[]): number {
     : 1), 0);
 }
 
-// Icon mapping for different item types
-const itemTypeIcons: Record<string, string> = {
-  'SERVERLOG': '📋',
-  'CATEGORY': '📁',
-  'APPLICATION': '📦',
-  'APP': '📦',
-  'HTMLFORMXML': '🌐',
-  'HTMLFORMCODE': '📄',
-  'HTMLFORMGUIDE': '{}',
-  'HTMLFORMRESOURCES': '📑',
-  'XFDFORMXML': '📝',
-  'XFDFORMCODE': '📄',
-  'XFDFORMRESOURCES': '📑',
-  'SS': '🖥️',
-  'APPSS': '🖥️',
-  'CS': '🖱️',
-  'APPCS': '🖱️',
-  'DS': '🗃️',
-  'APPDS': '🗃️',
-  'TABLE': '📊',
-  'ENT_TABLES_DATABASE': '🗄️',
-  'ENT_TABLES_DICTIONARY': '📖',
-  'DEFAULT': '📄'
-};
-
 interface TreeNodeProps {
   item: TreeItem;
   level: number;
@@ -64,12 +43,12 @@ interface TreeNodeProps {
   onContextMenu: (e: React.MouseEvent, item: TreeItem) => void;
   onDoubleClick: (item: TreeItem) => void;
   expandedItems: Set<string>;
+  selectedItemId?: string;
 }
 
-function TreeNode({ item, level, onItemClick, onItemExpand, onContextMenu, onDoubleClick, expandedItems }: TreeNodeProps) {
+function TreeNode({ item, level, onItemClick, onItemExpand, onContextMenu, onDoubleClick, expandedItems, selectedItemId }: TreeNodeProps) {
   const isExpanded = expandedItems.has(item.id);
   const hasChildren = item.hasChildren || (item.children && item.children.length > 0);
-  const icon = itemTypeIcons[item.type] || itemTypeIcons.DEFAULT;
   const isCheckedOut = !!item.checkedOutBy;
 
   const handleClick = () => {
@@ -94,8 +73,8 @@ function TreeNode({ item, level, onItemClick, onItemExpand, onContextMenu, onDou
   return (
     <div>
       <div
-        className="tree-item flex items-center py-1 px-2 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 rounded-sm"
-        style={{ paddingLeft: `${level * 16 + 8}px` }}
+        className={`workbench-tree-row ${selectedItemId === item.id ? 'selected' : ''}`}
+        style={{ paddingLeft: `${level * 16 + 6}px` }}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
         onContextMenu={handleContextMenu}
@@ -103,21 +82,19 @@ function TreeNode({ item, level, onItemClick, onItemExpand, onContextMenu, onDou
       >
         {/* Expand/collapse arrow */}
         <span
-          className={`w-4 h-4 mr-1 flex items-center justify-center text-xs cursor-pointer ${
-            hasChildren ? 'text-slate-500 dark:text-slate-400' : 'text-transparent'
-          }`}
+          className={`workbench-tree-chevron ${hasChildren ? '' : 'invisible'}`}
           onClick={handleExpandClick}
         >
-          {isExpanded ? '▼' : '▶'}
+          <svg viewBox="0 0 12 12" className={isExpanded ? 'rotate-90' : ''} aria-hidden="true">
+            <path d="m4 2.5 3.5 3.5L4 9.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </span>
 
         {/* Icon with check-out status */}
-        <span className="mr-2 text-sm">
-          {isCheckedOut ? '🔒' : icon}
-        </span>
+        <TreeItemIcon type={item.type} label={item.label} folder={!!hasChildren} expanded={isExpanded} checkedOut={isCheckedOut} />
 
         {/* Label */}
-        <span className={`flex-1 truncate text-sm ${isCheckedOut ? 'text-yellow-500 dark:text-yellow-400' : 'text-slate-800 dark:text-slate-200'}`}>
+        <span className={`workbench-tree-label ${isCheckedOut ? 'checked-out' : ''}`}>
           {item.label}
         </span>
 
@@ -140,6 +117,7 @@ function TreeNode({ item, level, onItemClick, onItemExpand, onContextMenu, onDou
               onContextMenu={onContextMenu}
               onDoubleClick={onDoubleClick}
               expandedItems={expandedItems}
+              selectedItemId={selectedItemId}
             />
           ))}
         </div>
@@ -314,13 +292,10 @@ export function EnterpriseTree() {
     if (!item.uri) return;
 
     try {
-      const enterpriseService = getEnterpriseService();
-      const result = await enterpriseService.checkOut(item.uri, item.language);
+      const result = await checkoutItemWithGate({ source: 'editor', action: 'checkout', uri: item.uri, language: item.language, approved: true });
 
       if (result.success) {
         console.log('Check out successful');
-        // Refresh tree to update status
-        const items = await enterpriseService.getEnterpriseItems(selectedItem?.uri || '');
         // Update the specific item's status
         refreshItemStatus(item.uri, true, currentUser);
       }
@@ -334,9 +309,8 @@ export function EnterpriseTree() {
     if (!item.uri) return;
 
     try {
-      const enterpriseService = getEnterpriseService();
       const reason = ''; // Could prompt user for reason
-      const result = await enterpriseService.checkIn(item.uri, reason, item.language);
+      const result = await checkInItemWithGate({ source: 'editor', action: 'checkin', uri: item.uri, reason, language: item.language, approved: true });
 
       if (result.success) {
         console.log('Check in successful');
@@ -353,8 +327,7 @@ export function EnterpriseTree() {
     if (!item.uri) return;
 
     try {
-      const enterpriseService = getEnterpriseService();
-      const success = await enterpriseService.undoCheckOut(item.uri);
+      const success = await undoCheckoutWithGate({ source: 'editor', action: 'undo-checkout', uri: item.uri, language: item.language, approved: true });
 
       if (success) {
         console.log('Undo check out successful');
@@ -393,7 +366,7 @@ export function EnterpriseTree() {
     if (isFolder && !isServerLog) {
       items.push({
         id: 'add',
-        label: 'Add New...',
+        label: t('context.add'),
         icon: '➕'
       });
       return items;
@@ -409,7 +382,7 @@ export function EnterpriseTree() {
     // Add New for non-folders
     items.push({
       id: 'add',
-      label: 'Add New...',
+      label: t('context.add'),
       icon: '➕'
     });
 
@@ -417,17 +390,17 @@ export function EnterpriseTree() {
     if (isCheckedOut && isCheckedOutByMe) {
       items.push({
         id: 'rename',
-        label: 'Rename...',
+        label: t('context.rename'),
         icon: '✏️'
       });
       items.push({
         id: 'delete',
-        label: 'Delete',
+        label: t('common.delete'),
         icon: '🗑️'
       });
       items.push({
         id: 'move',
-        label: 'Move...',
+        label: t('context.move'),
         icon: '📁'
       });
     }
@@ -436,7 +409,7 @@ export function EnterpriseTree() {
     if (!isCheckedOut) {
       items.push({
         id: 'checkout',
-        label: 'Check Out',
+        label: t('context.checkOut'),
         icon: '🔓'
       });
     }
@@ -445,12 +418,12 @@ export function EnterpriseTree() {
     if (isCheckedOut && isCheckedOutByMe) {
       items.push({
         id: 'checkin',
-        label: 'Check In',
+        label: t('context.checkIn'),
         icon: '🔒'
       });
       items.push({
         id: 'undocheckout',
-        label: 'Undo Check Out',
+        label: t('context.undoCheckOut'),
         icon: '↩️'
       });
     }
@@ -464,7 +437,7 @@ export function EnterpriseTree() {
     if (!isFolder && item.uri) {
       items.push({
         id: 'open',
-        label: 'Open',
+        label: t('context.open'),
         icon: '📄'
       });
     }
@@ -474,7 +447,7 @@ export function EnterpriseTree() {
       items.push({ id: 'divider', label: '', divider: true } as ContextMenuItem);
       items.push({
         id: 'runscript',
-        label: 'Run Script',
+        label: t('context.runScript'),
         icon: '▶️'
       });
     }
@@ -484,7 +457,7 @@ export function EnterpriseTree() {
       items.push({ id: 'divider', label: '', divider: true } as ContextMenuItem);
       items.push({
         id: 'rundatasource',
-        label: 'Run DataSource',
+        label: t('context.runDataSource'),
         icon: '▶️'
       });
     }
@@ -494,22 +467,22 @@ export function EnterpriseTree() {
       items.push({ id: 'divider', label: '', divider: true } as ContextMenuItem);
       items.push({
         id: 'generate-select',
-        label: 'Generate SELECT',
+        label: t('context.generateSelect'),
         icon: '📤'
       });
       items.push({
         id: 'generate-insert',
-        label: 'Generate INSERT',
+        label: t('context.generateInsert'),
         icon: '➕'
       });
       items.push({
         id: 'generate-update',
-        label: 'Generate UPDATE',
+        label: t('context.generateUpdate'),
         icon: '✏️'
       });
       items.push({
         id: 'generate-delete',
-        label: 'Generate DELETE',
+        label: t('context.generateDelete'),
         icon: '🗑️'
       });
     }
@@ -519,18 +492,18 @@ export function EnterpriseTree() {
       items.push({ id: 'divider', label: '', divider: true } as ContextMenuItem);
       items.push({
         id: 'openform',
-        label: 'Open Form',
+        label: t('context.openForm'),
         icon: '🌐'
       });
       if (item.type === 'HTMLFORMXML') {
         items.push({
           id: 'debugform',
-          label: 'Debug Form',
+          label: t('editor.debugForm'),
           icon: '🐛'
         });
         items.push({
           id: 'designform',
-          label: 'Design Form',
+          label: t('editor.designForm'),
           icon: '✏️'
         });
       }
@@ -540,7 +513,7 @@ export function EnterpriseTree() {
     if (item.type === 'XFDFORMXML') {
       items.push({
         id: 'launchxfdform',
-        label: 'Launch XFD Form',
+        label: t('context.launchXfdForm'),
         icon: '🚀'
       });
     }
@@ -550,34 +523,34 @@ export function EnterpriseTree() {
       items.push({ id: 'divider', label: '', divider: true } as ContextMenuItem);
       items.push({
         id: 'goto-item',
-        label: 'Go to Item (F11)',
+        label: t('context.goToItem'),
         icon: '🔍'
       });
       if (item.type === 'SS' || item.type === 'APPSS') {
         items.push({
           id: 'goto-serverscript',
-          label: 'Go to Server Script',
+          label: t('context.goToServerScript'),
           icon: '🖥️'
         });
       }
       if (item.type === 'CS' || item.type === 'APPCS') {
         items.push({
           id: 'goto-clientscript',
-          label: 'Go to Client Script',
+          label: t('context.goToClientScript'),
           icon: '🖱️'
         });
       }
       if (item.type === 'DS' || item.type === 'APPDS') {
         items.push({
           id: 'goto-datasource',
-          label: 'Go to Data Source',
+          label: t('context.goToDataSource'),
           icon: '🗃️'
         });
       }
       if (item.type === 'HTMLFORMCODE' || item.type === 'XFDFORMCODE') {
         items.push({
           id: 'goto-form',
-          label: 'Go to Form',
+          label: t('context.goToForm'),
           icon: '🌐'
         });
       }
@@ -686,16 +659,20 @@ export function EnterpriseTree() {
         break;
       case 'runscript':
         if (item.uri) {
-          const enterpriseService = getEnterpriseService();
-          const result = await enterpriseService.runScript(item.uri);
+          const result = await executeServerScriptWithGate({ source: 'editor', action: 'execute-script', uri: item.uri, language: item.language, approved: true });
           console.log('Script result:', result);
         }
         break;
       case 'rundatasource':
         if (item.uri) {
-          const enterpriseService = getEnterpriseService();
-          const result = await enterpriseService.runDataSource(item.uri);
-          console.log('DataSource result:', result);
+          const result = await executeDataSourceWithGate({ source: 'editor', action: 'execute-data-source', uri: item.uri, language: item.language, approved: true });
+          const output = useOutputLogStore.getState();
+          if (result.success) {
+            output.addEntry({ level: 'success', source: 'Editor', message: `Data source executed successfully: ${result.rowCount} row${result.rowCount === 1 ? '' : 's'}` });
+            output.addQueryResult(`Results for: ${item.label}`, { columns: result.columns, rows: result.rows, rowCount: result.rowCount });
+          } else {
+            output.addEntry({ level: 'error', source: 'Editor', message: `Data source execution failed: ${result.error || 'Unknown error'}` });
+          }
         }
         break;
       case 'generate-select':
@@ -1022,6 +999,12 @@ export function EnterpriseTree() {
 
   // Initial load
   useEffect(() => {
+    const refresh = () => setRefreshKey((value) => value + 1);
+    window.addEventListener('enterprise:refresh', refresh);
+    return () => window.removeEventListener('enterprise:refresh', refresh);
+  }, []);
+
+  useEffect(() => {
     if (isConnected && currentServer) {
       // Load root items from STARLIMS
       const loadRootItems = async () => {
@@ -1052,16 +1035,16 @@ export function EnterpriseTree() {
   }, [isConnected, currentServer, refreshKey]);
 
   return (
-    <div className="p-2 flex flex-col h-full">
+    <div className="workbench-section">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2 px-2">
-        <span className="text-[11px] font-semibold text-slate-500 dark:text-[#bbbbbb] uppercase tracking-wide">
+      <div className="workbench-section-header">
+        <span className="workbench-section-title">
           {isSearching ? t('sidebar.searchResults') : t('sidebar.enterprise')}
         </span>
         <div className="flex gap-1">
           {isSearching ? (
             <button
-              className="icon-button"
+              className="workbench-toolbar-button"
               title={t('sidebar.backToTree')}
               onClick={handleClearSearch}
             >
@@ -1072,7 +1055,7 @@ export function EnterpriseTree() {
           ) : (
             <>
               <button
-                className="icon-button"
+                className="workbench-toolbar-button"
                 title={t('sidebar.refreshTree')}
                 onClick={refreshTree}
               >
@@ -1081,7 +1064,7 @@ export function EnterpriseTree() {
                 </svg>
               </button>
               <button
-                className={`icon-button ${searchType === 'name' && isSearchBarOpen ? 'text-blue-500' : ''}`}
+                className={`workbench-toolbar-button ${searchType === 'name' && isSearchBarOpen ? 'active' : ''}`}
                 title={t('sidebar.searchByName')}
                 onClick={() => openSearch('name')}
               >
@@ -1090,8 +1073,8 @@ export function EnterpriseTree() {
                 </svg>
               </button>
               <button
-                className={`icon-button ${searchType === 'global' && isSearchBarOpen ? 'text-blue-500' : ''}`}
-                title={t('sidebar.searchCode')}
+                className={`workbench-toolbar-button ${searchType === 'global' && isSearchBarOpen ? 'active' : ''}`}
+                title={`${t('sidebar.searchCode')} (${primaryShortcut('CtrlOrCmd+Shift+F')})`}
                 onClick={() => openSearch('global')}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1099,7 +1082,7 @@ export function EnterpriseTree() {
                 </svg>
               </button>
               <button
-                className="icon-button"
+                className="workbench-toolbar-button"
                 title={t('sidebar.collapseAll')}
                 onClick={() => setExpandedItems(new Set())}
               >
@@ -1113,9 +1096,9 @@ export function EnterpriseTree() {
       </div>
 
       {/* Search Bar */}
-      {isSearchBarOpen && <form onSubmit={handleSearchSubmit} id="enterprise-tree-search" className="mb-2 px-2 mr-2 sticky top-0 bg-slate-50 dark:bg-slate-800 z-10">
-        <div className="flex gap-1">
-          <span className="flex items-center px-2 text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-[#252526] border border-slate-300 dark:border-slate-600 rounded-l">
+      {isSearchBarOpen && <form onSubmit={handleSearchSubmit} id="enterprise-tree-search" className="workbench-search-bar">
+        <div className="flex min-w-0 gap-1">
+          <span className="workbench-search-kind">
             {searchType === 'name' ? t('sidebar.searchName') : t('sidebar.searchCodeShort')}
           </span>
           {/* Search Input */}
@@ -1124,12 +1107,12 @@ export function EnterpriseTree() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={searchType === 'name' ? t('sidebar.searchPlaceholder') : t('sidebar.searchCodePlaceholder')}
-            className="min-w-0 flex-1 bg-white dark:bg-[#1e1e1e] text-slate-700 dark:text-slate-200 text-xs px-2 py-1 border-y border-slate-300 dark:border-slate-600 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"
+            className="workbench-search-input"
           />
           <button
             type="submit"
             disabled={isSearchLoading || !searchQuery.trim()}
-            className="icon-button"
+            className="workbench-toolbar-button"
             title={t('common.search')}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1138,7 +1121,7 @@ export function EnterpriseTree() {
           </button>
           <button
             type="button"
-            className="icon-button"
+            className="workbench-toolbar-button"
             title={t('sidebar.closeSearch')}
             onClick={handleClearSearch}
           >
@@ -1150,7 +1133,7 @@ export function EnterpriseTree() {
       </form>}
 
       {/* Tree/Search Results content */}
-      <div className="text-slate-700 dark:text-slate-300 flex-1 overflow-auto">
+      <div className="workbench-tree-scroll text-slate-700 dark:text-slate-300">
         {isSearching ? (
           // Search results view
           isSearchLoading ? (
@@ -1182,6 +1165,7 @@ export function EnterpriseTree() {
                   onContextMenu={handleContextMenu}
                   onDoubleClick={handleDoubleClick}
                   expandedItems={expandedItems}
+                  selectedItemId={selectedItem?.id}
                 />
               ))}
             </div>
@@ -1203,6 +1187,7 @@ export function EnterpriseTree() {
                 onContextMenu={handleContextMenu}
                 onDoubleClick={handleDoubleClick}
                 expandedItems={expandedItems}
+                selectedItemId={selectedItem?.id}
               />
             ))
           )
@@ -1221,11 +1206,11 @@ export function EnterpriseTree() {
 
       {/* Selected item info */}
       {selectedItem && (
-        <div className="mt-2 pt-2 border-t border-slate-700">
-          <div className="text-xs text-slate-500 px-2">
-            Selected: <span className="text-slate-700 dark:text-slate-300">{selectedItem.label}</span>
+        <div className="workbench-selection-footer">
+          <div className="min-w-0 truncate text-[11px] text-slate-500 dark:text-[#8f8f8f]">
+            <span className="text-slate-700 dark:text-[#cccccc]">{selectedItem.label}</span>
             {selectedItem.checkedOutBy && (
-              <span className="text-yellow-400 ml-2">(Checked out by {selectedItem.checkedOutBy})</span>
+              <span className="ml-2 text-green-700 dark:text-[#73c991]">· {selectedItem.checkedOutBy}</span>
             )}
           </div>
         </div>

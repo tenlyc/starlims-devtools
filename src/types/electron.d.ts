@@ -4,6 +4,7 @@
 import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceChange, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, AgentWorkspaceSyncResult, ExternalMcpServers, GenericAgentConfig } from './agent';
 import type { DiagnosticLogEvent } from './diagnosticLog';
 import type { QualityTestRunResult } from './aiPlatform';
+import type { NativeLspLocation, NativeLspPosition, NativeLspSessionStatus, NativeLspUpstreamMetadata, NativeLspVersionInfo, NativeLspWorkspaceDocument, NativeLspWorkspaceEdit, NativeLspWorkspaceSymbol, NativeSslFormatResult, NativeSslInventory, NativeSslValidationResult } from './sslLsp';
 
 export interface ElectronAPI {
   // STARLIMS MCP bridge
@@ -11,6 +12,23 @@ export interface ElectronAPI {
   onMcpRequest: (callback: (request: { id: string; tool: string; arguments: Record<string, unknown> }) => void) => () => void;
   respondToMcpRequest: (response: { id: string; result?: unknown; error?: string }) => void;
   onDiagnosticLog: (callback: (event: DiagnosticLogEvent) => void) => () => void;
+  sslLspStatus: () => Promise<{ available: boolean; version: string }>;
+  sslLspValidate: (content: string, options?: { dataSource?: boolean; info?: boolean; hungarianTypes?: boolean }) => Promise<NativeSslValidationResult>;
+  sslLspFormat: (content: string) => Promise<NativeSslFormatResult>;
+  sslLspInventory: () => Promise<NativeSslInventory | null>;
+  sslLspSessionStatus: () => Promise<NativeLspSessionStatus>;
+  sslLspSessionRestart: () => Promise<NativeLspSessionStatus>;
+  sslLspVersions: () => Promise<NativeLspVersionInfo[]>;
+  sslLspUpstreamMetadata: () => Promise<NativeLspUpstreamMetadata>;
+  sslLspSelectVersion: (version: string) => Promise<{ versions: NativeLspVersionInfo[]; status: NativeLspSessionStatus }>;
+  sslLspWorkspaceDocuments: () => Promise<NativeLspWorkspaceDocument[]>;
+  sslLspWorkspaceDocument: (uri: string) => Promise<(NativeLspWorkspaceDocument & { content: string }) | null>;
+  sslLspDocumentSync: (document: { uri: string; content: string; version: number }) => Promise<boolean>;
+  sslLspDocumentClose: (uri: string) => Promise<boolean>;
+  sslLspDefinition: (uri: string, position: NativeLspPosition) => Promise<NativeLspLocation[]>;
+  sslLspReferences: (uri: string, position: NativeLspPosition) => Promise<NativeLspLocation[]>;
+  sslLspRename: (uri: string, position: NativeLspPosition, newName: string) => Promise<NativeLspWorkspaceEdit | null>;
+  sslLspWorkspaceSymbols: (query: string) => Promise<NativeLspWorkspaceSymbol[]>;
 
   // Dialog
   showOpenDialog: (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>;
@@ -86,7 +104,7 @@ export interface ElectronAPI {
   agentWorkspaceConfigure: (context: AgentWorkspaceContext) => Promise<AgentWorkspaceInfo>;
   agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => Promise<AgentWorkspaceSyncResult>;
   agentWorkspaceGetChanges: () => Promise<AgentWorkspaceChange[]>;
-  agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'>>) => Promise<number>;
+  agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'> & { fingerprint?: string }>) => Promise<number>;
   agentRunQualityTest: (command: string) => Promise<QualityTestRunResult & { cancelled?: boolean }>;
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;

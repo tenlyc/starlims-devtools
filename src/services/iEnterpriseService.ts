@@ -53,6 +53,16 @@ export interface ScriptResult {
   executionTime?: number;
 }
 
+export interface DataSourceResult {
+  success: boolean;
+  output?: unknown;
+  error?: string;
+  executionTime?: number;
+  columns: string[];
+  rows: Record<string, string | number | null>[];
+  rowCount: number;
+}
+
 export interface LanguageOption {
   id: string;
   name: string;
@@ -175,7 +185,7 @@ export interface IEnterpriseService {
 
   // Script execution
   runScript(uri: string, parameters?: unknown[]): Promise<ScriptResult>;
-  runDataSource(uri: string): Promise<ScriptResult>;
+  runDataSource(uri: string): Promise<DataSourceResult>;
 
   // SQL Query execution
   executeQuery(sql: string): Promise<QueryResult>;

@@ -12,12 +12,12 @@ import { SourceControlPanel } from '../components/SCM/SourceControlPanel';
 import { useServerStore } from '../stores/serverStore';
 import { useThemeStore } from '../stores/themeStore';
 import { editorStore } from '../stores/editorStore';
-import { getEnterpriseService } from '../services/enterpriseService';
 import { useDiagnosticStore } from '../services/diagnosticStore';
 import { syncCheckedOutWorkspace } from '../services/agentWorkspaceService';
 import { useI18n } from '../i18n';
 import { loadAiLayers, mergeAiLayers } from '../services/aiPlatform';
 import { configureExtensionLanguages } from '../services/editorLanguage';
+import { saveEditorFileWithFeedback } from '../services/editorSaveService';
 
 type WorkbenchLayout = {
   sidebarVisible: boolean;
@@ -154,20 +154,7 @@ export default function App() {
   // Handle save
   const handleSave = useCallback(async () => {
     const activeFile = editorStore.getState().getActiveFile();
-    if (activeFile && activeFile.isDirty) {
-      try {
-        const enterpriseService = getEnterpriseService();
-        const success = await enterpriseService.saveItemCode(activeFile.uri, activeFile.content, activeFile.language);
-        if (success) {
-          editorStore.getState().markFileAsSaved(activeFile.uri);
-          console.log('File saved successfully');
-        } else {
-          console.error('Failed to save file');
-        }
-      } catch (err) {
-        console.error('Error saving file:', err);
-      }
-    }
+    if (activeFile) await saveEditorFileWithFeedback(activeFile.uri);
   }, []);
 
   // Handle menu events from Electron
@@ -192,6 +179,12 @@ export default function App() {
         case 'menu:save':
           handleSave();
           break;
+        case 'menu:refresh':
+          window.dispatchEvent(new CustomEvent('enterprise:refresh'));
+          break;
+        case 'menu:runScript':
+          window.dispatchEvent(new CustomEvent('editor:run'));
+          break;
         case 'menu:openSCMPackage':
           setShowSCMPackage(true);
           break;
@@ -207,7 +200,7 @@ export default function App() {
         window.electronAPI.removeMenuListener();
       }
     };
-  }, [connect, disconnect]);
+  }, [connect, disconnect, handleSave]);
 
   // Handle sidebar resize
   const handleSidebarResize = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {

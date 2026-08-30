@@ -8,17 +8,27 @@
   "license": "MIT",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder",
+    "prepare:lsp": "node scripts/prepare-starlims-lsp.mjs",
+    "upstream:check": "node scripts/upstreams/check-updates.mjs",
+    "upstream:update:lsp": "node scripts/upstreams/update-starlims-lsp.mjs",
+    "upstream:audit:starlimsvscode": "node scripts/upstreams/audit-starlimsvscode.mjs",
+    "upstream:accept:starlimsvscode": "node scripts/upstreams/accept-starlimsvscode.mjs",
+    "build": "npm run prepare:lsp && tsc && vite build && electron-builder",
     "build:vite": "tsc && vite build",
     "test:mcp": "tsx scripts/mcp-smoke-test.ts",
     "test:ssl": "tsx scripts/ssl-lsp-smoke-test.ts",
+    "test:ssl-upstream": "tsx scripts/starlims-lsp-upstream-smoke-test.ts",
+    "test:ssl-session": "tsx scripts/ssl-lsp-session-smoke-test.ts",
+    "test:upstreams": "tsx scripts/upstream-management-smoke-test.ts",
     "test:server-config": "tsx scripts/server-config-smoke-test.ts",
     "test:ai-context": "tsx scripts/ai-context-smoke-test.ts",
     "test:dependency-index": "tsx scripts/dependency-index-smoke-test.ts",
     "test:ai-platform": "tsx scripts/ai-platform-smoke-test.ts",
+    "test:write-gate": "tsx scripts/write-gate-smoke-test.ts",
     "test:agent-runtime": "tsx scripts/agent-runtime-smoke-test.ts",
     "test:agent-workspace": "tsx scripts/agent-workspace-smoke-test.ts",
     "test:editor-languages": "tsx scripts/editor-language-smoke-test.ts",
+    "test:context-menu": "tsx scripts/context-menu-smoke-test.ts",
     "test:checkout-forms": "tsx scripts/checkout-form-smoke-test.ts",
     "test:enterprise-search-tree": "tsx scripts/enterprise-search-tree-smoke-test.ts",
     "test:i18n": "tsx scripts/i18n-smoke-test.ts",
@@ -27,11 +37,10 @@
     "test:smoke": "node scripts/run-smoke-tests.mjs",
     "check": "npm run lint && npm run test:smoke && npm run build:vite",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"vite\" \"electron .\"",
+    "electron:dev": "npm run prepare:lsp && concurrently \"vite\" \"electron .\"",
     "lint": "eslint src --ext ts,tsx"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.251",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@monaco-editor/react": "^4.6.0",
     "@vscode/webview-ui-toolkit": "^1.4.0",
@@ -94,6 +103,10 @@
       {
         "from": "src/scm_api",
         "to": "scm_api"
+      },
+      {
+        "from": "resources/starlims-lsp",
+        "to": "resources/starlims-lsp"
       }
     ],
     "mac": {

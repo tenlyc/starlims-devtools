@@ -76,8 +76,10 @@ export function validateExtensionManifest(value: unknown): AiExtensionManifest {
   return { ...manifest, enabled: manifest.enabled !== false };
 }
 
-function changeKey(change: Pick<AgentWorkspaceChange, 'uri' | 'language'>): string {
-  return `${change.uri}\n${change.language || ''}`;
+export function workspaceChangeFingerprint(change: AgentWorkspaceChange): string { return change.fingerprint; }
+
+export function workspaceChangeSetFingerprint(changes: AgentWorkspaceChange[]): string {
+  return `v1:${changes.map(workspaceChangeFingerprint).sort().join(':')}`;
 }
 
 function changedLineCount(change: AgentWorkspaceChange): number {
@@ -91,19 +93,23 @@ function changedLineCount(change: AgentWorkspaceChange): number {
 export function evaluateQualityGate({ changes, reviewState, policy }: QualityGateInput): QualityGateReport {
   const findings: QualityGateReport['findings'] = [];
   let changedLines = 0;
+  const changeSetFingerprint = workspaceChangeSetFingerprint(changes);
   for (const change of changes) {
     changedLines += changedLineCount(change);
-    if (change.kind === 'deleted' && policy.blockDeletedFiles) findings.push({ id: `deleted:${changeKey(change)}`, level: 'error', source: 'workspace', uri: change.uri, message: `${change.name}: deleted workspace files cannot be written back.` });
+    if (change.kind === 'deleted' && policy.blockDeletedFiles) findings.push({ id: `deleted:${workspaceChangeFingerprint(change)}`, level: 'error', source: 'workspace', uri: change.uri, message: `${change.name}: deleted workspace files cannot be written back.` });
     if (change.kind !== 'deleted' && SSL_TYPES.has(change.type.toUpperCase())) {
       const errors = new SSLParser().parse(change.after).errors;
-      if (errors.length) findings.push({ id: `ssl:${changeKey(change)}`, level: policy.blockSslErrors ? 'error' : 'warning', source: 'ssl', uri: change.uri, message: `${change.name}: ${errors.length} SSL syntax error(s); first at line ${errors[0].line + 1}: ${errors[0].message}` });
+      if (errors.length) findings.push({ id: `ssl:${workspaceChangeFingerprint(change)}`, level: policy.blockSslErrors ? 'error' : 'warning', source: 'ssl', uri: change.uri, message: `${change.name}: ${errors.length} SSL syntax error(s); first at line ${errors[0].line + 1}: ${errors[0].message}` });
     }
-    if (policy.requireDiffReview && !reviewState.reviewedKeys.includes(changeKey(change))) findings.push({ id: `review:${changeKey(change)}`, level: 'error', source: 'review', uri: change.uri, message: `${change.name}: diff has not been marked as reviewed.` });
+    if (policy.requireDiffReview && !reviewState.reviewedFingerprints.includes(workspaceChangeFingerprint(change))) findings.push({ id: `review:${workspaceChangeFingerprint(change)}`, level: 'error', source: 'review', uri: change.uri, message: `${change.name}: this exact content version has not been marked as reviewed.` });
   }
   if (changedLines > policy.warnChangedLines) findings.push({ id: 'large-diff', level: 'warning', source: 'diff', message: `The selected changes affect approximately ${changedLines} lines, above the ${policy.warnChangedLines}-line review threshold.` });
   if (policy.requirePassedTests) {
     if (!reviewState.tests.length) findings.push({ id: 'tests-missing', level: 'error', source: 'test', message: 'At least one test case is required before write-back.' });
-    for (const test of reviewState.tests) if (test.status !== 'passed') findings.push({ id: `test:${test.id}`, level: 'error', source: 'test', message: `Test '${test.name}' has not passed.` });
+    for (const test of reviewState.tests) {
+      if (test.status !== 'passed') findings.push({ id: `test:${test.id}`, level: 'error', source: 'test', message: `Test '${test.name}' has not passed.` });
+      else if (test.changeSetFingerprint !== changeSetFingerprint) findings.push({ id: `test-stale:${test.id}`, level: 'error', source: 'test', message: `Test '${test.name}' passed against an older content version and must be run again.` });
+    }
   }
   return { passed: !findings.some((finding) => finding.level === 'error'), findings, changedFiles: changes.length, changedLines };
 }

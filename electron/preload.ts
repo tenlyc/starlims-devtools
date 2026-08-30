@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceChange, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, AgentWorkspaceSyncResult, ExternalMcpServers, GenericAgentConfig } from '../src/types/agent';
 import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
 import type { QualityTestRunResult } from '../src/types/aiPlatform';
+import type { NativeLspLocation, NativeLspPosition, NativeLspSessionStatus, NativeLspUpstreamMetadata, NativeLspVersionInfo, NativeLspWorkspaceDocument, NativeLspWorkspaceEdit, NativeLspWorkspaceSymbol, NativeSslFormatResult, NativeSslInventory, NativeSslValidationResult } from '../src/types/sslLsp';
 
 // Type definitions for exposed API
 export interface ElectronAPI {
@@ -10,6 +11,23 @@ export interface ElectronAPI {
   onMcpRequest: (callback: (request: { id: string; tool: string; arguments: Record<string, unknown> }) => void) => () => void;
   respondToMcpRequest: (response: { id: string; result?: unknown; error?: string }) => void;
   onDiagnosticLog: (callback: (event: DiagnosticLogEvent) => void) => () => void;
+  sslLspStatus: () => Promise<{ available: boolean; version: string }>;
+  sslLspValidate: (content: string, options?: { dataSource?: boolean; info?: boolean; hungarianTypes?: boolean }) => Promise<NativeSslValidationResult>;
+  sslLspFormat: (content: string) => Promise<NativeSslFormatResult>;
+  sslLspInventory: () => Promise<NativeSslInventory | null>;
+  sslLspSessionStatus: () => Promise<NativeLspSessionStatus>;
+  sslLspSessionRestart: () => Promise<NativeLspSessionStatus>;
+  sslLspVersions: () => Promise<NativeLspVersionInfo[]>;
+  sslLspUpstreamMetadata: () => Promise<NativeLspUpstreamMetadata>;
+  sslLspSelectVersion: (version: string) => Promise<{ versions: NativeLspVersionInfo[]; status: NativeLspSessionStatus }>;
+  sslLspWorkspaceDocuments: () => Promise<NativeLspWorkspaceDocument[]>;
+  sslLspWorkspaceDocument: (uri: string) => Promise<(NativeLspWorkspaceDocument & { content: string }) | null>;
+  sslLspDocumentSync: (document: { uri: string; content: string; version: number }) => Promise<boolean>;
+  sslLspDocumentClose: (uri: string) => Promise<boolean>;
+  sslLspDefinition: (uri: string, position: NativeLspPosition) => Promise<NativeLspLocation[]>;
+  sslLspReferences: (uri: string, position: NativeLspPosition) => Promise<NativeLspLocation[]>;
+  sslLspRename: (uri: string, position: NativeLspPosition, newName: string) => Promise<NativeLspWorkspaceEdit | null>;
+  sslLspWorkspaceSymbols: (query: string) => Promise<NativeLspWorkspaceSymbol[]>;
 
   // Dialog
   showOpenDialog: (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>;
@@ -87,7 +105,7 @@ export interface ElectronAPI {
   agentWorkspaceConfigure: (context: AgentWorkspaceContext) => Promise<AgentWorkspaceInfo>;
   agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => Promise<AgentWorkspaceSyncResult>;
   agentWorkspaceGetChanges: () => Promise<AgentWorkspaceChange[]>;
-  agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'>>) => Promise<number>;
+  agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'> & { fingerprint?: string }>) => Promise<number>;
   agentRunQualityTest: (command: string) => Promise<(QualityTestRunResult & { cancelled?: boolean })>;
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
@@ -117,6 +135,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('devtools:log', listener);
     return () => ipcRenderer.removeListener('devtools:log', listener);
   },
+  sslLspStatus: () => ipcRenderer.invoke('ssl-lsp:status'),
+  sslLspValidate: (content: string, options?: { dataSource?: boolean; info?: boolean; hungarianTypes?: boolean }) => ipcRenderer.invoke('ssl-lsp:validate', content, options),
+  sslLspFormat: (content: string) => ipcRenderer.invoke('ssl-lsp:format', content),
+  sslLspInventory: () => ipcRenderer.invoke('ssl-lsp:inventory'),
+  sslLspSessionStatus: () => ipcRenderer.invoke('ssl-lsp:sessionStatus'),
+  sslLspSessionRestart: () => ipcRenderer.invoke('ssl-lsp:sessionRestart'),
+  sslLspVersions: () => ipcRenderer.invoke('ssl-lsp:versions'),
+  sslLspUpstreamMetadata: () => ipcRenderer.invoke('ssl-lsp:upstreamMetadata'),
+  sslLspSelectVersion: (version: string) => ipcRenderer.invoke('ssl-lsp:selectVersion', version),
+  sslLspWorkspaceDocuments: () => ipcRenderer.invoke('ssl-lsp:workspaceDocuments'),
+  sslLspWorkspaceDocument: (uri: string) => ipcRenderer.invoke('ssl-lsp:workspaceDocument', uri),
+  sslLspDocumentSync: (document: { uri: string; content: string; version: number }) => ipcRenderer.invoke('ssl-lsp:documentSync', document),
+  sslLspDocumentClose: (uri: string) => ipcRenderer.invoke('ssl-lsp:documentClose', uri),
+  sslLspDefinition: (uri: string, position: NativeLspPosition) => ipcRenderer.invoke('ssl-lsp:definition', uri, position),
+  sslLspReferences: (uri: string, position: NativeLspPosition) => ipcRenderer.invoke('ssl-lsp:references', uri, position),
+  sslLspRename: (uri: string, position: NativeLspPosition, newName: string) => ipcRenderer.invoke('ssl-lsp:rename', uri, position, newName),
+  sslLspWorkspaceSymbols: (query: string) => ipcRenderer.invoke('ssl-lsp:workspaceSymbols', query),
 
   // Dialog
   showOpenDialog: (options: Electron.OpenDialogOptions) =>
@@ -210,7 +245,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   agentWorkspaceConfigure: (context: AgentWorkspaceContext) => ipcRenderer.invoke('agent:workspaceConfigure', context),
   agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => ipcRenderer.invoke('agent:workspaceSyncFiles', files),
   agentWorkspaceGetChanges: () => ipcRenderer.invoke('agent:workspaceGetChanges'),
-  agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'>>) => ipcRenderer.invoke('agent:workspaceAcceptChanges', files),
+  agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'> & { fingerprint?: string }>) => ipcRenderer.invoke('agent:workspaceAcceptChanges', files),
   agentRunQualityTest: (command: string) => ipcRenderer.invoke('agent:runQualityTest', command),
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => ipcRenderer.invoke('agent:start', provider, prompt, model, toolPermissionPolicy),
   agentInterrupt: (provider: AgentProvider) => ipcRenderer.invoke('agent:interrupt', provider),

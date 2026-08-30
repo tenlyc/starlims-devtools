@@ -15,6 +15,9 @@ import * as monaco from 'monaco-editor';
 import { useAiContextStore } from '../../services/aiContextStore';
 import { useI18n } from '../../i18n';
 import { CustomizePage } from '../Customize/CustomizePage';
+import { checkInItemWithGate, checkoutItemWithGate, executeDataSourceWithGate, executeServerScriptWithGate, saveItemWithGate, undoCheckoutWithGate } from '../../services/writeGateService';
+import { saveEditorFileWithFeedback } from '../../services/editorSaveService';
+import { hasPrimaryModifier, primaryShortcut } from '../../services/platformShortcuts';
 
 interface EditorContextMenu {
   x: number;
@@ -59,6 +62,7 @@ export function EditorPanel() {
   const monacoRef = useRef<typeof monaco | null>(null);
   const [showDiffControls, setShowDiffControls] = useState(false);
   const addAiContext = useAiContextStore((state) => state.addItem);
+  const shortcut = primaryShortcut;
 
   useEffect(() => {
     const refresh = () => setExtensionLanguageRevision((value) => value + 1);
@@ -131,6 +135,16 @@ export function EditorPanel() {
     registerLanguages(monacoInstance as any);
     registerSslLanguageFeatures(monacoInstance as any);
     registerSnippets();
+
+    const saveCurrentFile = () => {
+      void saveEditorFileWithFeedback(editorStore.getState().activeFileUri);
+    };
+    editor.addAction({
+      id: 'starlims.saveRemoteItem',
+      label: 'Save STARLIMS Item',
+      keybindings: [monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyS],
+      run: saveCurrentFile
+    });
 
     // Set theme based on current resolved theme
     const currentTheme = useThemeStore.getState().resolvedTheme;
@@ -633,8 +647,7 @@ export function EditorPanel() {
         onSave: async () => {
           // Save and close
           try {
-            const enterpriseService = getEnterpriseService();
-            const saved = await enterpriseService.saveItemCode(file.uri, file.content, file.language);
+            const saved = (await saveItemWithGate({ source: 'editor', action: 'save', uri: file.uri, language: file.language, type: file.type, code: file.content, expectedRemoteContent: file.baselineContent, approved: true })).saved;
             if (saved) {
               editorStore.getState().markFileAsSaved(file.uri);
               console.log('File saved on close:', file.name);
@@ -661,8 +674,7 @@ export function EditorPanel() {
     } else if (file.isDirty && skipPrompt) {
       // Skip prompt mode - auto save (for programmatic closes)
       try {
-        const enterpriseService = getEnterpriseService();
-        const saved = await enterpriseService.saveItemCode(file.uri, file.content, file.language);
+        const saved = (await saveItemWithGate({ source: 'editor', action: 'save', uri: file.uri, language: file.language, type: file.type, code: file.content, expectedRemoteContent: file.baselineContent, approved: true })).saved;
         if (saved) {
           editorStore.getState().markFileAsSaved(file.uri);
           console.log('File auto-saved on close:', file.name);
@@ -746,7 +758,12 @@ export function EditorPanel() {
 
     navigator.clipboard.readText().then(text => {
       if (!text || !editorRef.current) return;
-      editorRef.current.executeEdits('paste', [{
+      const editor = editorRef.current;
+      const model = editor.getModel();
+      if (!model) return;
+      const startOffset = model.getOffsetAt(position);
+      editor.pushUndoStop();
+      editor.executeEdits('paste', [{
         range: {
           startLineNumber: position.lineNumber,
           startColumn: position.column,
@@ -755,12 +772,9 @@ export function EditorPanel() {
         },
         text: text
       }]);
-      // Move cursor after pasted text
-      const newPosition = {
-        lineNumber: position.lineNumber,
-        column: position.column + text.length
-      };
-      editorRef.current.setPosition(newPosition);
+      editor.pushUndoStop();
+      editor.setPosition(model.getPositionAt(startOffset + text.length));
+      editor.focus();
     }).catch(err => console.error('Clipboard read failed:', err));
   };
 
@@ -887,8 +901,7 @@ export function EditorPanel() {
     });
 
     try {
-      const enterpriseService = getEnterpriseService();
-      const result = await enterpriseService.checkOut(activeFile.uri, activeFile.language);
+      const result = await checkoutItemWithGate({ source: 'editor', action: 'checkout', uri: activeFile.uri, language: activeFile.language, approved: true });
 
       if (result.success) {
         addEntry({
@@ -926,8 +939,7 @@ export function EditorPanel() {
     });
 
     try {
-      const enterpriseService = getEnterpriseService();
-      const result = await enterpriseService.checkIn(activeFile.uri, undefined, activeFile.language);
+      const result = await checkInItemWithGate({ source: 'editor', action: 'checkin', uri: activeFile.uri, language: activeFile.language, approved: true });
 
       if (result.success) {
         addEntry({
@@ -965,8 +977,7 @@ export function EditorPanel() {
     });
 
     try {
-      const enterpriseService = getEnterpriseService();
-      const success = await enterpriseService.undoCheckOut(activeFile.uri);
+      const success = await undoCheckoutWithGate({ source: 'editor', action: 'undo-checkout', uri: activeFile.uri, language: activeFile.language, approved: true });
 
       if (success) {
         addEntry({
@@ -1173,8 +1184,7 @@ export function EditorPanel() {
     // Save if dirty first
     if (activeFile.isDirty) {
       try {
-        const enterpriseService = getEnterpriseService();
-        const saved = await enterpriseService.saveItemCode(activeFile.uri, activeFile.content, activeFile.language);
+        const saved = (await saveItemWithGate({ source: 'editor', action: 'save', uri: activeFile.uri, language: activeFile.language, type: activeFile.type, code: activeFile.content, expectedRemoteContent: activeFile.baselineContent, approved: true })).saved;
         if (saved) {
           editorStore.getState().markFileAsSaved(activeFile.uri);
         }
@@ -1211,43 +1221,40 @@ export function EditorPanel() {
 
       let result;
       if (isDataSource) {
-        // For DataSource, execute the SQL content directly
+        // Data sources are stored STARLIMS items. Execute them by URI through
+        // RunScript, just like the enterprise tree and MCP tool do. Sending the
+        // editor text to ExecuteQuery bypasses STARLIMS data-source semantics
+        // and fails on servers where the optional ExecuteQuery API is absent.
         addEntry({
           level: 'info',
-          message: `Executing SQL query: ${activeFile.name}...`,
+          message: `Executing data source: ${activeFile.name}...`,
           source: 'Editor'
         });
 
-        result = await enterpriseService.executeQuery(activeFile.content);
+        result = await executeDataSourceWithGate({ source: 'editor', action: 'execute-data-source', uri: activeFile.uri, language: activeFile.language, approved: true });
 
         if (result.success) {
           addEntry({
             level: 'success',
-            message: `Query executed successfully (${result.rowCount} rows, ${result.executionTime}ms)`,
+            message: `Data source executed successfully: ${result.rowCount} row${result.rowCount === 1 ? '' : 's'}${typeof result.executionTime === 'number' ? ` (${result.executionTime}ms)` : ''}`,
             source: 'Editor'
           });
 
-          // Display results as a table
-          if (result.columns.length > 0 && result.rows.length > 0) {
-            useOutputLogStore.getState().addQueryResult(
-              `Results for: ${activeFile.name}`,
-              {
-                columns: result.columns,
-                rows: result.rows,
-                rowCount: result.rowCount
-              }
-            );
-          }
+          useOutputLogStore.getState().addQueryResult(`Results for: ${activeFile.name}`, {
+            columns: result.columns,
+            rows: result.rows,
+            rowCount: result.rowCount
+          });
         } else {
           addEntry({
             level: 'error',
-            message: `Query failed: ${result.error || 'Unknown error'}`,
+            message: `Data source execution failed: ${result.error || 'Unknown error'}`,
             source: 'Editor'
           });
         }
       } else {
         // Run the script
-        result = await enterpriseService.runScript(activeFile.uri);
+        result = await executeServerScriptWithGate({ source: 'editor', action: 'execute-script', uri: activeFile.uri, language: activeFile.language, approved: true });
 
         // Wait for script to complete and logs to be written
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -1312,9 +1319,23 @@ export function EditorPanel() {
     }
   };
 
-  // Keyboard shortcut handler (F11 - GoTo, F5 - Run, Ctrl+Alt+F - Global Search)
+  useEffect(() => {
+    const run = () => void handleRunScript();
+    window.addEventListener('editor:run', run);
+    return () => window.removeEventListener('editor:run', run);
+  }, [activeFile]);
+
+  // Cross-platform shortcuts use Command on macOS and Control elsewhere.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Support both Ctrl+S and Cmd+S on every desktop platform. Monaco's
+      // CtrlCmd binding covers the native shortcut; this also supports users
+      // who press the literal Control key on macOS.
+      if (hasPrimaryModifier(e) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void saveEditorFileWithFeedback(editorStore.getState().activeFileUri);
+        return;
+      }
       // F11 - GoTo navigation
       if (e.key === 'F11' && activeFile) {
         e.preventDefault();
@@ -1325,27 +1346,27 @@ export function EditorPanel() {
         e.preventDefault();
         handleRunScript();
       }
-      // Ctrl+Alt+F - Global code search
-      if (e.ctrlKey && e.altKey && e.key === 'F') {
+      // Cmd/Ctrl+Shift+F - Global code search
+      if (hasPrimaryModifier(e) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
         e.preventDefault();
         triggerGlobalSearch();
       }
       // Ctrl+Shift+O - Go to symbol (outline)
-      if (e.ctrlKey && e.shiftKey && e.key === 'O') {
+      if (hasPrimaryModifier(e) && e.shiftKey && e.key.toLowerCase() === 'o') {
         e.preventDefault();
         if (editorRef.current) {
-          editorRef.current.getAction('workbench.action.gotoSymbol')?.run();
+          editorRef.current.getAction('editor.action.quickOutline')?.run();
         }
       }
       // Ctrl+G - Go to line
-      if (e.ctrlKey && e.key === 'G') {
+      if (hasPrimaryModifier(e) && !e.shiftKey && e.key.toLowerCase() === 'g') {
         e.preventDefault();
         if (editorRef.current) {
           editorRef.current.getAction('editor.action.gotoLine')?.run();
         }
       }
       // Ctrl+F2 - Select all occurrences
-      if (e.ctrlKey && e.key === 'F2') {
+      if (hasPrimaryModifier(e) && e.key === 'F2') {
         e.preventDefault();
         if (editorRef.current) {
           editorRef.current.getAction('editor.action.selectHighlights')?.run();
@@ -1633,45 +1654,59 @@ export function EditorPanel() {
       {/* Context Menu */}
       {contextMenu && activeFile && (
         <div
-          className="fixed z-50 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg shadow-xl py-1 min-w-[180px]"
-          style={{ left: Math.min(contextMenu.x, window.innerWidth - 200), top: Math.min(contextMenu.y, window.innerHeight - 250) }}
+          className="fixed z-50 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg shadow-xl py-1 min-w-[270px]"
+          style={{ left: Math.min(contextMenu.x, window.innerWidth - 290), top: Math.min(contextMenu.y, window.innerHeight - 250) }}
           onClick={(e) => e.stopPropagation()}
         >
+          <button
+            className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
+            onClick={() => { void saveEditorFileWithFeedback(activeFile.uri); setContextMenu(null); }}
+          >
+            <span>💾</span>
+            <span className="flex-1">{t('common.save')}</span>
+            <kbd className="text-xs text-slate-400">{shortcut('CtrlOrCmd+S')}</kbd>
+          </button>
+          <div className="border-t border-slate-200 dark:border-slate-600 my-1" />
           {/* 编辑功能 - Cut/Copy/Paste */}
           <button
             className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
             onClick={() => { handleCut(); setContextMenu(null); }}
           >
             <span>✂️</span>
-            <span>剪切 (Cut)</span>
+            <span className="flex-1">{t('context.cut')}</span>
+            <kbd className="text-xs text-slate-400">{shortcut('CtrlOrCmd+X')}</kbd>
           </button>
           <button
             className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
             onClick={() => { handleCopy(); setContextMenu(null); }}
           >
             <span>📋</span>
-            <span>复制 (Copy)</span>
+            <span className="flex-1">{t('context.copy')}</span>
+            <kbd className="text-xs text-slate-400">{shortcut('CtrlOrCmd+C')}</kbd>
           </button>
           <button
             className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
             onClick={() => { handlePaste(); setContextMenu(null); }}
           >
             <span>📝</span>
-            <span>粘贴 (Paste)</span>
+            <span className="flex-1">{t('context.paste')}</span>
+            <kbd className="text-xs text-slate-400">{shortcut('CtrlOrCmd+V')}</kbd>
           </button>
           <button
             className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
             onClick={() => { handleSelectAll(); setContextMenu(null); }}
           >
             <span>☑️</span>
-            <span>全选 (Select All)</span>
+            <span className="flex-1">{t('common.selectAll')}</span>
+            <kbd className="text-xs text-slate-400">{shortcut('CtrlOrCmd+A')}</kbd>
           </button>
           <button
             className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
             onClick={() => { handleFormat(); setContextMenu(null); }}
           >
             <span>✨</span>
-            <span>格式化代码 (Format)</span>
+            <span className="flex-1">{t('context.format')}</span>
+            <kbd className="text-xs text-slate-400">{shortcut('Shift+Alt+F')}</kbd>
           </button>
           <button
             className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
@@ -1683,7 +1718,8 @@ export function EditorPanel() {
             }}
           >
             <span>💬</span>
-            <span>注释/取消注释 (Ctrl+/)</span>
+            <span className="flex-1">{t('context.toggleComment')}</span>
+            <kbd className="text-xs text-slate-400">{shortcut('CtrlOrCmd+/')}</kbd>
           </button>
           <button
             className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
@@ -1695,7 +1731,8 @@ export function EditorPanel() {
             }}
           >
             <span>🔍</span>
-            <span>选中所有匹配 (Ctrl+F2)</span>
+            <span className="flex-1">{t('context.selectMatches')}</span>
+            <kbd className="text-xs text-slate-400">{shortcut('CtrlOrCmd+F2')}</kbd>
           </button>
           <button
             className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
@@ -1707,19 +1744,21 @@ export function EditorPanel() {
             }}
           >
             <span>📍</span>
-            <span>跳转到行 (Ctrl+G)</span>
+            <span className="flex-1">{t('context.goToLine')}</span>
+            <kbd className="text-xs text-slate-400">{shortcut('CtrlOrCmd+G')}</kbd>
           </button>
           <button
             className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
             onClick={() => {
               if (editorRef.current) {
-                editorRef.current.getAction('workbench.action.gotoSymbol')?.run();
+                editorRef.current.getAction('editor.action.quickOutline')?.run();
               }
               setContextMenu(null);
             }}
           >
             <span>📑</span>
-            <span>跳转到大纲 (Ctrl+Shift+O)</span>
+            <span className="flex-1">{t('context.goToOutline')}</span>
+            <kbd className="text-xs text-slate-400">{shortcut('CtrlOrCmd+Shift+O')}</kbd>
           </button>
           <div className="border-t border-slate-200 dark:border-slate-600 my-1" />
           <button
@@ -1727,7 +1766,7 @@ export function EditorPanel() {
             onClick={() => { handleReferenceForAi(); setContextMenu(null); }}
           >
             <span className="font-mono font-bold">@</span>
-            <span>引用到 AI 上下文</span>
+            <span>{t('context.referenceAi')}</span>
           </button>
           <div className="border-t border-slate-200 dark:border-slate-600 my-1" />
           <button
@@ -1735,7 +1774,7 @@ export function EditorPanel() {
             onClick={() => { handleCompareWithRemote(); setContextMenu(null); }}
           >
             <span>🔄</span>
-            <span>与远程版本比较 (Compare with Remote)</span>
+            <span>{t('context.compareRemote')}</span>
           </button>
           <div className="border-t border-slate-200 dark:border-slate-600 my-1" />
           {(activeFile.type === 'SS' || activeFile.type === 'APPSS' || activeFile.type === 'AppServerScript' || activeFile.type === 'ServerScript') && (
@@ -1745,7 +1784,7 @@ export function EditorPanel() {
                 onClick={() => { handleRunScript(); setContextMenu(null); }}
               >
                 <span>▶️</span>
-                <span>运行脚本 (Run Script)</span>
+                <span>{t('context.runScript')}</span>
               </button>
               <div className="border-t border-slate-200 dark:border-slate-600 my-1" />
             </>
@@ -1775,7 +1814,7 @@ export function EditorPanel() {
             onClick={() => handleGoTo('auto')}
           >
             <span>🔍</span>
-            <span>转到项目 (Go to Item)</span>
+            <span>{t('context.goToItem')}</span>
           </button>
           <div className="border-t border-slate-200 dark:border-slate-600 my-1" />
           <button
@@ -1783,28 +1822,28 @@ export function EditorPanel() {
             onClick={() => handleGoTo('server')}
           >
             <span>🖥️</span>
-            <span>转到服务端脚本</span>
+            <span>{t('context.goToServerScript')}</span>
           </button>
           <button
             className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
             onClick={() => handleGoTo('client')}
           >
             <span>🖱️</span>
-            <span>转到客户端脚本</span>
+            <span>{t('context.goToClientScript')}</span>
           </button>
           <button
             className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
             onClick={() => handleGoTo('datasource')}
           >
             <span>🗃️</span>
-            <span>转到数据源</span>
+            <span>{t('context.goToDataSource')}</span>
           </button>
           <button
             className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
             onClick={() => handleGoTo('form')}
           >
             <span>🌐</span>
-            <span>转到表单</span>
+            <span>{t('context.goToForm')}</span>
           </button>
           <div className="border-t border-slate-200 dark:border-slate-600 my-1" />
           <button
@@ -1812,28 +1851,28 @@ export function EditorPanel() {
             onClick={() => { handleCheckOut(); setContextMenu(null); }}
           >
             <span>📤</span>
-            <span>签出 (Check Out)</span>
+            <span>{t('context.checkOut')}</span>
           </button>
           <button
             className="w-full px-3 py-2 text-left text-sm text-green-600 dark:text-green-400 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
             onClick={() => { handleCheckIn(); setContextMenu(null); }}
           >
             <span>📥</span>
-            <span>签入 (Check In)</span>
+            <span>{t('context.checkIn')}</span>
           </button>
           <button
             className="w-full px-3 py-2 text-left text-sm text-yellow-600 dark:text-yellow-400 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
             onClick={() => { handleUndoCheckOut(); setContextMenu(null); }}
           >
             <span>↩️</span>
-            <span>撤销签出 (Undo Check Out)</span>
+            <span>{t('context.undoCheckOut')}</span>
           </button>
           <div className="border-t border-slate-200 dark:border-slate-600 my-1" />
           <button
             className="w-full px-3 py-2 text-left text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
             onClick={() => setContextMenu(null)}
           >
-            取消
+            {t('common.cancel')}
           </button>
         </div>
       )}
@@ -1860,28 +1899,28 @@ export function EditorPanel() {
               onClick={() => { handleCloseFile(tabContextMenu.fileUri); setTabContextMenu(null); }}
             >
               <span>✕</span>
-              <span>关闭</span>
+              <span>{t('common.close')}</span>
             </button>
             <button
               className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
               onClick={() => { handleCloseOthers(tabContextMenu.fileUri); setTabContextMenu(null); }}
             >
               <span>✕</span>
-              <span>关闭其他</span>
+              <span>{t('context.closeOthers')}</span>
             </button>
             <button
               className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
               onClick={() => { handleCloseSaved(); setTabContextMenu(null); }}
             >
               <span>✓</span>
-              <span>关闭已保存</span>
+              <span>{t('context.closeSaved')}</span>
             </button>
             <button
               className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
               onClick={() => { handleCloseAll(); setTabContextMenu(null); }}
             >
               <span>✕</span>
-              <span>全部关闭</span>
+              <span>{t('context.closeAll')}</span>
             </button>
           </div>
           <div

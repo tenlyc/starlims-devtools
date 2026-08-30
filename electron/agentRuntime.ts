@@ -8,10 +8,46 @@ type JsonRpcId = number | string;
 type JsonObject = Record<string, any>;
 type Emit = (event: AgentEvent) => void;
 
+export function normalizeCodexModels(result: unknown): AgentModelOption[] {
+  const payload = result as JsonObject | undefined;
+  const candidates = Array.isArray(result)
+    ? result
+    : Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload?.models)
+        ? payload.models
+        : Array.isArray(payload?.items)
+          ? payload.items
+          : [];
+  const seen = new Set<string>();
+  return candidates.flatMap((candidate: unknown) => {
+    if (!candidate || typeof candidate !== 'object') return [];
+    const model = candidate as JsonObject;
+    const id = [model.model, model.id, model.slug].find((value) => typeof value === 'string' && value.trim())?.trim();
+    if (!id || model.hidden || seen.has(id)) return [];
+    seen.add(id);
+    return [{
+      id,
+      name: typeof model.displayName === 'string' && model.displayName.trim()
+        ? model.displayName
+        : typeof model.name === 'string' && model.name.trim() ? model.name : id,
+      description: typeof model.description === 'string' ? model.description : undefined,
+      isDefault: Boolean(model.isDefault ?? model.default)
+    }];
+  });
+}
+
 export function isReadOnlyAgentToolBlocked(toolName: string): boolean {
   const normalizedTool = toolName.split('__').pop() || toolName;
   return ['Bash', 'Edit', 'Write', 'NotebookEdit'].includes(toolName)
     || ['checkout_item', 'save_item', 'checkin_item', 'undo_checkout', 'execute_server_script', 'execute_data_source'].includes(normalizedTool);
+}
+
+function isPotentiallyUnsafeAgentTool(toolName: string): boolean {
+  const normalizedTool = toolName.split('__').pop() || toolName;
+  if (toolName === 'Bash') return true;
+  if (toolName.startsWith('mcp__') && !toolName.startsWith('mcp__starlims__')) return true;
+  return ['checkin_item', 'undo_checkout', 'execute_server_script', 'execute_data_source'].includes(normalizedTool);
 }
 
 function safeMcpName(value: string): string {
@@ -98,14 +134,7 @@ export class CodexAppServerRuntime {
   async models(): Promise<AgentModelOption[]> {
     await this.ensureStarted();
     const result = await this.request('model/list', { limit: 100 });
-    return (Array.isArray(result?.data) ? result.data : [])
-      .filter((model: JsonObject) => !model.hidden && typeof model.model === 'string')
-      .map((model: JsonObject) => ({
-        id: model.model,
-        name: model.displayName || model.model,
-        description: model.description || undefined,
-        isDefault: !!model.isDefault
-      }));
+    return normalizeCodexModels(result);
   }
 
   async send(prompt: string, model?: string, toolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes'): Promise<AgentStartResult> {
@@ -117,8 +146,8 @@ export class CodexAppServerRuntime {
     if (!this.threadId) {
       const result = await this.request('thread/start', {
         cwd: this.cwd(),
-        approvalPolicy: 'on-request',
-        sandbox: toolPermissionPolicy === 'read-only' ? 'read-only' : 'workspace-write',
+        approvalPolicy: toolPermissionPolicy === 'full-access' ? 'never' : toolPermissionPolicy === 'auto-safe' ? 'on-request' : 'untrusted',
+        sandbox: toolPermissionPolicy === 'read-only' ? 'read-only' : toolPermissionPolicy === 'full-access' ? 'danger-full-access' : 'workspace-write',
         serviceName: 'starlims-devtools',
         developerInstructions: 'You are the coding agent inside STARLIMS DevTools. Use the required starlims MCP server for remote STARLIMS data and changes. Never claim a remote operation succeeded unless the MCP tool confirms it.',
         ...(requestedModel ? { model: requestedModel } : {})
@@ -334,155 +363,16 @@ export class CodexAppServerRuntime {
   }
 }
 
-type ClaudeQuery = { close: () => void; [Symbol.asyncIterator]: () => AsyncIterator<any> };
-
-export class ClaudeAgentRuntime {
-  private sessionId?: string;
-  private sessionPermissionPolicy?: AgentToolPermissionPolicy;
-  private active?: ClaudeQuery;
-  private readonly approvals = new Map<string, {
-    resolve: (value: any) => void;
-    suggestions?: any[];
-    toolUseID: string;
-  }>();
-
-  constructor(private readonly mcpUrl: () => string, private readonly cwd: () => string, private readonly getVersion: () => string, private readonly emit: Emit) {}
-
-  async status(): Promise<AgentRuntimeStatus> {
-    try {
-      await import('@anthropic-ai/claude-agent-sdk');
-      return { available: true, runtime: 'agent-sdk', version: 'Claude Agent SDK 0.3.251', command: 'bundled Claude Code runtime' };
-    } catch (error) {
-      return { available: false, runtime: 'agent-sdk', detail: error instanceof Error ? error.message : String(error) };
-    }
-  }
-
-  async send(prompt: string, toolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes'): Promise<AgentStartResult> {
-    if (this.active) throw new Error('Claude is already processing a turn.');
-    if (this.sessionId && this.sessionPermissionPolicy !== toolPermissionPolicy) this.newSession();
-    this.sessionPermissionPolicy = toolPermissionPolicy;
-    const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    let streamedText = false;
-    const active = query({
-      prompt,
-      options: {
-        cwd: this.cwd(),
-        resume: this.sessionId,
-        includePartialMessages: true,
-        permissionMode: 'default',
-        ...(toolPermissionPolicy === 'read-only' ? {
-          disallowedTools: [
-            'Bash', 'Edit', 'Write', 'NotebookEdit',
-            'mcp__starlims__checkout_item', 'mcp__starlims__save_item', 'mcp__starlims__checkin_item',
-            'mcp__starlims__undo_checkout', 'mcp__starlims__execute_server_script', 'mcp__starlims__execute_data_source'
-          ]
-        } : {}),
-        systemPrompt: {
-          type: 'preset', preset: 'claude_code',
-          append: 'You are embedded in STARLIMS DevTools. Use the starlims MCP tools for remote STARLIMS objects, source code, logs, tables, check-out state, and remote changes. Never fabricate remote state.'
-        },
-        tools: { type: 'preset', preset: 'claude_code' },
-        mcpServers: {
-          starlims: { type: 'http', url: this.mcpUrl(), alwaysLoad: true, timeout: 60_000 }
-        },
-        strictMcpConfig: true,
-        env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: `starlims-devtools/${this.getVersion()}` },
-        canUseTool: (toolName, input, options) => new Promise((resolve) => {
-          const readOnlyBlocked = toolPermissionPolicy === 'read-only' && isReadOnlyAgentToolBlocked(toolName);
-          if (readOnlyBlocked) {
-            resolve({ behavior: 'deny', message: `Tool '${toolName}' is blocked by the current read-only conversation mode.`, interrupt: false, toolUseID: options.toolUseID });
-            return;
-          }
-          const requestId = `claude:${options.requestId}:${randomUUID()}`;
-          this.approvals.set(requestId, { resolve, suggestions: options.suggestions, toolUseID: options.toolUseID });
-          this.emit({
-            provider: 'claude', type: 'approval', requestId, kind: toolName.startsWith('mcp__') ? 'permissions' : toolName === 'Bash' ? 'command' : 'file',
-            sessionId: this.sessionId, itemId: options.toolUseID,
-            title: options.title || `Allow ${options.displayName || toolName}?`,
-            detail: options.description || stringify(input),
-            canAcceptForSession: Boolean(options.suggestions?.length)
-          });
-        })
-      }
-    }) as ClaudeQuery;
-    this.active = active;
-    void (async () => {
-      try {
-        for await (const message of active) {
-          if (message.session_id && !this.sessionId) {
-            this.sessionId = message.session_id;
-            this.emit({ provider: 'claude', type: 'session', sessionId: this.sessionId, title: 'Claude Agent SDK connected' });
-          }
-          if (message.type === 'stream_event') {
-            const event = message.event;
-            if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-              streamedText = true;
-              this.emit({ provider: 'claude', type: 'text-delta', sessionId: this.sessionId, itemId: message.uuid, text: event.delta.text });
-            }
-          } else if (message.type === 'assistant') {
-            for (const block of message.message?.content || []) {
-              if (block.type === 'tool_use') {
-                this.emit({ provider: 'claude', type: 'item', sessionId: this.sessionId, itemId: block.id, kind: block.name?.startsWith('mcp__') ? 'mcp' : block.name === 'Bash' ? 'command' : 'file', status: 'running', title: block.name, detail: stringify(block.input) });
-              }
-            }
-          } else if (message.type === 'user' && message.tool_use_result !== undefined) {
-            const contents = Array.isArray(message.message?.content) ? message.message.content : [];
-            for (const block of contents) {
-              if (block.type === 'tool_result') this.emit({ provider: 'claude', type: 'item', sessionId: this.sessionId, itemId: block.tool_use_id, status: block.is_error ? 'failed' : 'completed', output: stringify(message.tool_use_result) });
-            }
-          } else if (message.type === 'tool_progress') {
-            this.emit({ provider: 'claude', type: 'item-output', sessionId: this.sessionId, itemId: message.tool_use_id, output: `Running ${message.tool_name} (${message.elapsed_time_seconds}s)…\n` });
-          } else if (message.type === 'result') {
-            if (!streamedText && message.subtype === 'success' && message.result) this.emit({ provider: 'claude', type: 'text-delta', sessionId: this.sessionId, text: message.result });
-            if (message.is_error) this.emit({ provider: 'claude', type: 'error', sessionId: this.sessionId, text: message.errors?.join('\n') || message.result || message.subtype });
-            else this.emit({ provider: 'claude', type: 'done', sessionId: this.sessionId, status: 'completed', text: `${message.num_turns} turn(s)` });
-          }
-        }
-      } catch (error) {
-        this.emit({ provider: 'claude', type: 'error', sessionId: this.sessionId, text: error instanceof Error ? error.message : String(error) });
-      } finally {
-        this.active = undefined;
-      }
-    })();
-    return { sessionId: this.sessionId };
-  }
-
-  interrupt(): void {
-    this.active?.close();
-    this.active = undefined;
-    this.emit({ provider: 'claude', type: 'done', sessionId: this.sessionId, status: 'declined', text: 'Interrupted' });
-  }
-
-  newSession(): void {
-    this.interrupt();
-    this.sessionId = undefined;
-    this.sessionPermissionPolicy = undefined;
-  }
-
-  respond(requestId: string, decision: AgentApprovalDecision): void {
-    const approval = this.approvals.get(requestId);
-    if (!approval) throw new Error('Approval request is no longer active.');
-    this.approvals.delete(requestId);
-    if (decision === 'accept' || decision === 'acceptForSession') {
-      approval.resolve({ behavior: 'allow', toolUseID: approval.toolUseID, ...(decision === 'acceptForSession' && approval.suggestions ? { updatedPermissions: approval.suggestions } : {}) });
-    } else {
-      approval.resolve({ behavior: 'deny', message: decision === 'cancel' ? 'Cancelled by user.' : 'Declined by user.', interrupt: decision === 'cancel', toolUseID: approval.toolUseID });
-    }
-  }
-}
-
 export class AgentRuntimeManager {
   readonly codex: CodexAppServerRuntime;
-  readonly claude: ClaudeAgentRuntime;
 
   constructor(options: { codexCommand: () => string; mcpUrl: () => string; externalMcpServers: () => ExternalMcpServers; cwd: () => string; getVersion: () => string; emit: Emit }) {
     this.codex = new CodexAppServerRuntime(options.codexCommand, options.mcpUrl, options.cwd, options.getVersion, options.emit, options.externalMcpServers);
-    this.claude = new ClaudeAgentRuntime(options.mcpUrl, options.cwd, options.getVersion, options.emit);
   }
 
   async statuses(openCodeStatus: () => Promise<AgentRuntimeStatus>): Promise<Partial<Record<AgentProvider, AgentRuntimeStatus>>> {
-    const [codex, claude, opencode] = await Promise.all([this.codex.status(), this.claude.status(), openCodeStatus()]);
-    return { codex, claude, opencode };
+    const [codex, opencode] = await Promise.all([this.codex.status(), openCodeStatus()]);
+    return { codex, opencode };
   }
 
   models(provider: AgentProvider): Promise<AgentModelOption[]> {
@@ -492,24 +382,20 @@ export class AgentRuntimeManager {
 
   send(provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes'): Promise<AgentStartResult> {
     if (provider === 'codex') return this.codex.send(prompt, model, toolPermissionPolicy);
-    if (provider === 'claude') return this.claude.send(prompt, toolPermissionPolicy);
-    throw new Error('OpenCode remains in CLI compatibility mode.');
+    throw new Error('This provider remains in CLI compatibility mode.');
   }
 
   async interrupt(provider: AgentProvider): Promise<void> {
     if (provider === 'codex') await this.codex.interrupt();
-    else if (provider === 'claude') this.claude.interrupt();
   }
 
   async newSession(provider: AgentProvider): Promise<void> {
     if (provider === 'codex') await this.codex.newSession();
-    else if (provider === 'claude') this.claude.newSession();
   }
 
   respond(provider: AgentProvider, requestId: string, decision: AgentApprovalDecision): void {
     if (provider === 'codex') this.codex.respond(requestId, decision);
-    else if (provider === 'claude') this.claude.respond(requestId, decision);
   }
 
-  dispose(): void { this.codex.dispose(); this.claude.interrupt(); }
+  dispose(): void { this.codex.dispose(); }
 }

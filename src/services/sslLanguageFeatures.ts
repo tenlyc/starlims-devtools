@@ -30,6 +30,11 @@ import {
 } from '../lsp/ssl/navigation';
 import { DiagnosticLevel, useDiagnosticStore } from './diagnosticStore';
 import { useOutputLogStore } from './outputLogStore';
+import type { NativeSslDiagnostic, NativeSslFunction, NativeSslInventory } from '../types/sslLsp';
+import { preserveDesignerIncludes } from './sslLspCompatibility';
+import { editorStore } from '../stores/editorStore';
+import { resolveEditorLanguage } from './editorLanguage';
+import type { NativeLspLocation, NativeLspWorkspaceEdit } from '../types/sslLsp';
 
 const OWNER = 'starlims-ssl-lsp';
 const KEYWORDS = [
@@ -42,9 +47,49 @@ const KEYWORDS = [
 ];
 
 let registered = false;
+let nativeInventory: NativeSslInventory | null = null;
 const modelListeners = new Map<string, Monaco.IDisposable>();
 const validationTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const validationSummaries = new Map<string, string>();
+
+async function ensureWorkspaceModel(monaco: typeof Monaco, uri: string, activate = false): Promise<Monaco.editor.ITextModel | null> {
+  const parsedUri = monaco.Uri.parse(uri);
+  const existing = monaco.editor.getModel(parsedUri);
+  if (existing) return existing;
+  const document = await window.electronAPI?.sslLspWorkspaceDocument?.(uri);
+  if (!document) return null;
+  const file = {
+    uri: document.sourceUri,
+    name: document.name,
+    type: document.type,
+    language: document.language,
+    content: document.content,
+    baselineContent: document.content,
+    isDirty: false
+  };
+  const previousActive = editorStore.getState().activeFileUri;
+  editorStore.getState().openFile(file);
+  if (!activate && previousActive) editorStore.getState().setActiveFile(previousActive);
+  const modelUri = monaco.Uri.parse(document.sourceUri);
+  return monaco.editor.getModel(modelUri)
+    || monaco.editor.createModel(document.content, resolveEditorLanguage(document.type, document.language), modelUri);
+}
+
+async function prepareLocations(monaco: typeof Monaco, locations: NativeLspLocation[], activateFirst = false): Promise<Monaco.languages.Location[]> {
+  const prepared: Monaco.languages.Location[] = [];
+  for (const [index, location] of locations.entries()) {
+    const model = await ensureWorkspaceModel(monaco, location.uri, activateFirst && index === 0);
+    if (!model && !monaco.editor.getModel(monaco.Uri.parse(location.uri))) continue;
+    prepared.push({ uri: monaco.Uri.parse(location.uri), range: range(monaco, location.range) });
+  }
+  return prepared;
+}
+
+async function prepareWorkspaceEdit(monaco: typeof Monaco, edit: NativeLspWorkspaceEdit | null): Promise<Monaco.languages.WorkspaceEdit | null> {
+  if (!edit?.changes) return null;
+  for (const uri of Object.keys(edit.changes)) await ensureWorkspaceModel(monaco, uri);
+  return workspaceEdit(monaco, edit);
+}
 
 function documentFor(model: Monaco.editor.ITextModel): TextDocument {
   return TextDocument.create(model.uri.toString(), 'ssl', model.getVersionId(), model.getValue());
@@ -76,8 +121,18 @@ function modelUri(model: Monaco.editor.ITextModel): string {
   return model.uri.path || model.uri.toString();
 }
 
-function validate(monaco: typeof Monaco, model: Monaco.editor.ITextModel): void {
-  if (model.isDisposed() || model.getLanguageId() !== 'ssl') return;
+function supportsNativeSsl(model: Monaco.editor.ITextModel): boolean {
+  return model.getLanguageId() === 'ssl' || model.getLanguageId() === 'slsql';
+}
+
+function validateLocal(monaco: typeof Monaco, model: Monaco.editor.ITextModel): void {
+  if (model.isDisposed() || model.getLanguageId() !== 'ssl') {
+    if (!model.isDisposed()) {
+      monaco.editor.setModelMarkers(model, OWNER, []);
+      useDiagnosticStore.getState().clearDiagnostics(modelUri(model));
+    }
+    return;
+  }
   try {
     const { ast, errors } = analyze(model);
     const diagnostics = [
@@ -144,26 +199,112 @@ function validate(monaco: typeof Monaco, model: Monaco.editor.ITextModel): void 
   }
 }
 
+function nativeSeverity(monaco: typeof Monaco, value: NativeSslDiagnostic['severity']): Monaco.MarkerSeverity {
+  if (value === 'error') return monaco.MarkerSeverity.Error;
+  if (value === 'warning') return monaco.MarkerSeverity.Warning;
+  if (value === 'info') return monaco.MarkerSeverity.Info;
+  return monaco.MarkerSeverity.Hint;
+}
+
+function nativeDiagnosticLevel(value: NativeSslDiagnostic['severity']): DiagnosticLevel {
+  if (value === 'error') return 'error';
+  if (value === 'warning') return 'warning';
+  return 'info';
+}
+
+async function validate(monaco: typeof Monaco, model: Monaco.editor.ITextModel): Promise<void> {
+  if (model.isDisposed() || !supportsNativeSsl(model)) return;
+  const api = window.electronAPI;
+  if (!api?.sslLspValidate) {
+    validateLocal(monaco, model);
+    return;
+  }
+  const version = model.getVersionId();
+  const uri = modelUri(model);
+  try {
+    const result = await api.sslLspValidate(model.getValue(), {
+      dataSource: model.getLanguageId() === 'slsql',
+      hungarianTypes: true
+    });
+    if (model.isDisposed() || model.getVersionId() !== version) return;
+    if (!result.available || result.error) {
+      validateLocal(monaco, model);
+      return;
+    }
+    // STARLIMS supports the Designer-style #include directive without a
+    // trailing semicolon. Preserve that DevTools compatibility rule even
+    // when consuming upstream diagnostics.
+    const diagnostics = result.diagnostics.filter((item) => {
+      const line = model.getLineContent(Math.max(1, Math.min(model.getLineCount(), item.line))).trim();
+      return !(line.toLowerCase().startsWith('#include ') && /semicolon|unknown token|unknown keyword/i.test(`${item.code || ''} ${item.message}`));
+    });
+    monaco.editor.setModelMarkers(model, OWNER, diagnostics.map((item) => ({
+      severity: nativeSeverity(monaco, item.severity),
+      message: item.message,
+      source: `starlims-lsp v${result.version || 'native'}`,
+      code: item.code,
+      startLineNumber: Math.max(1, item.line),
+      startColumn: Math.max(1, item.column),
+      endLineNumber: Math.max(1, item.line),
+      endColumn: Math.max(2, item.column + 1)
+    })));
+    useDiagnosticStore.getState().setDiagnostics(uri, diagnostics.map((item, index) => ({
+      id: `${uri}:${item.line}:${item.column}:${item.code || index}`,
+      uri,
+      level: nativeDiagnosticLevel(item.severity),
+      message: item.message,
+      source: `starlims-lsp v${result.version || 'native'}`,
+      code: item.code,
+      line: Math.max(1, item.line),
+      column: Math.max(1, item.column),
+      endLine: Math.max(1, item.line),
+      endColumn: Math.max(2, item.column + 1)
+    })));
+    const errorCount = diagnostics.filter((item) => item.severity === 'error').length;
+    const warningCount = diagnostics.filter((item) => item.severity === 'warning').length;
+    const infoCount = diagnostics.length - errorCount - warningCount;
+    const summary = `native:${errorCount}:${warningCount}:${infoCount}`;
+    if (validationSummaries.get(uri) !== summary) {
+      validationSummaries.set(uri, summary);
+      useOutputLogStore.getState().addEntry({
+        channel: 'ssl-language',
+        level: errorCount ? 'error' : warningCount ? 'warning' : 'info',
+        source: `starlims-lsp v${result.version || 'native'}`,
+        message: `${uri}: ${errorCount} error(s), ${warningCount} warning(s), ${infoCount} information message(s)`
+      });
+    }
+  } catch {
+    if (!model.isDisposed() && model.getVersionId() === version) validateLocal(monaco, model);
+  }
+}
+
 function scheduleValidation(monaco: typeof Monaco, model: Monaco.editor.ITextModel): void {
   const key = model.uri.toString();
   const previous = validationTimers.get(key);
   if (previous) clearTimeout(previous);
   validationTimers.set(key, setTimeout(() => {
     validationTimers.delete(key);
-    validate(monaco, model);
+    void validate(monaco, model);
   }, 250));
 }
 
 function attachModel(monaco: typeof Monaco, model: Monaco.editor.ITextModel): void {
   const key = model.uri.toString();
   modelListeners.get(key)?.dispose();
-  if (model.getLanguageId() !== 'ssl') {
+  if (!supportsNativeSsl(model)) {
     monaco.editor.setModelMarkers(model, OWNER, []);
     useDiagnosticStore.getState().clearDiagnostics(modelUri(model));
     modelListeners.delete(key);
     return;
   }
-  modelListeners.set(key, model.onDidChangeContent(() => scheduleValidation(monaco, model)));
+  const sync = () => {
+    scheduleValidation(monaco, model);
+    const openFile = editorStore.getState().openFiles.find((file) => file.uri === key);
+    if (openFile && openFile.content !== model.getValue()) editorStore.getState().updateFileContent(key, model.getValue());
+    void window.electronAPI?.sslLspDocumentSync?.({ uri: key, content: model.getValue(), version: model.getVersionId() }).catch(() => false);
+  };
+  modelListeners.set(key, model.onDidChangeContent(sync));
+  void window.electronAPI?.sslLspDocumentSync?.({ uri: key, content: model.getValue(), version: model.getVersionId() }).catch(() => false);
   scheduleValidation(monaco, model);
 }
 
@@ -187,6 +328,19 @@ function symbolKind(monaco: typeof Monaco, kind: LspSymbolKind): Monaco.language
 
 function position(item: Monaco.Position): { line: number; character: number } {
   return { line: item.lineNumber - 1, character: item.column - 1 };
+}
+
+function nativeFunctionLabel(item: NativeSslFunction): string {
+  const parameters = (item.parameters || []).map((parameter) => parameter.required === false ? `[${parameter.name}]` : parameter.name).join(', ');
+  return `${item.name}(${parameters})${item.return_type ? ` → ${item.return_type}` : ''}`;
+}
+
+function nativeFunctionAt(model: Monaco.editor.ITextModel, cursor: Monaco.Position): { item: NativeSslFunction; activeParameter: number } | null {
+  const before = model.getValue().slice(0, model.getOffsetAt(cursor));
+  const match = before.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\(([^()]*)$/);
+  if (!match) return null;
+  const item = nativeInventory?.functions.find((candidate) => candidate.name.toLowerCase() === match[1].toLowerCase());
+  return item ? { item, activeParameter: match[2].trim() ? match[2].split(',').length - 1 : 0 } : null;
 }
 
 function workspaceEdit(monaco: typeof Monaco, edit?: LspWorkspaceEdit | null): Monaco.languages.WorkspaceEdit {
@@ -219,16 +373,31 @@ export function registerSslLanguageFeatures(monaco: typeof Monaco): void {
     validationTimers.delete(key);
     useDiagnosticStore.getState().clearDiagnostics(modelUri(model));
     validationSummaries.delete(modelUri(model));
+    void window.electronAPI?.sslLspDocumentClose?.(key).catch(() => false);
   });
 
   useOutputLogStore.getState().addEntry({
     channel: 'ssl-language', level: 'success', source: 'SSL Language Server',
     message: `SSL language features initialized (${getAllBuiltinNames().length} built-in functions)`
   });
+  void window.electronAPI?.sslLspStatus?.().then((status) => {
+    useOutputLogStore.getState().addEntry({
+      channel: 'ssl-language',
+      level: status.available ? 'success' : 'warning',
+      source: 'SSL Language Server',
+      message: status.available
+        ? `Native starlims-lsp v${status.version} enabled; TypeScript language core retained as fallback.`
+        : 'Native starlims-lsp is unavailable; using the TypeScript fallback language core.'
+    });
+    if (status.available) void window.electronAPI.sslLspInventory().then((inventory) => { nativeInventory = inventory; });
+  });
 
   monaco.languages.registerDocumentFormattingEditProvider('ssl', {
-    provideDocumentFormattingEdits: (model) => {
-      const text = formatSSL(model.getValue(), DEFAULT_FORMAT_OPTIONS);
+    provideDocumentFormattingEdits: async (model) => {
+      const result = await window.electronAPI?.sslLspFormat?.(model.getValue());
+      const text = result?.available && !result.error && typeof result.content === 'string'
+        ? preserveDesignerIncludes(model.getValue(), result.content)
+        : formatSSL(model.getValue(), DEFAULT_FORMAT_OPTIONS);
       return text === model.getValue() ? [] : [{ range: model.getFullModelRange(), text }];
     }
   });
@@ -244,8 +413,14 @@ export function registerSslLanguageFeatures(monaco: typeof Monaco): void {
     provideHover: (model, position) => {
       const { ast, symbols } = analyze(model);
       const result = getHover(documentFor(model), ast, symbols, { line: position.lineNumber - 1, character: position.column - 1 });
-      if (!result) return null;
-      return { contents: markdown(result.contents), range: result.range ? range(monaco, result.range) : undefined };
+      if (result) return { contents: markdown(result.contents), range: result.range ? range(monaco, result.range) : undefined };
+      const word = model.getWordAtPosition(position);
+      const item = word && nativeInventory?.functions.find((candidate) => candidate.name.toLowerCase() === word.word.toLowerCase());
+      if (!item || !word) return null;
+      return {
+        contents: [{ value: `**${nativeFunctionLabel(item)}**\n\n${item.description || ''}` }],
+        range: new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn)
+      };
     }
   });
 
@@ -254,7 +429,22 @@ export function registerSslLanguageFeatures(monaco: typeof Monaco): void {
     provideSignatureHelp: (model, position) => {
       const { symbols } = analyze(model);
       const result = getSignatureHelp(documentFor(model), symbols, { line: position.lineNumber - 1, character: position.column - 1 });
-      if (!result) return null;
+      if (!result) {
+        const native = nativeFunctionAt(model, position);
+        if (!native) return null;
+        return {
+          value: {
+            activeSignature: 0,
+            activeParameter: Math.min(native.activeParameter, Math.max(0, (native.item.parameters?.length || 1) - 1)),
+            signatures: [{
+              label: nativeFunctionLabel(native.item),
+              documentation: native.item.description,
+              parameters: (native.item.parameters || []).map((parameter) => ({ label: parameter.name, documentation: parameter.description }))
+            }]
+          },
+          dispose: () => undefined
+        };
+      }
       return {
         value: {
           activeSignature: result.activeSignature || 0,
@@ -280,19 +470,31 @@ export function registerSslLanguageFeatures(monaco: typeof Monaco): void {
     provideCompletionItems: (model, position) => {
       const word = model.getWordUntilPosition(position);
       const replaceRange = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
-      const keywordItems = KEYWORDS.map((label) => ({ label, kind: monaco.languages.CompletionItemKind.Keyword, insertText: label, range: replaceRange }));
-      const builtinItems = getAllBuiltinNames().map((label) => {
+      const nativeKeywords = (nativeInventory?.keywords || []).map((keyword) => keyword.startsWith(':') ? keyword : `:${keyword}`);
+      const keywordItems = [...new Set([...KEYWORDS, ...nativeKeywords])].map((label) => ({ label, kind: monaco.languages.CompletionItemKind.Keyword, insertText: label, range: replaceRange }));
+      const nativeFunctions = new Map((nativeInventory?.functions || []).map((item) => [item.name.toLowerCase(), item]));
+      const builtinNames = [...new Set([...getAllBuiltinNames(), ...(nativeInventory?.functions || []).map((item) => item.name)])];
+      const builtinItems = builtinNames.map((label) => {
         const item = getBuiltinFunction(label)?.[0];
+        const native = nativeFunctions.get(label.toLowerCase());
         return {
           label,
           kind: monaco.languages.CompletionItemKind.Function,
           insertText: label,
-          detail: item ? `${item.library} — ${item.signature}` : 'SSL builtin',
-          documentation: item?.description,
+          detail: native ? nativeFunctionLabel(native) : item ? `${item.library} — ${item.signature}` : 'SSL builtin',
+          documentation: native?.description || item?.description,
           range: replaceRange
         };
       });
-      return { suggestions: [...keywordItems, ...builtinItems] };
+      const classItems = (nativeInventory?.classes || []).map((item) => ({
+        label: item.name,
+        kind: monaco.languages.CompletionItemKind.Class,
+        insertText: item.name,
+        detail: item.summary || 'SSL class',
+        documentation: item.summary,
+        range: replaceRange
+      }));
+      return { suggestions: [...keywordItems, ...builtinItems, ...classItems] };
     }
   });
 
@@ -318,7 +520,11 @@ export function registerSslLanguageFeatures(monaco: typeof Monaco): void {
   });
 
   monaco.languages.registerDefinitionProvider('ssl', {
-    provideDefinition: (model, cursor) => {
+    provideDefinition: async (model, cursor) => {
+      try {
+        const locations = await window.electronAPI?.sslLspDefinition?.(model.uri.toString(), position(cursor));
+        if (locations?.length) return await prepareLocations(monaco, locations, true);
+      } catch { /* TypeScript core remains the offline fallback. */ }
       const { ast, symbols } = analyze(model);
       const result = findDefinition(documentFor(model), ast, symbols, position(cursor));
       return result ? { uri: monaco.Uri.parse(result.uri), range: range(monaco, result.range) } : null;
@@ -326,7 +532,11 @@ export function registerSslLanguageFeatures(monaco: typeof Monaco): void {
   });
 
   monaco.languages.registerReferenceProvider('ssl', {
-    provideReferences: (model, cursor) => {
+    provideReferences: async (model, cursor) => {
+      try {
+        const locations = await window.electronAPI?.sslLspReferences?.(model.uri.toString(), position(cursor));
+        if (locations?.length) return await prepareLocations(monaco, locations);
+      } catch { /* TypeScript core remains the offline fallback. */ }
       const { ast, symbols } = analyze(model);
       return findReferences(documentFor(model), ast, symbols, position(cursor)).map((item) => ({
         uri: monaco.Uri.parse(item.uri),
@@ -336,7 +546,12 @@ export function registerSslLanguageFeatures(monaco: typeof Monaco): void {
   });
 
   monaco.languages.registerRenameProvider('ssl', {
-    provideRenameEdits: (model, cursor, newName) => {
+    provideRenameEdits: async (model, cursor, newName) => {
+      try {
+        const nativeEdit = await window.electronAPI?.sslLspRename?.(model.uri.toString(), position(cursor), newName);
+        const prepared = await prepareWorkspaceEdit(monaco, nativeEdit || null);
+        if (prepared?.edits.length) return prepared;
+      } catch { /* TypeScript core remains the offline fallback. */ }
       const { ast, symbols } = analyze(model);
       const edit = getRenameEdits(documentFor(model), ast, symbols, position(cursor), newName);
       return edit ? workspaceEdit(monaco, edit) : { edits: [], rejectReason: 'No renameable SSL symbol at this position.' };

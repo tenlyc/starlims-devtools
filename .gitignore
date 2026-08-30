@@ -6,6 +6,13 @@ dist/
 dist-electron/
 out/
 release/
+release-*/
+upstream-report.md
+upstream-report.json
+upstreams/reports/*
+!upstreams/reports/.gitkeep
+resources/starlims-lsp/bin/
+resources/starlims-lsp/THIRD-PARTY-NOTICES.md
 *.tsbuildinfo
 
 # Environment files

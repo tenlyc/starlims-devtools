@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { buildCliPrompt, useAiContextStore } from '../../services/aiContextStore';
@@ -7,12 +7,13 @@ import { getEnterpriseService } from '../../services/enterpriseService';
 import { permissionPolicyForMode, type ConversationMode } from '../../services/agentPermissions';
 import { GENERIC_PROFILES_STORE_KEY } from '../../services/genericAgentConfig';
 import { editorStore } from '../../stores/editorStore';
-import type { AgentApprovalDecision, AgentEvent, AgentItemKind, AgentModelOption, AgentProvider, AgentRuntimeStatus, GenericAgentConfig } from '../../types/agent';
+import type { AgentApprovalDecision, AgentEvent, AgentItemKind, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentToolPermissionPolicy, GenericAgentConfig } from '../../types/agent';
 import type { EnterpriseItem } from '../../services/iEnterpriseService';
 import { useI18n } from '../../i18n';
 import { syncCheckedOutWorkspace } from '../../services/agentWorkspaceService';
 import { dependencyContextForPrompt, loadDependencyIndex } from '../../services/starlimsDependencyIndex';
 import { loadAiLayers, mergeAiLayers } from '../../services/aiPlatform';
+import { useMcpApprovalStore } from '../../services/mcpApprovalStore';
 
 type MessageEntry = {
   entryType: 'message';
@@ -44,6 +45,8 @@ type ApprovalEntry = {
   canAcceptForSession?: boolean;
 };
 type TimelineEntry = MessageEntry | ActivityEntry | ApprovalEntry;
+type ActivityGroupEntry = { entryType: 'activity-group'; id: string; entries: ActivityEntry[] };
+type DisplayTimelineEntry = MessageEntry | ApprovalEntry | ActivityGroupEntry;
 type ProviderConversation = { entries: TimelineEntry[]; running: boolean; sequence: number };
 type Conversations = Record<AgentProvider, ProviderConversation>;
 type McpStatus = { running: boolean; url: string; port: number; error?: string };
@@ -78,6 +81,8 @@ const GENERIC_CONFIG_STORE_KEY = 'genericAgentConfig.v1';
 const GENERIC_API_KEY_SECRET = 'generic-agent-api-key';
 const AGENT_RULES_STORE_KEY = 'agentWorkspaceInstructions.v1';
 const AGENT_MODE_STORE_KEY = 'agentConversationMode.v1';
+const AGENT_PERMISSION_STORE_KEY = 'mcpToolPermissionPolicy.v1';
+type InteractivePermissionPolicy = Exclude<AgentToolPermissionPolicy, 'read-only'>;
 
 const MODE_INSTRUCTIONS: Record<ConversationMode, string> = {
   agent: 'Agent mode: complete the request end-to-end. Inspect, use tools, edit, and verify as needed within the permissions granted by the user.',
@@ -220,6 +225,20 @@ function replaceOrAppend(entries: TimelineEntry[], entry: TimelineEntry): Timeli
   return next;
 }
 
+function groupTimelineEntries(entries: TimelineEntry[]): DisplayTimelineEntry[] {
+  const grouped: DisplayTimelineEntry[] = [];
+  for (const entry of entries) {
+    if (entry.entryType !== 'activity') {
+      grouped.push(entry);
+      continue;
+    }
+    const previous = grouped.at(-1);
+    if (previous?.entryType === 'activity-group') previous.entries.push(entry);
+    else grouped.push({ entryType: 'activity-group', id: `activity-group:${entry.id}`, entries: [entry] });
+  }
+  return grouped;
+}
+
 function applyAgentEvent(conversation: ProviderConversation, event: AgentEvent): ProviderConversation {
   if (event.type === 'text-delta' && event.text) {
     const id = `${event.provider}:message:${event.itemId || event.turnId || `response-${conversation.sequence}`}`;
@@ -320,7 +339,11 @@ export function MCPPanel() {
   const [mentionLoading, setMentionLoading] = useState(false);
   const [models, setModels] = useState<AgentModelOption[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState('');
   const [conversationMode, setConversationMode] = useState<ConversationMode>('agent');
+  const [permissionPolicy, setPermissionPolicy] = useState<InteractivePermissionPolicy>('ask-writes');
+  const [showPermissionMenu, setShowPermissionMenu] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<SavedConversation[]>([]);
   const [sessionIds, setSessionIds] = useState<Record<AgentProvider, string>>(() => ({ codex: crypto.randomUUID(), claude: crypto.randomUUID(), opencode: crypto.randomUUID(), generic: crypto.randomUUID() }));
@@ -336,10 +359,15 @@ export function MCPPanel() {
   const addAiContext = useAiContextStore((state) => state.addItem);
   const removeContext = useAiContextStore((state) => state.removeItem);
   const clearContexts = useAiContextStore((state) => state.clear);
+  const pendingMcpApprovals = useMcpApprovalStore((state) => state.pending.filter((item) => item.provider === provider));
+  const resolveMcpApproval = useMcpApprovalStore((state) => state.resolve);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const preferredCodexModelRef = useRef('');
+  const modelLoadSequenceRef = useRef(0);
   const conversation = conversations[provider];
   const { entries, running } = conversation;
+  const displayEntries = groupTimelineEntries(entries);
   const genericConfig = genericProfiles.find((profile) => profile.id === activeGenericProfileId) || genericProfiles[0];
   const genericModelChoices = genericProfiles.flatMap((profile) => normalizeModelList(profile.models, [profile.model]).map((model) => ({
     value: `${profile.id}|${encodeURIComponent(model)}`,
@@ -355,6 +383,36 @@ export function MCPPanel() {
       return { ...profile, ...next };
     }));
   };
+
+  const loadCodexModels = useCallback(async (retries = 2) => {
+    if (!window.electronAPI) return;
+    const sequence = ++modelLoadSequenceRef.current;
+    setModelsLoading(true);
+    setModelsError('');
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        const availableModels = await window.electronAPI.agentGetModels('codex');
+        if (availableModels.length === 0) throw new Error('Codex did not return any available models.');
+        if (sequence !== modelLoadSequenceRef.current) return;
+        setModels(availableModels);
+        setSelectedModel((current) => {
+          if (availableModels.some((model) => model.id === current)) return current;
+          const preferred = preferredCodexModelRef.current;
+          if (preferred && availableModels.some((model) => model.id === preferred)) return preferred;
+          return availableModels.find((model) => model.isDefault)?.id || availableModels[0].id;
+        });
+        setModelsLoading(false);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < retries) await new Promise((resolve) => window.setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    }
+    if (sequence !== modelLoadSequenceRef.current) return;
+    setModelsLoading(false);
+    setModelsError(lastError instanceof Error ? lastError.message : String(lastError || 'Unknown error'));
+  }, []);
 
   useEffect(() => {
     const refresh = async () => {
@@ -452,18 +510,31 @@ export function MCPPanel() {
   useEffect(() => {
     if (!window.electronAPI) return;
     void Promise.all([
-      window.electronAPI.agentGetModels('codex').catch(() => [] as AgentModelOption[]),
       window.electronAPI.storeGet(HISTORY_STORE_KEY).catch(() => []),
       window.electronAPI.storeGet(MODEL_STORE_KEY).catch(() => ''),
-      window.electronAPI.storeGet(AGENT_MODE_STORE_KEY).catch(() => 'agent')
-    ]).then(([availableModels, savedHistory, savedModel, savedMode]) => {
-      setModels(availableModels);
+      window.electronAPI.storeGet(AGENT_MODE_STORE_KEY).catch(() => 'agent'),
+      window.electronAPI.storeGet(AGENT_PERMISSION_STORE_KEY).catch(() => 'ask-writes')
+    ]).then(([savedHistory, savedModel, savedMode, savedPermission]) => {
       setHistory(Array.isArray(savedHistory) ? savedHistory : []);
-      const fallback = availableModels.find((model) => model.isDefault)?.id || availableModels[0]?.id || '';
-      setSelectedModel(typeof savedModel === 'string' && availableModels.some((model) => model.id === savedModel) ? savedModel : fallback);
+      preferredCodexModelRef.current = typeof savedModel === 'string' ? savedModel : '';
       if (typeof savedMode === 'string' && savedMode in MODE_INSTRUCTIONS) setConversationMode(savedMode as ConversationMode);
+      if (savedPermission === 'ask-writes' || savedPermission === 'auto-safe' || savedPermission === 'full-access') setPermissionPolicy(savedPermission);
+      void loadCodexModels();
     });
-  }, []);
+  }, [loadCodexModels]);
+
+  useEffect(() => {
+    let timer: number | undefined;
+    const reloadAfterWorkspaceChange = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void loadCodexModels(3), 250);
+    };
+    window.addEventListener('agent-workspace:configured', reloadAfterWorkspaceChange);
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      window.removeEventListener('agent-workspace:configured', reloadAfterWorkspaceChange);
+    };
+  }, [loadCodexModels]);
 
   useEffect(() => {
     if (!window.electronAPI || !selectedModel) return;
@@ -474,6 +545,15 @@ export function MCPPanel() {
     if (!window.electronAPI) return;
     void window.electronAPI.storeSet(AGENT_MODE_STORE_KEY, conversationMode);
   }, [conversationMode]);
+
+  useEffect(() => {
+    useMcpApprovalStore.getState().setActiveProvider(provider);
+  }, [provider]);
+
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    void window.electronAPI.storeSet(AGENT_PERMISSION_STORE_KEY, permissionPolicy);
+  }, [permissionPolicy]);
 
   useEffect(() => {
     const current = conversations[provider];
@@ -515,7 +595,7 @@ export function MCPPanel() {
     }));
   }), []);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [provider, entries, running]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [provider, entries, running, pendingMcpApprovals.length]);
   useEffect(() => { if (contexts.length) inputRef.current?.focus(); }, [contexts.length]);
 
   useEffect(() => {
@@ -577,6 +657,9 @@ export function MCPPanel() {
     updateConversation(selectedProvider, (current) => ({ ...current, entries: [...current.entries, userMessage], running: true, sequence: current.sequence + 1 }));
     setInput('');
     try {
+      useMcpApprovalStore.getState().setActiveProvider(selectedProvider);
+      const effectivePermissionPolicy = permissionPolicyForMode(conversationMode, permissionPolicy);
+      await window.electronAPI.storeSet(AGENT_PERMISSION_STORE_KEY, effectivePermissionPolicy);
       await syncCheckedOutWorkspace().catch((error) => {
         useOutputLogStore.getState().addEntry({
           channel: 'ai-runtime', level: 'warning', source: 'Agent Workspace',
@@ -597,13 +680,13 @@ export function MCPPanel() {
         dependencyContext
       );
       if (selectedProvider === 'generic') {
-        await window.electronAPI.genericAgentStart({ ...genericConfig, toolPermissionPolicy: permissionPolicyForMode(conversationMode) }, prompt);
+        await window.electronAPI.genericAgentStart({ ...genericConfig, toolPermissionPolicy: effectivePermissionPolicy }, prompt);
       } else if (selectedProvider === 'opencode') {
         const output = await window.electronAPI.cliExecute(selectedProvider, prompt);
         const message: MessageEntry = { entryType: 'message', id: crypto.randomUUID(), role: 'assistant', provider: selectedProvider, content: stripAnsi(output) };
         updateConversation(selectedProvider, (current) => ({ ...current, running: false, entries: [...current.entries, message] }));
       } else {
-        await window.electronAPI.agentStart(selectedProvider, prompt, selectedProvider === 'codex' ? selectedModel : undefined, permissionPolicyForMode(conversationMode));
+        await window.electronAPI.agentStart(selectedProvider, prompt, selectedProvider === 'codex' ? selectedModel : undefined, effectivePermissionPolicy);
       }
       setReplayHistory(false);
     } catch (error) {
@@ -879,21 +962,37 @@ export function MCPPanel() {
       </div>}
 
       <div className="flex-1 overflow-auto bg-[#f3f3f3] px-3 py-3 font-mono text-xs leading-5 dark:bg-[#181818]">
-        {entries.length === 0 && <div className="h-full flex flex-col items-center justify-center px-5 text-center text-slate-500 dark:text-[#777]"><div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 text-slate-600 dark:border-[#333] dark:text-[#bbb]">{PROVIDERS.find((item) => item.id === provider)?.mark}</div><div className="mb-1 text-slate-700 dark:text-[#bbb]">{t('agent.askTitle', { name: title })}</div><div className="text-[11px] leading-4">{t('agent.askHint')}</div></div>}
+        {entries.length === 0 && pendingMcpApprovals.length === 0 && <div className="h-full flex flex-col items-center justify-center px-5 text-center text-slate-500 dark:text-[#777]"><div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 text-slate-600 dark:border-[#333] dark:text-[#bbb]">{PROVIDERS.find((item) => item.id === provider)?.mark}</div><div className="mb-1 text-slate-700 dark:text-[#bbb]">{t('agent.askTitle', { name: title })}</div><div className="text-[11px] leading-4">{t('agent.askHint')}</div></div>}
 
-        {entries.map((entry) => {
+        {displayEntries.map((entry) => {
           if (entry.entryType === 'message') {
             const assistantName = entry.provider === 'generic' ? (genericConfig.model || providerLabel(entry.provider)) : providerLabel(entry.provider);
             return <div key={entry.id} className="mb-4"><div className={`mb-1 text-[10px] uppercase tracking-wider ${entry.role === 'user' ? 'text-blue-600 dark:text-[#4daafc]' : entry.error ? 'text-red-600 dark:text-[#f85149]' : 'text-emerald-600 dark:text-[#3fb950]'}`}>{entry.role === 'user' ? t('agent.you') : entry.error ? t('agent.error', { name: assistantName }) : assistantName}</div>{entry.role === 'assistant' && !entry.error ? <MarkdownMessage content={entry.content} /> : <div className={`whitespace-pre-wrap break-words font-sans text-[13px] leading-6 ${entry.error ? 'text-red-700 dark:text-[#f0a09a]' : 'text-slate-800 dark:text-[#d4d4d4]'}`}>{entry.content}</div>}</div>;
           }
 
-          if (entry.entryType === 'activity') return <details key={entry.id} className="mb-2 rounded border border-slate-200 bg-slate-50 dark:border-[#333] dark:bg-[#202020]" open={entry.status === 'running' || entry.status === 'failed'}>
-            <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 text-[11px]"><span className="w-7 text-center text-blue-600 dark:text-[#4daafc]">{kindMark[entry.kind]}</span><span className="flex-1 truncate text-slate-700 dark:text-[#ccc]" title={entry.title}>{entry.title}</span><span className={entry.status === 'completed' ? 'text-emerald-600 dark:text-[#3fb950]' : entry.status === 'failed' || entry.status === 'declined' ? 'text-red-600 dark:text-[#f85149]' : 'text-amber-600 dark:text-[#d29922]'}>{entry.status}</span></summary>
-            {(entry.detail || entry.output || entry.diff) && <div className="border-t border-slate-200 px-2 py-2 text-[10px] text-slate-600 dark:border-[#333] dark:text-[#aaa]">{entry.detail && <pre className="mb-2 whitespace-pre-wrap break-all">{entry.detail}</pre>}{entry.output && <pre className="mb-2 max-h-48 overflow-auto whitespace-pre-wrap break-all text-slate-800 dark:text-[#d4d4d4]">{entry.output}</pre>}{entry.diff && <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-emerald-700 dark:text-[#7ee787]">{entry.diff}</pre>}</div>}
-          </details>;
+          if (entry.entryType === 'activity-group') {
+            const runningCount = entry.entries.filter((item) => item.status === 'running').length;
+            const failedCount = entry.entries.filter((item) => item.status === 'failed' || item.status === 'declined').length;
+            const latest = entry.entries.at(-1)!;
+            return <details key={entry.id} className="group mb-2 rounded border border-slate-200 bg-slate-50 dark:border-[#333] dark:bg-[#202020]">
+              <summary className="flex h-8 cursor-pointer list-none items-center gap-2 px-2 text-[11px]" title={latest.title}>
+                <span className="w-4 shrink-0 text-center text-slate-400 transition-transform group-open:rotate-90">›</span>
+                <span className="shrink-0 text-blue-600 dark:text-[#4daafc]">{t('agent.activity')}</span>
+                <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-[#aaa]">{latest.title}</span>
+                <span className="shrink-0 text-slate-500">{entry.entries.length}</span>
+                <span className={`shrink-0 ${failedCount ? 'text-red-600 dark:text-[#f85149]' : runningCount ? 'text-amber-600 dark:text-[#d29922]' : 'text-emerald-600 dark:text-[#3fb950]'}`}>{failedCount ? t('agent.activityFailed', { count: failedCount }) : runningCount ? t('agent.activityRunning', { count: runningCount }) : t('agent.activityCompleted')}</span>
+              </summary>
+              <div className="border-t border-slate-200 px-1.5 py-1 dark:border-[#333]">{entry.entries.map((activity) => <details key={activity.id} className="rounded hover:bg-slate-100 dark:hover:bg-[#252526]">
+                <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 px-1.5 text-[10px]"><span className="w-7 text-center text-blue-600 dark:text-[#4daafc]">{kindMark[activity.kind]}</span><span className="min-w-0 flex-1 truncate text-slate-700 dark:text-[#ccc]" title={activity.title}>{activity.title}</span><span className={activity.status === 'completed' ? 'text-emerald-600 dark:text-[#3fb950]' : activity.status === 'failed' || activity.status === 'declined' ? 'text-red-600 dark:text-[#f85149]' : 'text-amber-600 dark:text-[#d29922]'}>{activity.status}</span></summary>
+                {(activity.detail || activity.output || activity.diff) && <div className="border-t border-slate-200 px-2 py-2 text-[10px] text-slate-600 dark:border-[#333] dark:text-[#aaa]">{activity.detail && <pre className="mb-2 whitespace-pre-wrap break-all">{activity.detail}</pre>}{activity.output && <pre className="mb-2 max-h-48 overflow-auto whitespace-pre-wrap break-all text-slate-800 dark:text-[#d4d4d4]">{activity.output}</pre>}{activity.diff && <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-emerald-700 dark:text-[#7ee787]">{activity.diff}</pre>}</div>}
+              </details>)}</div>
+            </details>;
+          }
 
           return <div key={entry.id} className="mb-3 rounded border border-amber-300 bg-amber-50 p-2 text-[11px] dark:border-[#6e5b24] dark:bg-[#2b2517]"><div className="font-sans font-medium text-amber-900 dark:text-[#e3c66d]">{entry.title}</div>{entry.detail && <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-all text-amber-800 dark:text-[#c8b56a]">{entry.detail}</pre>}<div className="mt-2 flex gap-1.5 font-sans"><button className="rounded bg-blue-600 px-2 py-1 text-white" onClick={() => void answerApproval(entry, 'accept')}>{t('agent.allowOnce')}</button>{entry.canAcceptForSession && <button className="rounded border border-blue-400 px-2 py-1 text-blue-700 dark:text-[#7dcfff]" onClick={() => void answerApproval(entry, 'acceptForSession')}>{t('agent.allowSession')}</button>}<button className="rounded border border-slate-300 px-2 py-1 text-slate-600 dark:border-[#555] dark:text-[#bbb]" onClick={() => void answerApproval(entry, 'decline')}>{t('agent.decline')}</button></div></div>;
         })}
+
+        {pendingMcpApprovals.map((approval) => <div key={approval.id} className="mb-3 rounded border border-amber-300 bg-amber-50 p-2 text-[11px] dark:border-[#6e5b24] dark:bg-[#2b2517]"><div className="font-sans font-medium text-amber-900 dark:text-[#e3c66d]">{t('agent.mcpApproval', { tool: approval.tool })}</div><pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-all text-amber-800 dark:text-[#c8b56a]">{approval.detail}</pre><div className="mt-2 flex gap-1.5 font-sans"><button className="rounded bg-blue-600 px-2 py-1 text-white" onClick={() => resolveMcpApproval(approval.id, true)}>{t('agent.allowOnce')}</button><button className="rounded border border-slate-300 px-2 py-1 text-slate-600 dark:border-[#555] dark:text-[#bbb]" onClick={() => resolveMcpApproval(approval.id, false)}>{t('agent.decline')}</button></div></div>)}
 
         {running && <div className="flex items-center gap-2 text-slate-500 dark:text-[#888]"><span className="agent-pulse">●</span>{t('agent.working', { name: title })} {provider !== 'opencode' && <button className="font-sans text-red-600 hover:underline dark:text-[#f85149]" onClick={() => void (provider === 'generic' ? window.electronAPI?.genericAgentInterrupt() : window.electronAPI?.agentInterrupt(provider))}>{t('agent.stop')}</button>}</div>}
         <div ref={bottomRef} />
@@ -918,7 +1017,15 @@ export function MCPPanel() {
             </button>)}
         </div>}
         {contexts.length > 0 && <div className="flex flex-wrap gap-1.5 pb-2">{contexts.map((item) => <div key={item.id} className="max-w-full flex min-h-8 items-center gap-1 rounded border border-slate-300 bg-slate-200 py-0.5 pl-2 pr-0.5 text-[11px] text-slate-700 dark:border-[#3b3b3b] dark:bg-[#2a2d2e] dark:text-[#c5c5c5]" title={item.uri}><span className="text-blue-600 dark:text-[#4daafc]">{item.source === 'file' ? '📎' : '@'}</span><span className="max-w-[190px] truncate">{contextDisplayName(item)}</span><button className="icon-button h-7 w-7 text-base" title={t('common.close')} onClick={() => removeContext(item.id)}>×</button></div>)}{contexts.length > 1 && <button className="min-h-8 rounded px-2 text-xs text-slate-500 hover:bg-slate-200 hover:text-slate-900 dark:text-[#888] dark:hover:bg-[#2a2d2e] dark:hover:text-white" onClick={clearContexts}>{t('agent.clear')}</button>}</div>}
-        <div className="rounded-md border border-slate-300 bg-white focus-within:border-blue-500 dark:border-[#3b3b3b] dark:bg-[#202020] dark:focus-within:border-[#555]">
+        <div className="relative rounded-md border border-slate-300 bg-white focus-within:border-blue-500 dark:border-[#3b3b3b] dark:bg-[#202020] dark:focus-within:border-[#555]">
+          {showPermissionMenu && <div className="absolute bottom-10 left-2 z-40 w-[min(340px,calc(100vw-32px))] overflow-hidden rounded-lg border border-slate-300 bg-white p-1.5 font-sans shadow-2xl dark:border-[#454545] dark:bg-[#2b2b2b]">
+            <div className="px-2 py-1.5 text-xs text-slate-500 dark:text-[#aaa]">{t('agent.permissionQuestion')}</div>
+            {([
+              ['ask-writes', '✋', t('agent.permission.ask'), t('agent.permission.askHint')],
+              ['auto-safe', '◉', t('agent.permission.auto'), t('agent.permission.autoHint')],
+              ['full-access', '!', t('agent.permission.full'), t('agent.permission.fullHint')]
+            ] as const).map(([value, mark, label, hint]) => <button key={value} type="button" onClick={() => { setPermissionPolicy(value); setShowPermissionMenu(false); }} className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left hover:bg-slate-100 dark:hover:bg-[#37373d] ${value === 'full-access' ? 'text-orange-600 dark:text-[#f0883e]' : 'text-slate-800 dark:text-[#ddd]'}`}><span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border border-current text-[10px]">{mark}</span><span className="min-w-0 flex-1"><span className="block text-xs">{label}</span><span className="mt-0.5 block text-[10px] leading-4 text-slate-500 dark:text-[#999]">{hint}</span></span>{permissionPolicy === value && <span className="text-base">✓</span>}</button>)}
+          </div>}
           <textarea ref={inputRef} value={input} onChange={(event) => { setInput(event.target.value); updateMentionFromInput(event.target.value, event.target.selectionStart); }} onClick={(event) => updateMentionFromInput(event.currentTarget.value, event.currentTarget.selectionStart)} onKeyDown={(event) => {
             if (mentionQuery !== null && mentionResults.length > 0) {
               if (event.key === 'ArrowDown') { event.preventDefault(); setMentionIndex((index) => (index + 1) % mentionResults.length); return; }
@@ -933,8 +1040,9 @@ export function MCPPanel() {
             <div className="flex min-w-0 flex-1 items-center gap-1">
               <button type="button" onClick={openMentionPicker} className="icon-button text-base font-semibold text-blue-600 dark:text-[#4daafc]" title={t('agent.mentionScripts')}>@</button>
               <button type="button" onClick={() => void attachFiles()} className="icon-button text-base text-slate-600 dark:text-[#c5c5c5]" title={t('agent.attachFiles')}>📎</button>
+              <button type="button" onClick={() => setShowPermissionMenu((value) => !value)} className={`icon-button h-8 w-8 shrink-0 text-sm ${permissionPolicy === 'full-access' ? 'text-orange-600 dark:text-[#f0883e]' : permissionPolicy === 'auto-safe' ? 'text-emerald-600 dark:text-[#3fb950]' : 'text-slate-600 dark:text-[#c5c5c5]'}`} title={t(`agent.permission.${permissionPolicy}`)} aria-label={t('agent.permission')}>{permissionPolicy === 'ask-writes' ? '✋' : permissionPolicy === 'auto-safe' ? '◉' : '!'}</button>
               <select value={conversationMode} onChange={(event) => setConversationMode(event.target.value as ConversationMode)} className="h-8 min-w-0 max-w-[96px] shrink truncate rounded-md border border-slate-300 bg-transparent px-1.5 text-xs text-slate-700 outline-none hover:bg-slate-100 dark:border-[#454545] dark:bg-[#202020] dark:text-[#c5c5c5] dark:hover:bg-[#2a2d2e]" title={t(`agent.mode.${conversationMode}`)} aria-label={t('agent.mode')}><option value="agent">∞ {t('agent.mode.agent')}</option><option value="plan">☷ {t('agent.mode.plan')}</option><option value="debug">✹ {t('agent.mode.debug')}</option><option value="multitask">◎ {t('agent.mode.multitask')}</option><option value="ask">□ {t('agent.mode.ask')}</option></select>
-              {provider === 'codex' && <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} disabled={models.length === 0} className="h-8 min-w-0 max-w-[160px] flex-1 truncate rounded-md border border-slate-300 bg-transparent px-1.5 text-xs text-slate-700 outline-none dark:border-[#454545] dark:bg-[#202020] dark:text-[#c5c5c5]" title={models.find((model) => model.id === selectedModel)?.description || t('agent.model')} aria-label={t('agent.model')}>{models.length === 0 && <option value="">{t('common.loading')}</option>}{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select>}
+              {provider === 'codex' && <><select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} disabled={models.length === 0} className="h-8 min-w-0 max-w-[160px] flex-1 truncate rounded-md border border-slate-300 bg-transparent px-1.5 text-xs text-slate-700 outline-none dark:border-[#454545] dark:bg-[#202020] dark:text-[#c5c5c5]" title={modelsError || models.find((model) => model.id === selectedModel)?.description || t('agent.model')} aria-label={t('agent.model')}>{models.length === 0 && <option value="">{modelsLoading ? t('common.loading') : t('agent.modelUnavailable')}</option>}{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select>{!modelsLoading && models.length === 0 && <button type="button" onClick={() => void loadCodexModels(2)} className="icon-button h-8 w-8 shrink-0 text-base" title={`${t('agent.modelRetry')}${modelsError ? `: ${modelsError}` : ''}`} aria-label={t('agent.modelRetry')}>↻</button>}</>}
               {provider === 'generic' && <select value={genericModelSelection} onChange={(event) => selectGenericProfileModel(event.target.value)} disabled={genericModelChoices.length === 0} className="h-8 min-w-0 max-w-[180px] flex-1 truncate rounded-md border border-slate-300 bg-transparent px-1.5 text-xs text-slate-700 outline-none dark:border-[#454545] dark:bg-[#202020] dark:text-[#c5c5c5]" title={`${genericConfig.name} · ${genericConfig.model || t('agent.configure')}`} aria-label={t('agent.model')}>{genericModelChoices.length === 0 && <option value={genericModelSelection}>{t('agent.configure')}</option>}{genericModelChoices.map((choice) => <option key={choice.value} value={choice.value}>{choice.model}</option>)}</select>}
             </div>
             <button disabled={!input.trim() || running || !activeStatus?.available} onClick={() => void send()} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-600 text-base font-medium text-white transition-colors hover:bg-blue-500 disabled:bg-slate-300 disabled:text-slate-500 dark:bg-[#0e639c] dark:hover:bg-[#1177bb] dark:disabled:bg-[#333] dark:disabled:text-[#666]" title={t('agent.send')}>↑</button>

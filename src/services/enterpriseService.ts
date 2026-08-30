@@ -4,10 +4,21 @@
  */
 
 // Using native browser fetch
-import { IEnterpriseService, ServerConfig, SessionInfo, EnterpriseItem, CheckOutResult, CheckInResult, ScriptResult, SearchResult, QueryResult, ItemHistoryEntry, ItemLabelEntry, ItemVersionCode, SCMItem, LanguageOption } from './iEnterpriseService';
+import { IEnterpriseService, ServerConfig, SessionInfo, EnterpriseItem, CheckOutResult, CheckInResult, ScriptResult, DataSourceResult, SearchResult, QueryResult, ItemHistoryEntry, ItemLabelEntry, ItemVersionCode, SCMItem, LanguageOption } from './iEnterpriseService';
+import { normalizeDataSourceOutput } from './dataSourceResult';
 import { cleanUrl, isJson, getErrorMessage } from './miscUtils';
 import { isBridgeRunning, launchXFDForm, launchHTMLForm } from './bridge';
 import { useOutputLogStore } from './outputLogStore';
+
+export function isEnterpriseItemCheckedOut(item: Record<string, unknown>): boolean {
+  const flag = item.isCheckedOut ?? item.checkedOut;
+  const normalizedFlag = typeof flag === 'string' ? flag.trim().toLowerCase() : flag;
+  const checkedOutBy = item.checkedOutBy ?? item.checkedoutby ?? item.CHECKEDOUTBY;
+  return normalizedFlag === true
+    || normalizedFlag === 'true'
+    || normalizedFlag === '1'
+    || (typeof checkedOutBy === 'string' && checkedOutBy.trim().length > 0);
+}
 
 export class EnterpriseService implements IEnterpriseService {
   private config: ServerConfig | null = null;
@@ -353,7 +364,7 @@ export class EnterpriseService implements IEnterpriseService {
       uri: item.uri || item.ID || '',
       hasChildren: item.isFolder ?? item.hasChildren ?? false,
       children: item.children ? this.parseEnterpriseItems(item.children) : undefined,
-      isCheckedOut: item.checkedOut === 'true' || item.checkedOut === true,
+      isCheckedOut: isEnterpriseItemCheckedOut(item),
       checkedOutBy: item.checkedOutBy || item.checkedoutby || item.CHECKEDOUTBY,
       checkedOutDate: item.checkedOutDate || item.checkedoutdate || item.CHECKEDOUTDATE,
       version: item.ver || item.version,
@@ -1491,8 +1502,15 @@ export class EnterpriseService implements IEnterpriseService {
   /**
    * Run a data source
    */
-  async runDataSource(uri: string): Promise<ScriptResult> {
-    return this.runScript(uri); // Same implementation for now
+  async runDataSource(uri: string): Promise<DataSourceResult> {
+    const result = await this.runScript(uri);
+    const table = normalizeDataSourceOutput(result.output);
+    return {
+      ...result,
+      columns: table.columns,
+      rows: table.rows,
+      rowCount: table.rowCount
+    };
   }
 
   /**

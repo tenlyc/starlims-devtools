@@ -5,6 +5,8 @@ import { registerCheckedOutRefresh } from '../../services/checkedOutStore';
 import { ContextMenu } from '../ContextMenu';
 import { useAiContextStore } from '../../services/aiContextStore';
 import { useI18n } from '../../i18n';
+import { checkInItemWithGate, undoCheckoutWithGate } from '../../services/writeGateService';
+import { TreeItemIcon } from './TreeItemIcon';
 
 export interface CheckedOutItem {
   id: string;
@@ -230,7 +232,22 @@ export function CheckedOutTree() {
   };
 
   const handleCheckIn = async (item: CheckedOutItem) => {
-    console.log('Check in:', item);
+    try {
+      const uri = await resolveItemUri(item);
+      if (!uri) throw new Error('Could not resolve the STARLIMS item URI.');
+      const result = await checkInItemWithGate({
+        source: 'editor',
+        action: 'checkin',
+        uri,
+        language: item.language,
+        approved: true
+      });
+      if (!result.success) throw new Error(result.message || 'Check in failed.');
+      await loadCheckedOutItems();
+    } catch (error) {
+      console.error('Failed to check in:', error);
+      alert(error instanceof Error ? error.message : String(error));
+    }
   };
 
   const handleUndoCheckOut = async (item: CheckedOutItem) => {
@@ -261,7 +278,7 @@ export function CheckedOutTree() {
         }
       }
 
-      const success = await enterpriseService.undoCheckOut(uri);
+      const success = await undoCheckoutWithGate({ source: 'editor', action: 'undo-checkout', uri, language: item.language, approved: true });
       if (success) {
         // Remove the item from the list
         setItems(items.filter(i => i.id !== item.id));
@@ -272,28 +289,6 @@ export function CheckedOutTree() {
     } catch (err) {
       console.error('Failed to undo check out:', err);
     }
-  };
-
-  const itemTypeIcons: Record<string, string> = {
-    'SS': '🖥️',
-    'CS': '🖱️',
-    'DS': '🗃️',
-    'HTMLFORMXML': '🌐',
-    'HTMLFORMCODE': '📄',
-    'HTMLFORMGUIDE': '{}',
-    'HTMLFORMRESOURCES': 'XML',
-    'XFDFORMXML': '📝',
-    'XFDFORMCODE': '📄',
-    'XFDFORMRESOURCES': 'XML',
-    'TABLE': '📊',
-    'AppServerScript': 'S',
-    'ServerScript': 'S',
-    'AppClientScript': 'JS',
-    'ClientScript': 'JS',
-    'AppDataSourceScript': 'SQL',
-    'DataSourceScript': 'SQL',
-    'HTMLForm': 'HTML',
-    'DEFAULT': '•'
   };
 
   const treeNodes = buildCheckedOutTree(items);
@@ -313,10 +308,8 @@ export function CheckedOutTree() {
     return (
       <div key={node.id}>
         <div
-          className={`min-h-[24px] flex items-center py-0.5 pr-2 cursor-pointer hover:bg-slate-200 dark:hover:bg-[#2a2d2e] ${
-            item && selectedItem?.id === item.id ? 'bg-slate-200 dark:bg-[#37373d]' : ''
-          }`}
-          style={{ paddingLeft: `${level * 14 + 6}px` }}
+          className={`workbench-tree-row ${item && selectedItem?.id === item.id ? 'selected' : ''}`}
+          style={{ paddingLeft: `${level * 16 + 6}px` }}
           onClick={() => {
             if (isFolder) {
               setExpandedFolders((current) => {
@@ -337,13 +330,22 @@ export function CheckedOutTree() {
           }}
           title={item ? `${item.name}\n${item.uri || ''}\n${t('checkout.byOn', { user: item.user, date: formatDate(item.date) })}${displayLanguage ? `\n${t('checkout.language', { language: displayLanguage })}` : ''}` : node.label}
         >
-          <span className={`w-4 mr-1 text-[10px] text-slate-500 ${isFolder ? '' : 'text-transparent'}`}>
-            {isFolder ? (isExpanded ? '▼' : '▶') : '•'}
+          <span className={`workbench-tree-chevron ${isFolder ? '' : 'invisible'}`} onClick={(event) => {
+            event.stopPropagation();
+            if (!isFolder) return;
+            setExpandedFolders((current) => {
+              const next = new Set(current);
+              if (next.has(node.id)) next.delete(node.id);
+              else next.add(node.id);
+              return next;
+            });
+          }}>
+            <svg viewBox="0 0 12 12" className={isExpanded ? 'rotate-90' : ''} aria-hidden="true">
+              <path d="m4 2.5 3.5 3.5L4 9.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </span>
-          <span className={`mr-1.5 min-w-[22px] text-[10px] font-semibold ${isFolder ? 'text-amber-500' : 'text-slate-500 dark:text-[#c5c5c5]'}`}>
-            {isFolder ? '▱' : (itemTypeIcons[item?.type || 'DEFAULT'] || itemTypeIcons.DEFAULT)}
-          </span>
-          <span className={`truncate text-[12px] ${isFolder ? 'font-medium text-slate-700 dark:text-[#cccccc]' : 'text-green-700 dark:text-[#73c991]'}`}>
+          <TreeItemIcon type={item?.type || 'CATEGORY'} label={node.label} folder={isFolder} expanded={isExpanded} />
+          <span className={`workbench-tree-label ${isFolder ? 'font-medium' : 'checked-out'}`}>
             {node.label}{item ? ` ${checkoutLabel}` : ''}
           </span>
         </div>
@@ -353,54 +355,13 @@ export function CheckedOutTree() {
   };
 
   return (
-    <div className="p-2">
+    <div className="workbench-section">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2 px-2 min-h-[28px]">
-        <span className="text-[11px] font-semibold text-slate-500 dark:text-[#bbbbbb] uppercase tracking-wide truncate">{t('checkout.title')} <span className="text-slate-400 dark:text-[#777]">{items.length}</span></span>
+      <div className="workbench-section-header">
+        <span className="workbench-section-title">{t('checkout.title')} <span className="workbench-count-badge">{items.length}</span></span>
         <div className="flex items-center gap-1 flex-shrink-0">
-          {items.length > 0 && (
-            <>
-              <button
-                className="px-1.5 py-0.5 text-xs hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-white"
-                title={t('checkout.checkInAll')}
-                onClick={async () => {
-                  if (!confirm(t('checkout.checkInAllConfirm', { count: items.length }))) return;
-                  const enterpriseService = getEnterpriseService();
-                  const success = await enterpriseService.checkInAll();
-                  if (success) {
-                    loadCheckedOutItems();
-                  } else {
-                    alert(t('checkout.checkInAllFailed'));
-                  }
-                }}
-              >
-                {t('checkout.checkInAll')}
-              </button>
-              <button
-                className="px-1.5 py-0.5 text-xs hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-yellow-600 dark:text-yellow-400 hover:text-yellow-700 dark:hover:text-white"
-                title={t('checkout.exportAll')}
-                onClick={async () => {
-                  const enterpriseService = getEnterpriseService();
-                  const ids = [...new Set(items.map(item => item.guid).filter((value): value is string => !!value))];
-                  const result = await enterpriseService.exportPackage(ids);
-                  if (result.success && result.blob && result.fileName) {
-                    const url = URL.createObjectURL(result.blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = result.fileName;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    URL.revokeObjectURL(url);
-                  } else alert(result.error || t('checkout.exportFailed'));
-                }}
-              >
-                {t('checkout.export')}
-              </button>
-            </>
-          )}
           <button
-            className="icon-button"
+            className="workbench-toolbar-button"
             title={t('common.refresh')}
             onClick={loadCheckedOutItems}
           >
@@ -412,7 +373,7 @@ export function CheckedOutTree() {
       </div>
 
       {/* Content */}
-      <div className="text-slate-700 dark:text-slate-300">
+      <div className="workbench-tree-scroll text-slate-700 dark:text-slate-300">
         {isLoading ? (
           <div className="flex items-center justify-center py-8 text-slate-500 dark:text-slate-400">
             <svg className="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24">
@@ -437,11 +398,11 @@ export function CheckedOutTree() {
         <ContextMenu
           position={{ x: contextMenu.x, y: contextMenu.y }}
           items={[
-            { id: 'open', label: '打开 (Open)', icon: '📂' },
-            { id: 'reference-ai', label: '引用到 AI (@ Context)', icon: '@' },
+            { id: 'open', label: t('context.open'), icon: '📂' },
+            { id: 'reference-ai', label: t('context.referenceAi'), icon: '@' },
             { id: 'divider1', label: '', divider: true },
-            { id: 'checkin', label: '签入 (Check In)', icon: '📥' },
-            { id: 'undo', label: '撤销签出 (Undo)', icon: '↩️', danger: true },
+            { id: 'checkin', label: t('context.checkIn'), icon: '📥' },
+            { id: 'undo', label: t('context.undoCheckOut'), icon: '↩️', danger: true },
           ]}
           onClose={() => setContextMenu(null)}
           onSelect={(id) => {

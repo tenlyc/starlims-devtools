@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "sources": {
+    "starlims-lsp": {
+      "repository": "mahoskye/starlims-lsp",
+      "type": "github-release",
+      "version": "0.21.0",
+      "tag": "v0.21.0",
+      "commit": "8b553959cff2c9b4c0c9809ff8e0e2a30847f0e1",
+      "license": "MIT",
+      "reviewedAt": "2026-08-30",
+      "assets": {
+        "darwin-arm64": {
+          "name": "starlims-lsp-darwin-arm64",
+          "sha256": "491c14b0052d9c12ddcd4d6b84480d741b77fc1ea80c5aa2c8ef44e35295b278"
+        },
+        "darwin-x64": {
+          "name": "starlims-lsp-darwin-amd64",
+          "sha256": "b8317096c8b530f1f1263d046b241ad9253fed2299fe12cbb1308d820c1996dd"
+        },
+        "linux-arm64": {
+          "name": "starlims-lsp-linux-arm64",
+          "sha256": "e2845534b70965cca80dfd858dcc9aff7ca459c5012d54f79e52748ffd8b3d02"
+        },
+        "linux-x64": {
+          "name": "starlims-lsp-linux-amd64",
+          "sha256": "ec3d0c47eea26df959f3cd9aed8c3b02d628f36c24df1d0d6173d5a1a767cfd4"
+        },
+        "win32-x64": {
+          "name": "starlims-lsp-windows-amd64.exe",
+          "sha256": "ea5576d8a4b5d5fc2aff91b8563e8a0b17fa0d72fa033dc9d95b3052c55b6e8a"
+        }
+      }
+    },
+    "starlimsvscode": {
+      "repository": "MrDoe/starlimsvscode",
+      "type": "github-commit",
+      "branch": "master",
+      "commit": "92b9014244eb09a56ed589db5155c3b7914b70a2",
+      "license": "MIT",
+      "reviewedAt": "2026-08-30"
+    }
+  }
+}

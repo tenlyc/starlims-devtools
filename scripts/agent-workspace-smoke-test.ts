@@ -9,7 +9,7 @@ async function main() {
   const root = await mkdtemp(join(tmpdir(), 'starlims-agent-workspace-'));
   try {
     const manager = new AgentWorkspaceManager(root);
-    const info = await manager.configure({ serverName: 'DEV', serverUrl: 'https://example.test/lims', user: 'LIYC' });
+    const info = await manager.configure({ serverName: 'DEMO', serverUrl: 'https://starlims.example.test/LIMS', user: 'DEMO_USER' });
     const synced = await manager.syncFiles([{
       uri: '/Applications/QualityManager/Test/Server Scripts/Validate',
       name: 'Validate', type: 'APPSS', language: 'CHS', content: ':RETURN .T.;'
@@ -32,7 +32,9 @@ async function main() {
     assert.equal(changes.length, 1);
     assert.equal(changes[0].before, ':RETURN .T.;');
     assert.equal(changes[0].after, ':RETURN .F.;');
-    assert.equal(await manager.acceptChanges([{ uri: changes[0].uri, language: changes[0].language }]), 1);
+    assert.equal(changes[0].fingerprint.length, 64);
+    assert.equal(await manager.acceptChanges([{ uri: changes[0].uri, language: changes[0].language, fingerprint: 'stale' }]), 0);
+    assert.equal(await manager.acceptChanges([{ uri: changes[0].uri, language: changes[0].language, fingerprint: changes[0].fingerprint }]), 1);
     assert.equal((await manager.getChanges()).length, 0);
     const refreshed = await manager.syncFiles([{
       uri: '/Applications/QualityManager/Test/Server Scripts/Validate',

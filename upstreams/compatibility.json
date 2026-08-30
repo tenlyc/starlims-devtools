@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "starlims-lsp": {
+    "version": "0.21.0",
+    "validatedAt": "2026-08-30",
+    "status": "compatible",
+    "contracts": [
+      "native-version",
+      "signature-inventory",
+      "validation-json",
+      "datasource-validation-mode",
+      "designer-include-without-semicolon",
+      "formatter-include-preservation",
+      "typescript-fallback"
+    ]
+  },
+  "starlimsvscode": {
+    "commit": "92b9014244eb09a56ed589db5155c3b7914b70a2",
+    "validatedAt": "2026-08-30",
+    "status": "selective-port",
+    "contracts": [
+      "scm-api-shape",
+      "html-form-language-routing",
+      "checked-out-item-expansion",
+      "ssl-rule-regressions"
+    ]
+  }
+}

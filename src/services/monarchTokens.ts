@@ -239,6 +239,7 @@ export const slsqlLanguage: monaco.languages.IMonarchLanguage = {
       [/'([^'\\]|\\.)*'/, 'string.quoted.single'],
 
       // Parameters
+      [/\?[a-zA-Z_][a-zA-Z0-9_]*\?/, 'variable.parameter'],
       [/@[a-zA-Z_][a-zA-Z0-9_]*/, 'variable.parameter'],
 
       // Keywords

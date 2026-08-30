@@ -11,6 +11,8 @@ import { withLocalMcpNoProxy } from './localMcpEnv';
 import { GenericAgentRuntime } from './genericAgentRuntime';
 import { ExternalMcpManager } from './externalMcpManager';
 import { AgentWorkspaceManager } from './agentWorkspace';
+import { SslLspRuntime } from './sslLspRuntime';
+import { SslLspSession } from './sslLspSession';
 import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentProvider, AgentRuntimeStatus, AgentToolPermissionPolicy, AgentWorkspaceContext, AgentWorkspaceFile, ExternalMcpServers } from '../src/types/agent';
 import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
 
@@ -76,7 +78,7 @@ const resolveExternalMcpServers = (servers: ExternalMcpServers): ExternalMcpServ
   return [server, { ...config, env: resolve('env', config.env), headers: resolve('headers', config.headers) }];
 }));
 const normalizeToolPermissionPolicy = (value: unknown): AgentToolPermissionPolicy =>
-  value === 'read-only' || value === 'full-access' ? value : 'ask-writes';
+  value === 'read-only' || value === 'auto-safe' || value === 'full-access' ? value : 'ask-writes';
 const getExternalMcpServers = (): ExternalMcpServers => (store.get(EXTERNAL_MCP_STORE_KEY) || {}) as ExternalMcpServers;
 const getResolvedExternalMcpServers = (): ExternalMcpServers => resolveExternalMcpServers(getExternalMcpServers());
 const externalMcpManager = new ExternalMcpManager();
@@ -135,6 +137,13 @@ const mcpServer = new StarlimsMcpHttpServer(
 const RESOURCE_PATH = app.isPackaged
   ? join(process.resourcesPath, 'resources')
   : join(__dirname, '..', 'resources');
+const SSL_LSP_SELECTED_VERSION_KEY = 'sslLspSelectedVersion.v1';
+const sslLspRuntime = new SslLspRuntime(
+  RESOURCE_PATH,
+  join(app.getPath('userData'), 'lsp-cache'),
+  String(store.get(SSL_LSP_SELECTED_VERSION_KEY) || '') || undefined
+);
+const sslLspSession = new SslLspSession(() => sslLspRuntime.executablePath(), () => sslLspRuntime.version);
 
 function createWindow() {
   const bounds = store.get('windowBounds') as { width: number; height: number };
@@ -160,7 +169,9 @@ function createWindow() {
     {
       label: 'File',
       submenu: [
-        { label: 'Exit', accelerator: 'Alt+F4', click: () => app.quit() }
+        { label: 'Save', accelerator: 'CmdOrCtrl+S', click: () => mainWindow?.webContents.send('menu:save') },
+        { type: 'separator' },
+        { role: 'quit' }
       ]
     },
     {
@@ -195,7 +206,7 @@ function createWindow() {
         { label: 'Connect to Server', click: () => mainWindow?.webContents.send('menu:connect') },
         { label: 'Disconnect', click: () => mainWindow?.webContents.send('menu:disconnect') },
         { type: 'separator' },
-        { label: 'Refresh Enterprise Tree', accelerator: 'F5', click: () => mainWindow?.webContents.send('menu:refresh') },
+        { label: 'Refresh Enterprise Tree', accelerator: 'F6', click: () => mainWindow?.webContents.send('menu:refresh') },
         { type: 'separator' },
         { label: 'Run Script', accelerator: 'F5', click: () => mainWindow?.webContents.send('menu:runScript') },
         { type: 'separator' },
@@ -276,6 +287,7 @@ app.on('before-quit', () => {
   agentRuntime?.dispose();
   genericAgentRuntime?.interrupt();
   void mcpServer.stop();
+  void sslLspSession.stop();
 });
 
 // ==================== IPC Handlers ====================
@@ -639,23 +651,6 @@ const getAgentRuntime = (): AgentRuntimeManager => {
 const getGenericAgentRuntime = (): GenericAgentRuntime => {
   genericAgentRuntime ||= new GenericAgentRuntime(callRenderer, externalMcpManager, (event) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent:event', event);
-  }, async (name, args) => {
-    if (!mainWindow || mainWindow.isDestroyed()) return false;
-    const safeArgs = Object.fromEntries(Object.entries(args).map(([key, value]) =>
-      /password|pass|token|cookie|secret|key/i.test(key) ? [key, '[hidden]'] : [key, value]
-    ));
-    const detail = JSON.stringify(safeArgs, null, 2).slice(0, 3000);
-    const result = await dialog.showMessageBox(mainWindow, {
-      type: 'warning',
-      title: 'Allow external MCP tool?',
-      message: `允许通用 Agent 调用外部 MCP 工具“${name}”吗？`,
-      detail,
-      buttons: ['拒绝', '允许一次'],
-      cancelId: 0,
-      defaultId: 1,
-      noLink: true
-    });
-    return result.response === 1;
   });
   return genericAgentRuntime;
 };
@@ -761,7 +756,12 @@ ipcMain.handle('agent:getStatuses', async () => {
 
 ipcMain.handle('agent:getModels', async (_, provider: AgentProvider) => {
   if (provider !== 'codex') return [];
-  return getAgentRuntime().models(provider);
+  try {
+    return await getAgentRuntime().models(provider);
+  } catch (error) {
+    log.error('Failed to load Codex models.', error);
+    throw error;
+  }
 });
 
 ipcMain.handle('agent:getExternalMcpServers', () => getExternalMcpServers());
@@ -831,8 +831,43 @@ ipcMain.handle('ai-config:export', async (_, suggestedName: string, value: unkno
   return result.filePath;
 });
 
+ipcMain.handle('ssl-lsp:status', async () => ({ available: sslLspRuntime.isAvailable(), version: sslLspRuntime.version }));
+ipcMain.handle('ssl-lsp:validate', async (_, content: string, options?: { dataSource?: boolean; info?: boolean; hungarianTypes?: boolean }) =>
+  sslLspRuntime.validate(String(content || ''), options || {}));
+ipcMain.handle('ssl-lsp:format', async (_, content: string) => sslLspRuntime.format(String(content || '')));
+ipcMain.handle('ssl-lsp:inventory', async () => sslLspRuntime.inventory());
+ipcMain.handle('ssl-lsp:sessionStatus', async () => sslLspSession.status(sslLspRuntime.isAvailable()));
+ipcMain.handle('ssl-lsp:sessionRestart', async () => {
+  if (!sslLspRuntime.isAvailable()) return sslLspSession.status(false);
+  await sslLspSession.restart();
+  return sslLspSession.status(true);
+});
+ipcMain.handle('ssl-lsp:versions', async () => sslLspRuntime.listVersions());
+ipcMain.handle('ssl-lsp:upstreamMetadata', async () => sslLspRuntime.metadata());
+ipcMain.handle('ssl-lsp:selectVersion', async (_, version: string) => {
+  if (!sslLspRuntime.selectVersion(String(version || ''))) throw new Error(`starlims-lsp version ${version} is not available in the verified local cache.`);
+  store.set(SSL_LSP_SELECTED_VERSION_KEY, sslLspRuntime.version);
+  await sslLspSession.restart();
+  return { versions: sslLspRuntime.listVersions(), status: sslLspSession.status(sslLspRuntime.isAvailable()) };
+});
+ipcMain.handle('ssl-lsp:workspaceDocuments', async () => sslLspSession.workspaceDocuments());
+ipcMain.handle('ssl-lsp:workspaceDocument', async (_, uri: string) => sslLspSession.workspaceDocument(String(uri || '')));
+ipcMain.handle('ssl-lsp:documentSync', async (_, document: { uri?: string; content?: string; version?: number }) => {
+  if (!sslLspRuntime.isAvailable()) return false;
+  await sslLspSession.syncDocument(String(document?.uri || ''), String(document?.content || ''), Number(document?.version || 1));
+  return true;
+});
+ipcMain.handle('ssl-lsp:documentClose', async (_, uri: string) => { sslLspSession.closeDocument(String(uri || '')); return true; });
+ipcMain.handle('ssl-lsp:definition', async (_, uri: string, position: { line: number; character: number }) =>
+  sslLspSession.definition(String(uri || ''), { line: Number(position?.line || 0), character: Number(position?.character || 0) }));
+ipcMain.handle('ssl-lsp:references', async (_, uri: string, position: { line: number; character: number }) =>
+  sslLspSession.references(String(uri || ''), { line: Number(position?.line || 0), character: Number(position?.character || 0) }));
+ipcMain.handle('ssl-lsp:rename', async (_, uri: string, position: { line: number; character: number }, newName: string) =>
+  sslLspSession.rename(String(uri || ''), { line: Number(position?.line || 0), character: Number(position?.character || 0) }, String(newName || '')));
+ipcMain.handle('ssl-lsp:workspaceSymbols', async (_, query: string) => sslLspSession.workspaceSymbols(String(query || '')));
+
 ipcMain.handle('agent:start', async (_, provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => {
-  if (!['codex', 'claude'].includes(provider)) throw new Error('This provider does not support rich agent sessions yet.');
+  if (provider !== 'codex') throw new Error('This provider does not support rich agent sessions yet.');
   if (!prompt.trim()) throw new Error('Prompt is required.');
   await mcpServer.start();
   const status = mcpServer.getStatus();
@@ -858,26 +893,36 @@ ipcMain.handle('agent:workspaceConfigure', async (_, context: AgentWorkspaceCont
     agentRuntime?.dispose();
     agentRuntime = undefined;
   }
+  if (sslLspRuntime.isAvailable()) {
+    try { await sslLspSession.configureWorkspace(info.path, await agentWorkspace.lspDocuments()); }
+    catch (error) { log.warn('Unable to configure starlims-lsp workspace', error); }
+  }
   return info;
 });
 
 ipcMain.handle('agent:workspaceSyncFiles', async (_, files: AgentWorkspaceFile[]) => {
   if (!Array.isArray(files)) throw new Error('Workspace files must be an array.');
-  return agentWorkspace.syncFiles(files.map((file) => ({
+  const result = await agentWorkspace.syncFiles(files.map((file) => ({
     uri: String(file.uri || ''), name: String(file.name || 'script'), type: String(file.type || 'text'),
     language: file.language ? String(file.language) : undefined,
     checkedOutBy: file.checkedOutBy ? String(file.checkedOutBy) : undefined,
     checkedOutDate: file.checkedOutDate ? String(file.checkedOutDate) : undefined,
     content: String(file.content || '')
   })));
+  if (sslLspRuntime.isAvailable()) {
+    try { await sslLspSession.configureWorkspace(result.path, await agentWorkspace.lspDocuments()); }
+    catch (error) { log.warn('Unable to index Agent workspace with starlims-lsp', error); }
+  }
+  return result;
 });
 
 ipcMain.handle('agent:workspaceGetChanges', async () => agentWorkspace.getChanges());
 
-ipcMain.handle('agent:workspaceAcceptChanges', async (_, files: Array<{ uri: string; language?: string }>) => {
+ipcMain.handle('agent:workspaceAcceptChanges', async (_, files: Array<{ uri: string; language?: string; fingerprint?: string }>) => {
   if (!Array.isArray(files)) throw new Error('Accepted workspace files must be an array.');
   return agentWorkspace.acceptChanges(files.map((file) => ({
-    uri: String(file.uri || ''), language: file.language ? String(file.language) : undefined
+    uri: String(file.uri || ''), language: file.language ? String(file.language) : undefined,
+    fingerprint: file.fingerprint ? String(file.fingerprint) : undefined
   })));
 });
 
@@ -916,7 +961,8 @@ ipcMain.handle('agent:runQualityTest', async (_, command: string) => {
 ipcMain.handle('agent:interrupt', async (_, provider: AgentProvider) => getAgentRuntime().interrupt(provider));
 ipcMain.handle('agent:newSession', async (_, provider: AgentProvider) => getAgentRuntime().newSession(provider));
 ipcMain.handle('agent:respondApproval', async (_, provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => {
-  getAgentRuntime().respond(provider, requestId, decision);
+  if (provider === 'generic') getGenericAgentRuntime().respond(requestId, decision);
+  else getAgentRuntime().respond(provider, requestId, decision);
   return true;
 });
 

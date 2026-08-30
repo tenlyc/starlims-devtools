@@ -8,7 +8,7 @@ assert.deepEqual(zhKeys, enKeys, 'Chinese and English dictionaries must expose t
 
 for (const key of [
   'server.select', 'sidebar.searchResults', 'checkout.title', 'scm.nativeTitle',
-  'scm.export.checkedOnly', 'editor.noFile', 'output.title', 'agent.askHint'
+  'scm.export.checkedOnly', 'editor.noFile', 'context.cut', 'context.checkIn', 'output.title', 'agent.askHint'
 ]) {
   assert.ok(enUS[key] && zhCN[key], `Missing translation: ${key}`);
   assert.notEqual(enUS[key], zhCN[key], `Expected localized values for: ${key}`);

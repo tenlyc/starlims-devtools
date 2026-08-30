@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added | 新增
 
+- 增加平台原生编辑器快捷键、Data Source SQL 智能提示、执行结果表格/原始数据视图，以及可直接保存的 `Ctrl/Cmd+S`
+- 增加对话内 MCP 写入审批和三档 Agent 授权策略，工具活动默认折叠为紧凑时间线
+- 增加持久化 `starlims-lsp` 会话、版本锁、校验缓存、回退选择与上游更新审计工具
+- 重构企业树与签出树图标和布局，固定签出标题/刷新操作，并完善右键菜单中英文与功能验证
 - 将 Customize 升级为 AI 能力中心，统一展示 Agent 工作区、模型配置、用户规则、MCP 与依赖索引
 - 同步当前用户签出项时自动分析 include、服务端脚本、数据源和表单引用，支持上下游影响与未解析引用查看
 - AI 对话按当前引用脚本注入预算受控的依赖事实，并明确与用户 `AGENTS.md`/`agent.md` 规则隔离
@@ -23,9 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 修复 HTML Form 保存时误将文件类型作为 `UserLang` 的问题
 - 修复 MCP 签出与检入声明了语言参数、但执行阶段丢失参数的问题
-- 修复 Claude Agent 未执行 Plan/Ask 只读权限策略的问题
 - 修复切换到服务器专属 Agent 工作区时，Codex 正常重启被错误显示为 `exited with code null` 的问题
 - 修复 `#include "Module.Script"` 脚本引用被错误要求以分号结尾的问题
+- 修复 Data Source 运行成功但结果不可见，以及 Run 使用了错误执行契约的问题
+- 修复 Codex 模型列表在 App Server 暂时不可用时一直停留在“加载中”的问题
 
 ### Changed | 变更
 
@@ -34,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - “自定义 → 工作区”增加多文件 Diff、修改选择和确认写回；写回前检查签出、语言、远端冲突与 SSL 语法，保存后执行回读校验
 - 对规则、最近对话和脚本引用实施约 32K token 的分区预算，超限内容会明确标记截断
 - 移除旧 AI 面板、旧提供商实现和重复配置；行内补全改为复用当前通用 Agent 平台、模型及密钥
+- 移除内置 Claude Agent SDK；Claude Code 等第三方客户端继续通过外部 MCP 使用 STARLIMS 工具，显著缩小桌面安装包
 - 启动时清理旧 AI 面板遗留的普通配置项，避免历史版本的明文密钥继续残留
 
 ### Security | 安全
@@ -46,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tooling | 工程化
 
-- 增加统一 `npm run check`，串行执行 lint、12 组 smoke tests 和 TypeScript/Vite/Electron 构建
+- 增加统一 `npm run check`，串行执行 lint、21 组 smoke tests 和 TypeScript/Vite/Electron 构建
 - 增加 GitHub Actions，在 `main` 推送及 Pull Request 时执行相同检查
 
 ## [1.6.2] - 2026-08-30

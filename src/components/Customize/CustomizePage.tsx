@@ -10,12 +10,13 @@ import { editorStore } from '../../stores/editorStore';
 import { AiPlatformSection } from './AiPlatformSection';
 import { evaluateQualityGate, loadAiLayers, mergeAiLayers, qualityReviewStoreKey } from '../../services/aiPlatform';
 import type { WorkspaceReviewState } from '../../types/aiPlatform';
+import type { NativeLspSessionStatus, NativeLspUpstreamMetadata, NativeLspVersionInfo, NativeLspWorkspaceSymbol } from '../../types/sslLsp';
 
 const AGENT_RULES_STORE_KEY = 'agentWorkspaceInstructions.v1';
 const AGENT_WORKSPACE_ROOT_STORE_KEY = 'agentWorkspaceRoot.v1';
 type LocalAgentRules = { enabled: boolean; name: string; content: string; updatedAt: number };
 type McpDraft = { originalName: string | null; name: string; config: ExternalMcpServerConfig; envText: string; headersText: string };
-type CustomizeCategory = 'overview' | 'workspace' | 'models' | 'rules' | 'mcp' | 'index' | 'workflows' | 'quality' | 'layers' | 'extensions';
+type CustomizeCategory = 'overview' | 'workspace' | 'models' | 'rules' | 'mcp' | 'index' | 'upstreams' | 'workflows' | 'quality' | 'layers' | 'extensions';
 type StoredGenericProfile = { id: string; name?: string; baseUrl?: string; model?: string; models?: string[] };
 type StoredGenericProfiles = { activeProfileId?: string; profiles?: StoredGenericProfile[] };
 
@@ -48,6 +49,11 @@ export function CustomizePage() {
   const [dependencyIndex, setDependencyIndex] = useState<AgentDependencyIndex | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState('');
   const [genericProfiles, setGenericProfiles] = useState<StoredGenericProfiles>({});
+  const [lspStatus, setLspStatus] = useState<NativeLspSessionStatus | null>(null);
+  const [lspVersions, setLspVersions] = useState<NativeLspVersionInfo[]>([]);
+  const [upstreamMetadata, setUpstreamMetadata] = useState<NativeLspUpstreamMetadata>({});
+  const [symbolQuery, setSymbolQuery] = useState('');
+  const [workspaceSymbols, setWorkspaceSymbols] = useState<NativeLspWorkspaceSymbol[]>([]);
 
   const changeKey = (change: Pick<AgentWorkspaceChange, 'uri' | 'language'>) => `${change.uri}\n${change.language || ''}`;
 
@@ -102,6 +108,45 @@ export function CustomizePage() {
     };
   }, []);
 
+  const refreshLspStatus = async () => {
+    const [status, versions, metadata] = await Promise.all([
+      window.electronAPI.sslLspSessionStatus(),
+      window.electronAPI.sslLspVersions(),
+      window.electronAPI.sslLspUpstreamMetadata()
+    ]);
+    setLspStatus(status);
+    setLspVersions(versions);
+    setUpstreamMetadata(metadata);
+  };
+
+  useEffect(() => { if (window.electronAPI) void refreshLspStatus().catch(() => undefined); }, []);
+
+  const restartLsp = async () => {
+    try { setLspStatus(await window.electronAPI.sslLspSessionRestart()); setMessage(t('customize.lspRestarted')); }
+    catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+  };
+
+  const selectLspVersion = async (version: string) => {
+    try {
+      const result = await window.electronAPI.sslLspSelectVersion(version);
+      setLspVersions(result.versions);
+      setLspStatus(result.status);
+      setMessage(t('customize.lspVersionChanged').replace('{version}', version));
+    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+  };
+
+  const searchWorkspaceSymbols = async () => {
+    try { setWorkspaceSymbols(await window.electronAPI.sslLspWorkspaceSymbols(symbolQuery.trim())); }
+    catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
+  };
+
+  const openWorkspaceSymbol = async (symbol: NativeLspWorkspaceSymbol) => {
+    const document = await window.electronAPI.sslLspWorkspaceDocument(symbol.location.uri);
+    if (!document) return;
+    editorStore.getState().openFile({ uri: document.sourceUri, name: document.name, type: document.type, language: document.language, content: document.content });
+    editorStore.getState().revealLocation({ uri: document.sourceUri, line: symbol.location.range.start.line + 1, column: symbol.location.range.start.character + 1 });
+  };
+
   const chooseWorkspaceRoot = async () => {
     const result = await window.electronAPI?.showOpenDialog({
       title: t('customize.workspaceChoose'),
@@ -141,7 +186,11 @@ export function CustomizePage() {
       loadAiLayers(),
       window.electronAPI?.storeGet(qualityReviewStoreKey()).catch(() => null)
     ]);
-    const reviewState: WorkspaceReviewState = savedReview && typeof savedReview === 'object' ? { reviewedKeys: [], tests: [], ...savedReview } : { reviewedKeys: [], tests: [] };
+    const storedReview = savedReview && typeof savedReview === 'object' ? savedReview as Partial<WorkspaceReviewState> : {};
+    const reviewState: WorkspaceReviewState = {
+      reviewedFingerprints: Array.isArray(storedReview.reviewedFingerprints) ? storedReview.reviewedFingerprints : [],
+      tests: Array.isArray(storedReview.tests) ? storedReview.tests : []
+    };
     const gate = evaluateQualityGate({ changes: selected, reviewState, policy: mergeAiLayers(layers).quality });
     if (!gate.passed) {
       setCategory('quality');
@@ -153,10 +202,9 @@ export function CustomizePage() {
     try {
       const result = await applyWorkspaceChanges(selected);
       if (!result.cancelled && result.applied.length) {
-        const appliedKeys = new Set(result.applied.map(changeKey));
         const nextReview: WorkspaceReviewState = {
           ...reviewState,
-          reviewedKeys: reviewState.reviewedKeys.filter((key) => !appliedKeys.has(key))
+          reviewedFingerprints: reviewState.reviewedFingerprints.filter((fingerprint) => !result.applied.some((change) => change.fingerprint === fingerprint))
         };
         await window.electronAPI?.storeSet(qualityReviewStoreKey(), nextReview);
         window.dispatchEvent(new CustomEvent('ai-quality:changed', { detail: nextReview }));
@@ -267,6 +315,7 @@ export function CustomizePage() {
         <button onClick={() => { setCategory('mcp'); setMcpDraft(null); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'mcp' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>MCPs <span className="text-slate-500">{Object.keys(mcpServers).length + 1}</span></button>
         <button onClick={() => { setCategory('rules'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'rules' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.rules')} <span className="text-slate-500">{rules.content.trim() ? 1 : 0}</span></button>
         <button onClick={() => { setCategory('index'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'index' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.index')} <span className="text-slate-500">{dependencyIndex?.nodes.length || 0}</span></button>
+        <button onClick={() => { setCategory('upstreams'); setMessage(''); void refreshLspStatus(); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'upstreams' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.upstreams')}</button>
         <button onClick={() => { setCategory('workflows'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'workflows' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.workflows')}</button>
         <button onClick={() => { setCategory('quality'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'quality' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.quality')}</button>
         <button onClick={() => { setCategory('layers'); setMessage(''); }} className={`rounded-full border px-4 py-1.5 text-xs ${category === 'layers' ? 'border-slate-500 bg-slate-200 dark:border-[#777] dark:bg-[#303030]' : 'border-slate-300 dark:border-[#3b3b3b]'}`}>{t('customize.layers')}</button>
@@ -284,11 +333,23 @@ export function CustomizePage() {
             { category: 'rules' as CustomizeCategory, icon: '⚡', title: t('customize.rules'), value: rules.enabled ? (rules.name || 'AGENTS.md') : t('customize.disabled') },
             { category: 'mcp' as CustomizeCategory, icon: 'M', title: 'MCPs', value: `${Object.values(mcpServers).filter((server) => server.enabled !== false).length + 1} ${t('customize.enabled')}` },
             { category: 'index' as CustomizeCategory, icon: '↗', title: t('customize.index'), value: `${dependencyIndex?.nodes.length || 0} ${t('customize.files')} · ${dependencyIndex?.edges.length || 0} ${t('customize.references')}` },
+            { category: 'upstreams' as CustomizeCategory, icon: 'LSP', title: t('customize.upstreams'), value: lspStatus ? `starlims-lsp ${lspStatus.version} · ${lspStatus.running ? t('customize.running') : t('customize.stopped')}` : t('customize.loading') },
             { category: 'workflows' as CustomizeCategory, icon: '◎', title: t('customize.workflows'), value: t('customize.workflowCard') },
             { category: 'quality' as CustomizeCategory, icon: '✓', title: t('customize.quality'), value: t('customize.qualityCard') },
             { category: 'layers' as CustomizeCategory, icon: '≡', title: t('customize.layers'), value: t('customize.layersCard') },
             { category: 'extensions' as CustomizeCategory, icon: '＋', title: t('customize.extensions'), value: t('customize.extensionsCard') }
           ].map((card) => <button key={card.category} onClick={() => setCategory(card.category)} className="min-h-28 rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:border-slate-400 hover:bg-slate-50 dark:border-[#303030] dark:bg-[#202020] dark:hover:border-[#666] dark:hover:bg-[#252526]"><div className="mb-3 flex h-8 w-8 items-center justify-center rounded bg-slate-100 text-xs font-semibold dark:bg-[#2b2b2b]">{card.icon}</div><div className="text-sm font-medium">{card.title}</div><div className="mt-1 truncate text-xs text-slate-500 dark:text-[#888]">{card.value}</div></button>)}
+        </div>
+      </section> : category === 'upstreams' ? <section>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-medium">{t('customize.upstreamsTitle')}</h2><p className="mt-1 text-xs text-slate-500 dark:text-[#888]">{t('customize.upstreamsHint')}</p></div><div className="flex gap-2"><button onClick={() => void refreshLspStatus()} className="min-h-9 rounded border border-slate-300 px-3 text-xs dark:border-[#444]">{t('common.refresh')}</button><button onClick={() => void restartLsp()} className="min-h-9 rounded border border-slate-300 px-3 text-xs dark:border-[#444]">{t('customize.restartLsp')}</button></div></div>
+        <div className="rounded-lg border border-slate-200 bg-white dark:border-[#303030] dark:bg-[#202020]">
+          <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-[#303030]"><div className={`h-2.5 w-2.5 rounded-full ${lspStatus?.running ? 'bg-emerald-500' : 'bg-amber-500'}`} /><div className="min-w-0 flex-1"><div className="text-sm">starlims-lsp {lspStatus?.version || '—'}</div><div className="truncate text-xs text-slate-500 dark:text-[#888]">{lspStatus?.workspaceRoot || t('customize.workspaceNotReady')} · {lspStatus?.documents || 0} {t('customize.documents')}</div></div><select value={lspStatus?.version || ''} onChange={(event) => void selectLspVersion(event.target.value)} className="h-9 rounded border border-slate-300 bg-transparent px-3 text-xs dark:border-[#444]">{lspVersions.map((item) => <option key={item.version} value={item.version}>{item.version}{item.bundled ? ` · ${t('customize.bundled')}` : ` · ${t('customize.cached')}`}</option>)}</select></div>
+          {lspStatus?.error && <div className="border-b border-slate-200 px-4 py-3 text-xs text-red-600 dark:border-[#303030] dark:text-red-400">{lspStatus.error}</div>}
+          <div className="px-4 py-3 text-xs text-slate-500 dark:text-[#888]"><div>starlimsvscode · {t('customize.auditOnly')}</div><div className="mt-1 font-mono text-[10px]">{upstreamMetadata.auditSources?.starlimsvscode?.commit || '—'}</div></div>
+        </div>
+        <div className="mt-5 rounded-lg border border-slate-200 bg-white dark:border-[#303030] dark:bg-[#202020]">
+          <div className="flex gap-2 border-b border-slate-200 p-3 dark:border-[#303030]"><input value={symbolQuery} onChange={(event) => setSymbolQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void searchWorkspaceSymbols(); }} placeholder={t('customize.symbolSearch')} className="h-9 min-w-0 flex-1 rounded border border-slate-300 bg-transparent px-3 text-xs outline-none dark:border-[#444]" /><button onClick={() => void searchWorkspaceSymbols()} className="rounded border border-slate-300 px-3 text-xs dark:border-[#444]">{t('common.search')}</button></div>
+          {workspaceSymbols.length === 0 ? <div className="px-4 py-8 text-center text-xs text-slate-500">{t('customize.noSymbols')}</div> : <div className="max-h-96 overflow-auto">{workspaceSymbols.map((symbol, index) => <button key={`${symbol.location.uri}:${symbol.location.range.start.line}:${symbol.name}:${index}`} onClick={() => void openWorkspaceSymbol(symbol)} className="flex w-full items-center gap-3 border-b border-slate-100 px-4 py-2.5 text-left last:border-0 hover:bg-slate-50 dark:border-[#303030] dark:hover:bg-[#252526]"><span className="min-w-0 flex-1 truncate text-xs">{symbol.name}</span><span className="max-w-[55%] truncate text-[10px] text-slate-500">{symbol.containerName || symbol.location.uri} · {symbol.location.range.start.line + 1}</span></button>)}</div>}
         </div>
       </section> : category === 'models' ? <section>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-medium">{t('customize.modelProfiles')}</h2><p className="mt-1 text-xs text-slate-500 dark:text-[#888]">{t('customize.modelsHint')}</p></div><button onClick={openModelSettings} className="min-h-9 rounded border border-slate-300 px-3 text-xs hover:bg-slate-100 dark:border-[#444] dark:hover:bg-[#252526]">{t('customize.configureModels')}</button></div>

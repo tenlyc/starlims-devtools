@@ -30,7 +30,7 @@ export type AgentEvent = {
 
 export type AgentStartResult = { sessionId?: string; turnId?: string };
 export type AgentApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel';
-export type AgentToolPermissionPolicy = 'read-only' | 'ask-writes' | 'full-access';
+export type AgentToolPermissionPolicy = 'read-only' | 'ask-writes' | 'auto-safe' | 'full-access';
 
 export type AgentModelOption = {
   id: string;
@@ -81,6 +81,9 @@ export type AgentWorkspaceChange = Omit<AgentWorkspaceFile, 'content'> & {
   kind: 'modified' | 'deleted';
   before: string;
   after: string;
+  baselineHash: string;
+  proposedHash: string;
+  fingerprint: string;
 };
 
 export type AgentDependencyKind = 'include' | 'server-script' | 'data-source' | 'form';

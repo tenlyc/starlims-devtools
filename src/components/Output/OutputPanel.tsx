@@ -10,7 +10,7 @@ function highlightLogHeader(header: string): JSX.Element {
   if (!header) return <></>;
 
   // STARLIMS log format:
-  // "LIYC / 20260412 / 00:00:30 / 12.6.2 / ServerScript.SCM_API.GetItemByGUID.main_ñ() line: 230 / w3wp(18156/16/75) on WIN-0J09JD85BPK / ****User message****"
+  // "DEMO_USER / 20260412 / 00:00:30 / 12.6.2 / ServerScript.SCM_API.GetItemByGUID.main_ñ() line: 230 / w3wp(18156/16/75) on DEMO-SERVER / ****User message****"
   // Parts: application / date / time / version / script_info / process_info / message_type
 
   const parts = header.split(' / ');

@@ -1,236 +1,201 @@
 # STARLIMS DevTools
 
-跨平台 STARLIMS 开发工具 - 一款提供高级 STARLIMS 开发能力的桌面应用程序，集成 Enterprise Designer 功能。
+面向 STARLIMS 的 AI 原生跨平台开发工作台。它把企业树、Monaco 编辑器、SSL 语言服务、源码管理、Agent 工作区和 MCP 工具整合在一个桌面应用中，让 AI 能在明确的权限与质量门禁下理解、修改、验证并写回 STARLIMS 脚本。
 
-Cross-platform STARLIMS Development Tools - A desktop application providing advanced STARLIMS development capabilities with Enterprise Designer integration.
+> STARLIMS DevTools is an AI-native desktop workbench for STARLIMS development, combining the Enterprise tree, Monaco, SSL language tooling, source control, Agent workspaces and MCP-backed automation.
 
-## 免责声明 | Disclaimer
+> [!WARNING]
+> 本项目是非官方社区工具，与 STARLIMS Corporation 无隶属或支持关系。请先在测试环境验证，并依据组织的变更流程使用写入、运行、检入和撤销签出功能。
 
-> **警告 | Warning**: 这是一款非官方、不受支持的 STARLIMS 开发工具。使用风险自负。
-> This is an unofficial, unsupported tool for STARLIMS development. Use at your own risk.
+![STARLIMS DevTools 工作台](docs/images/workbench-overview.png)
 
-<img width="3822" height="2079" alt="image" src="https://github.com/user-attachments/assets/554a7c5c-64f2-42fe-ad77-91962f7085a4" />
-<img width="3818" height="1994" alt="image" src="https://github.com/user-attachments/assets/124fa94e-54a8-4088-9ed2-697b952825ae" />
+![AI 能力中心](docs/images/ai-capability-center.png)
 
+> 截图全部由虚构服务器、账号、脚本和对话生成，不包含真实地址、凭据、业务代码或日志。
 
+## 为什么使用它
 
+- **完整 STARLIMS 工作流**：浏览、搜索、签出、编辑、执行、对比、保存、检入、撤销签出，以及 SDP 导入导出。
+- **更专业的编辑体验**：多标签 Monaco 编辑器、Problems/Output/STARLIMS Log、跨脚本导航、SQL 智能提示和平台原生快捷键。
+- **真正可操作的 AI**：Codex 与通用 OpenAI-compatible Agent 可使用当前登录会话、Agent 工作区和 STARLIMS MCP，不只是在对话中生成代码片段。
+- **可治理的自动化**：模式级只读约束、应用内审批、统一写入门禁、远端冲突检测、内容指纹、SSL 诊断、测试和回读校验。
+- **可持续的上游集成**：锁定并校验 `starlims-lsp` 发布版本；选择性审计 `starlimsvscode`，避免整仓合并覆盖本项目能力。
 
-## 简介 | Overview
+## 核心能力
 
-STARLIMS DevTools 是一款基于 Electron 开发的跨平台桌面应用程序，提供增强的 STARLIMS 开发能力。本工具基于 [MrDoe/starlimsvscode](https://github.com/MrDoe/starlimsvscode) 进行二次开发，并扩展为独立的桌面应用体验。
+### STARLIMS 开发
 
-STARLIMS DevTools is a cross-platform desktop application built on Electron that provides enhanced STARLIMS development capabilities. It is a fork of [MrDoe/starlimsvscode](https://github.com/MrDoe/starlimsvscode) and extends the functionality with a dedicated desktop application experience.
+| 能力 | 说明 |
+| --- | --- |
+| 企业树与签出树 | 浏览 Applications、Server Scripts、Client Scripts、Data Sources、Tables 和 Server Logs；签出项固定标题栏、按类型显示图标，并标注用户与表单语言。 |
+| 多语言 HTML Form | XML、Code Behind、Guide、Resources 的读取、签出、保存、检入和 MCP 调用均保留 `CHS`/`ENG` 等语言参数。 |
+| 编辑与运行 | 编辑 SSL、SQL、JavaScript、XML、HTML 等内容；运行 Server Script 和 Data Source，并在结果视图查看表格或原始输出。 |
+| 源码管理 | 导入/导出 SDP，比较远端版本，管理签出/检入与撤销签出。 |
+| 日志与问题 | 集中显示语言诊断、运行输出和 STARLIMS 日志，支持级别、用户与文本过滤。 |
 
-## 功能 | Features
+### SSL 与 SQL 语言能力
 
-### 核心功能 | Core Features
+- 随应用提供并持久运行 [`starlims-lsp`](https://github.com/mahoskye/starlims-lsp) v0.21.0，支持诊断、格式化、工作区符号、定义/引用、跨文件重命名、CodeLens、内联提示与快速修复。
+- 原生 LSP 不可用时自动降级到内置 TypeScript 语言核心；降级不会阻止继续编辑。
+- 保留 STARLIMS Designer 的 `#include "Module.Script"` 无分号语法，并支持内嵌 SQL 格式化。
+- Data Source 根据服务端脚本语言选择 SSL 或 SQL；SQL 提供关键字、表名和字段补全。
 
-| 功能 | Feature | 说明 | Description |
-|------|---------|------|-------------|
-| 企业树浏览器 | Enterprise Tree Browser | 浏览 STARLIMS 项目（应用程序、数据源、服务器脚本、客户端脚本、表单）| Explore STARLIMS items (Applications, Data Sources, Server Scripts, Client Scripts, Forms) |
-| 代码编辑器 | Code Editor | 内置 Monaco 编辑器，支持 SSL/CS/DS/SQL/XML/HTML 语法高亮 | Built-in Monaco editor with syntax highlighting for SSL, CS, DS, SQL, XML, HTML |
-| SSL 语言服务 | SSL Language Service | 诊断/快速修复、格式化、定义/引用/重命名、参数提示、补全、符号和折叠 | Parser-backed SSL diagnostics, navigation and editor intelligence |
-| 检出/检入 | Check Out/In | 直接在应用中管理代码项的检出和检入 | Manage code item checkouts and checkins directly |
-| 导航跳转 | Go To Navigation | 使用 F11 快速跳转到项目定义 | Navigate to item definitions quickly with F11 |
-| 全局代码搜索 | Global Code Search | 使用 Ctrl+Alt+F 在所有代码项中进行全文搜索 | Full-text search across all code items with Ctrl+Alt+F |
-| 脚本执行 | Script Execution | 直接在应用中运行服务器脚本和数据源 | Run server scripts and data sources directly |
-| 表单调试 | Form Debugging | 在系统浏览器中打开和调试 HTML 表单 | Open and debug HTML forms in the system browser |
-| 源码管理 | Source Control Manager | 导出和导入 SDP 包用于跨环境部署 | Export and import SDP packages for deployment across environments |
-| 多语言表单 | Multilingual Forms | HTML Form 按签出语言显示、编辑与导出 XML/Guide/Resources | Display, edit and export form documents by checked-out language |
-| 问题与日志 | Problems & Logs | 底部统一展示 SSL 诊断、输出、STARLIMS 日志与分级过滤 | Unified SSL diagnostics, output and categorized STARLIMS logs |
-| 跨平台桌面体验 | Cross-platform Desktop UX | Cursor 风格工作台、明暗主题、响应式面板与统一品牌图标 | Cursor-inspired workspace, light/dark themes, responsive panels and unified branding |
+### AI、Agent 与 MCP
 
-### 代码编辑器高级功能 | Code Editor Advanced Features
+| 能力 | 说明 |
+| --- | --- |
+| Codex Agent | 通过 Codex App Server 保持会话，展示流式回复、Reasoning、MCP、命令、文件变更和审批事件。 |
+| 通用 Agent | 保存多个 OpenAI-compatible 平台，每个平台拥有独立 Base URL、API Key、模型列表和默认模型。 |
+| 会话模式 | Agent、Plan、Debug、Multitask、Ask；Plan/Ask 在运行时强制只读。 |
+| 上下文引用 | 使用 `@` 引用当前、已打开、已签出或搜索到的脚本；依赖事实按 token 预算注入，避免拼接整个工作区。 |
+| Agent 工作区 | 按服务器与用户隔离的本地 Git 工作区，可自定义根目录；远端基线与 AI 修改分开保存并提供逐文件 Diff。 |
+| 本地 MCP | `http://127.0.0.1:3102/mcp`，仅监听回环地址，复用当前 STARLIMS 登录会话。 |
+| 外部 MCP | 在 AI 能力中心配置 HTTP、SSE 或 stdio 服务；敏感请求头和环境变量独立存入本机密钥存储。 |
+| 多 Agent 工作流 | 规划、实现、审查、测试角色支持任务依赖与安全并行；结果由用户确认后交给主 Agent 执行。 |
 
-| 功能 | Feature | 快捷键 | Shortcut | 说明 | Description |
-|------|---------|--------|----------|------|-------------|
-| 多标签编辑 | Multi-tab Editing | - | - | 同时编辑多个文件 | Edit multiple files simultaneously |
-| 代码折叠 | Code Folding | - | - | 支持折叠代码块 | Collapse and expand code blocks |
-| 括号匹配高亮 | Bracket Matching | - | - | 高亮显示匹配的括号 | Highlight matching brackets |
-| 面包屑导航 | Breadcrumb Navigation | - | - | 显示当前文件路径 | Show current file path |
-| 大纲视图 | Outline View | Ctrl+Shift+O | Ctrl+Shift+O | 导航到文件中的符号 | Navigate to symbols in file |
-| 多光标编辑 | Multi-cursor | Ctrl+Click | Ctrl+Click | 多个光标同时编辑 | Edit with multiple cursors |
-| 选择匹配 | Select Matches | Ctrl+F2 | Ctrl+F2 | 选中文本的所有匹配项 | Select all matches of text |
-| 注释切换 | Toggle Comment | Ctrl+/ | Ctrl+/ | 快速注释/取消注释代码 | Quick comment/uncomment code |
-| 跳转到行 | Go to Line | Ctrl+G | Ctrl+G | 跳转到指定行号 | Jump to specific line number |
-| 悬停信息 | Hover Info | - | - | 鼠标悬停显示信息 | Show information on hover |
-| 参数提示 | Parameter Hints | - | - | 显示函数参数提示 | Show function parameter hints |
-| 增大字体 | Increase Font | - | - | 增大编辑器字体 | Increase editor font size |
-| 减小字体 | Decrease Font | - | - | 减小编辑器字体 | Decrease editor font size |
-| 显示行号 | Toggle Line Numbers | - | - | 显示/隐藏行号 | Show/hide line numbers |
-| 自动换行 | Toggle Word Wrap | - | - | 启用/禁用自动换行 | Enable/disable word wrap |
-| 显示空白 | Toggle Whitespace | - | - | 显示/隐藏空白字符 | Show/hide whitespace characters |
-| 小地图 | Toggle Minimap | - | - | 显示/隐藏代码小地图 | Show/hide code minimap |
-| 右键菜单 | Tab Context Menu | Right-click | Right-click | 关闭/关闭其他/关闭已保存/关闭全部 | Close/Close Others/Close Saved/Close All |
-| 路径提示 | Path Tooltip | Hover | Hover | 鼠标悬停显示完整路径 | Show full path on hover |
+Codex、通用 Agent 与外部 AI 客户端可复用同一 STARLIMS MCP。桌面应用不捆绑第三方模型运行时或 Claude Agent SDK；Claude Code、Cursor、ChatGPT Desktop 等如需使用，应作为独立客户端连接 MCP。
 
-SSL 文件会在输入后约 250ms 自动执行语法解析和风格检查。使用编辑器的“格式化文档”或 `Shift+Alt+F` 可运行上游 SSL 格式化器，包括内嵌 SQL 字符串格式化。编辑器同时支持局部符号定义/引用、重命名、文档高亮、参数内联提示、引用数量 CodeLens，以及针对风格诊断的快速修复和规则抑制操作。
+### 规则、权限与质量门禁
 
-### AI Agent 与 STARLIMS MCP | AI Agent & STARLIMS MCP
+- 团队、项目、个人规则按层合并；用户导入或粘贴的 `agent.md` 独立保存，并保持最高用户规则优先级。
+- 权限支持“每次询问”“自动批准安全操作”“完全访问”；写入确认直接显示在对话时间线中。
+- 保存、检入、撤销签出和执行统一经过授权、签出状态、语言、远端冲突、SHA-256 内容指纹与审计检查。
+- SSL 写回前执行诊断；可配置测试用例、Diff 审查、删除策略和测试结果门禁。内容变化后旧审批与旧测试结果自动失效。
+- AI 扩展使用版本化 JSON 清单贡献 MCP、工具元数据、语言映射与工作流模板；清单禁止携带 API Key、Token 或密码。示例见 [`docs/ai-extension.example.json`](docs/ai-extension.example.json)。
 
-| 功能 | Feature | 说明 | Description |
-|------|---------|------|-------------|
-| 本地 MCP 服务 | Local MCP Server | `http://127.0.0.1:3102/mcp` | Streamable HTTP，仅监听本机回环地址；避开 starlimsvscode MCP 的 3002 和表单回调端口 3003–3099 |
-| Codex Agent | Codex Agent | Codex App Server 持久会话、流式回复、审批、停止与历史记录 | Persistent Codex App Server sessions with streaming, approvals, interruption and history |
-| 通用 Agent | Generic Agent | 配置多个 OpenAI-compatible 平台、API Key 与模型列表 | Configure multiple OpenAI-compatible providers, API keys and model lists |
-| 对话模式 | Conversation Modes | Agent、Plan、Debug、Multitask、Ask | Select a task-oriented conversation mode before sending |
-| 上下文引用 | Context References | 使用 `@` 引用已打开、签出或搜索到的 STARLIMS 脚本 | Attach open, checked-out or searched STARLIMS scripts with `@` |
-| 对话记录 | Conversation History | Codex 与通用 Agent 独立保存和恢复会话记录 | Separate persisted histories for Codex and Generic Agent |
-| AI 能力中心 | AI Capability Center | 集中查看工作区、模型、规则、MCP 与脚本依赖索引 | Review workspaces, models, rules, MCPs and script dependencies in one place |
-| 多 Agent 工作流 | Multi-Agent Workflows | 规划、实现、审查、测试角色分工，审查与测试可安全并行 | Planning, implementation, review and test roles with safe parallel review/test stages |
-| 自动测试与质量门禁 | Tests & Quality Gates | 执行工作区测试、保存结果，并在写回前检查 Diff、SSL、删除和测试策略 | Run workspace tests, retain results, and enforce Diff, SSL, deletion and test policies before write-back |
-| 配置分层 | Layered Configuration | 团队、项目、个人规则按层合并，支持导入导出且不覆盖用户 `agent.md` | Merge team, project and personal rules with import/export without overwriting user `agent.md` |
-| AI 扩展清单 | AI Extension Manifests | 通过 JSON 扩展第三方 MCP、工具声明、语言映射和工作流模板 | Extend third-party MCPs, tool metadata, language mappings and workflow templates via JSON manifests |
-| 自定义规则 | Custom Rules | 导入或粘贴 Markdown 规则，独立约束当前用户的 AI 行为 | Import or paste Markdown rules as an independent per-user AI constraint |
-| 通用 MCP 配置 | External MCP Configuration | 在 AI 能力中心管理 HTTP、SSE、stdio MCP 服务 | Manage HTTP, SSE and stdio MCP servers from the AI Capability Center |
-| 智能依赖索引 | Dependency Index | 分析签出脚本的 include、服务端脚本、数据源和表单引用及反向影响 | Analyze checked-out includes, server scripts, data sources, forms and reverse impact |
-| AI 工具兼容 | AI Client Support | Codex、ChatGPT Desktop、Claude Code、Cursor、VS Code 等 | External clients can reuse the built-in STARLIMS tool service |
-| AI 编程闭环 | Agentic Workflow | 浏览、搜索、读取、签出、保存、检入、撤销签出、执行 | 复用 DevTools 当前登录的 STARLIMS 会话 |
-| 工具权限 | Tool Permissions | Plan/Ask 强制只读；其他模式的写入、执行及未知外部 MCP 工具逐次确认 | Plan/Ask are enforced read-only; write, execution and unknown external MCP tools require confirmation |
-| Agent 工作区 | Agent Workspace | 按服务器和用户建立本地 Git 工作区，同步当前用户的全部签出脚本 | Stable per-server/user Git workspace that syncs every script checked out by the current user |
-| 安全写回 | Safe Write-back | 审查多文件 Diff，并通过签出、语言、远端基线、SSL 语法与保存后回读检查 | Review multi-file diffs with checkout, language, remote-baseline, SSL syntax and post-save verification |
-| Token 预算 | Token Budget | 对规则、历史和脚本引用分配上下文预算并标记截断 | Budget rules, history and references with explicit truncation markers |
+## 工作方式
 
-右侧 Agent Console 同时提供 Codex 与通用 Agent。Codex 启动时自动注入当前 STARLIMS MCP endpoint；通用 Agent 可保存多个服务平台及其模型列表，并将 API Key 单独存入本机密钥存储。回复、Reasoning、MCP 调用、命令、文件变更和审批按发生顺序显示在统一时间线中，支持 Markdown/GFM、代码块、脚本附件、模型选择和对话历史。可在签出列表或当前编辑器中右键选择“引用到 AI”，也可直接输入 `@` 搜索脚本并附加完整源码或编辑器选区。
-
-AI 能力中心用于集中查看 Agent 工作区、Codex 与通用模型配置、用户规则、外部 MCP 和签出脚本依赖。规则可以从本地 Markdown 文件导入或直接粘贴；它与自动生成的依赖事实严格分离，索引不会创建、覆盖或改写 `AGENTS.md`/`agent.md`。外部 MCP 支持 HTTP、SSE 与跨平台 stdio 配置，并与内置 STARLIMS MCP 分开管理。
-
-能力中心还提供四阶段协作工作流：规划角色先拆解依赖任务，实现角色形成变更方案，审查与测试角色可并行分析，完成后由用户明确选择是否交给主 Agent 执行。团队、项目、个人规则按该顺序叠加；单独导入的 `agent.md` 始终作为最高优先级的用户规则参与运行，文件本身不会被生成内容覆盖。质量页面可维护测试用例，在当前 Agent 工作区确认后运行命令并保存输出；写回 STARLIMS 前会统一检查 Diff 审查状态、SSL 诊断、删除策略和测试结果。
-
-第三方扩展使用版本化 JSON 清单，当前可贡献外部 MCP、工具元数据、编辑器语言映射和多 Agent 工作流模板。扩展清单禁止携带 API Key、Token、密码等凭据；外部 MCP 中的敏感环境变量和请求头会从普通配置中抽离到本机密钥存储。示例见 [`docs/ai-extension.example.json`](docs/ai-extension.example.json)。
-
-HTML Form 的语言会贯穿读取、签出、保存、检入与 MCP 调用，不再由文件类型代替。Agent 会在应用数据目录下按服务器和用户维护独立 Git 工作区，并把当前用户的全部签出脚本同步到 `items/`，供文件搜索、批量分析、修改和测试使用。本地工作副本与远端基线分开保存，自动同步不会覆盖 Agent 尚未审查的修改；在“Customize → 工作区”中可以查看逐文件 Diff、选择修改并确认写回。写回前会重新核对当前签出和远端内容，SSL 文件必须通过语法检查，保存后还会回读校验。行内补全直接复用当前通用 Agent 平台、模型和本机密钥，不再维护旧 AI 面板与第二套模型配置。
-
-每次同步签出项时还会重建轻量依赖索引。AI 对话只按当前 `@` 引用脚本选取相关的上下游关系，并在既有 token 预算内注入简短事实，不会把全部源码或整个索引塞进上下文；这些内容明确标记为参考数据，优先级低于用户导入的规则。
-
-### 键盘快捷键 | Keyboard Shortcuts
-
-| 快捷键 | Shortcut | 功能 | Action |
-|--------|----------|------|--------|
-| `F5` | F5 | 刷新企业树 / Refresh Enterprise Tree |
-| `F11` | F11 | 跳转到项目 / Go To Item |
-| `Ctrl+/` | Ctrl+/ | 注释/取消注释 / Toggle Comment |
-| `Ctrl+F` | Ctrl+F | 当前文件搜索 / Search in Current File |
-| `Ctrl+F2` | Ctrl+F2 | 选择所有匹配 / Select All Matches |
-| `Ctrl+G` | Ctrl+G | 跳转到行 / Go to Line |
-| `Ctrl+Alt+F` | Ctrl+Alt+F | 全局代码搜索 / Global Code Search |
-| `Ctrl+Shift+O` | Ctrl+Shift+O | 跳转到符号 / Go to Symbol |
-| `Ctrl+S` | Ctrl+S | 保存当前文件 / Save Current File |
-| `Ctrl+B` | Ctrl+B | 切换侧边栏 / Toggle Sidebar |
-| `Ctrl+Shift+A` | Ctrl+Shift+A | 切换 MCP 面板 / Toggle MCP Panel |
-| `F12` | F12 | 打开开发者工具 / Open Developer Tools |
-
-## 技术栈 | Technology Stack
-
-- **框架 | Framework**: Electron 44.x
-- **前端 | Frontend**: React 18.x + TypeScript
-- **编辑器 | Editor**: Monaco Editor
-- **样式 | Styling**: Tailwind CSS
-- **状态管理 | State Management**: Zustand
-- **构建工具 | Build Tool**: Vite 8.x
-
-## 快速开始 | Quick Start
-
-建议使用 Node.js 22.12 或更高版本。
-Node.js 22.12 or later is recommended.
-
-### 安装依赖 | Install Dependencies
-
-```bash
-npm install
+```mermaid
+flowchart LR
+  UI[React + Monaco 工作台] --> MAIN[Electron 主进程]
+  MAIN --> API[STARLIMS SCM_API]
+  MAIN --> LSP[starlims-lsp]
+  MAIN --> WS[隔离的 Git Agent 工作区]
+  AGENT[Codex / 通用 Agent] --> MCP[本地 STARLIMS MCP]
+  MCP --> MAIN
+  EXT[外部 MCP / AI 客户端] --> MCP
+  WS --> GATE[Diff + 指纹 + 诊断 + 测试门禁]
+  GATE --> API
 ```
 
-### 启动开发服务器 | Start Development Server
+## 快速开始
 
-```bash
-npm run dev
-```
+### 环境要求
 
-### 构建生产版本 | Build for Production
-
-```bash
-npm run build
-```
-
-### 发布前检查 | Pre-release Checks
-
-```bash
-npm run check
-npm audit --registry=https://registry.npmjs.org
-npm run build
-```
-
-`npm run check` 会统一执行 ESLint、14 组 smoke tests、TypeScript 检查，以及 Renderer/Electron 构建。GitHub Actions 会在 `main` 推送和 Pull Request 时执行相同检查。
-
-## 前置条件 | Pre-requisites
-
-- 下载 STARLIMS .sdp 包（如果 STARLIMS 版本需要）
-- Download STARLIMS .sdp package (if required for your STARLIMS version)
-- 如需要使用 API 功能，在 STARLIMS web.config 中添加以下配置：
-- Add the following setting to STARLIMS web.config file (if using API features):
+- Node.js 22.12 或更高版本
+- Git
+- 可访问的 STARLIMS 环境
+- STARLIMS `web.config` 允许所需 SCM API：
 
 ```xml
 <add key="HTTPServices" value="SCM_API.*"/>
 ```
 
-## 项目结构 | Project Structure
+不同 STARLIMS 版本的 `SCM_API` 可能存在差异。建议先在隔离环境安装并验证与当前服务器版本匹配的 SDP 后端脚本。
 
-```
-starlims-devtools/
-├── electron/           # Electron 主进程代码 / Electron main process code
-├── src/
-│   ├── components/      # React 组件 / React components
-│   │   ├── Editor/     # 代码编辑器组件 / Code editor components
-│   │   ├── Sidebar/     # 企业树和侧边栏 / Enterprise tree and sidebar
-│   │   ├── MCP/        # MCP 状态面板与 IPC 工具桥接
-│   │   └── SCM/         # 源码管理器 / Source Control Manager
-│   ├── services/        # API 服务 / API services
-│   ├── stores/          # Zustand 状态管理 / Zustand state stores
-│   └── types/           # TypeScript 类型定义 / TypeScript type definitions
-├── resources/           # 应用资源（图标、图片）/ App resources (icons, images)
-├── dist/                # 构建的前端代码 / Built frontend
-├── dist-electron/       # 构建的 Electron 代码 / Built Electron code
-└── release/             # 打包的应用程序 / Packaged applications
+### 本地开发
+
+```bash
+git clone https://github.com/tenlyc/starlims-devtools.git
+cd starlims-devtools
+npm install
+npm run dev
 ```
 
-## 贡献 | Contributing
+### 检查与打包
 
-欢迎提交 Issue 和 Pull Request！
-Contributions are welcome! Please open an Issue or Pull Request on GitHub!
+```bash
+# ESLint、21 组 smoke tests、TypeScript、Renderer/Electron 构建
+npm run check
 
-项目地址 | Project URL: https://github.com/tenlyc/starlims-devtools
+# 生成当前平台安装包
+npm run build
+```
 
-## 已知问题 | Known Issues
+构建产物位于 `release/`，不会提交到 Git。发布前还建议运行：
 
-- 部分 STARLIMS 服务器端功能可能需要特定版本的 STARLIMS
-- Some STARLIMS server-side features may require specific STARLIMS versions
+```bash
+npm audit --registry=https://registry.npmjs.org
+```
 
-## 版本历史 | Release Notes
+## 首次配置
 
-### [1.6.2] - 2026-08-30
+1. 在登录页新增 STARLIMS 服务器，填写名称、基础 URL 和账号；密码仅存入系统密钥存储。
+2. 登录后通过企业树确认浏览、读取、签出和保存是否与当前 STARLIMS 版本兼容。
+3. 在“AI 能力中心 → 工作区”选择 Agent 工作区根目录并同步当前用户签出项。
+4. 使用 Codex，或在“模型”中新增一个或多个 OpenAI-compatible 平台与模型。
+5. 按需导入个人 `agent.md`、团队/项目规则，配置外部 MCP 和写入审批策略。
+6. 在测试环境完成 Diff、诊断、执行和检入验证后，再连接生产环境。
 
-- 完成 Cursor 风格三栏工作台、响应式布局、统一明暗主题和 STARLIMS AI 品牌图标
-- 集成 Codex App Server 持久会话，以及支持多平台、多 API Key、多模型和工具轮次设置的通用 Agent
-- 增加 Agent/Plan/Debug/Multitask/Ask 模式、`@` 脚本引用、文件附件、会话历史、自定义 Markdown 规则和外部 MCP 管理
-- 内置本地 Streamable HTTP STARLIMS MCP，复用当前登录会话完成浏览、搜索、读取、签出、保存、检入、日志和执行操作
-- 增加底部 Problems/Output/STARLIMS Log 面板、日志用户筛选与信息/警告/错误分类
-- 签出树显示 HTML Form 的 XML、Code Behind、Guide、Resources、签出语言和签出用户，并保持固定文件顺序
-- 完成 SCM 查询、SDP 导入导出、多语言表单导出和源码管理界面的统一主题
-- 同步 SSL 解析器、139 个内置函数、实时诊断、格式化、导航、补全、参数提示、CodeLens 和快速修复
-- 增加服务器编辑、URL 规范化、安全密码存储、退出登录和跨平台 Codex/MCP 运行环境探测
-- 升级至 Electron 44、Vite 8 和 electron-builder 26
+## 常用快捷键
 
-### [1.0.0] - 2026-04-12
+| 操作 | macOS | Windows / Linux |
+| --- | --- | --- |
+| 保存当前脚本 | `⌘S` | `Ctrl+S` |
+| 全局代码搜索 | `⌘⇧F` | `Ctrl+Shift+F` |
+| 格式化文档 | `⇧⌥F` | `Shift+Alt+F` |
+| 注释/取消注释 | `⌘/` | `Ctrl+/` |
+| 选择所有匹配 | `⌘F2` | `Ctrl+F2` |
+| 跳转到行 | `⌘G` | `Ctrl+G` |
+| 跳转到符号 | `⌘⇧O` | `Ctrl+Shift+O` |
+| 运行当前 Server Script / Data Source | `F5` | `F5` |
+| 跳转到 STARLIMS 项目 | `F11` | `F11` |
 
-- 初始版本发布 | Initial release
-- 基于 starlimsvscode 功能 | Based on starlimsvscode functionality
-- 跨平台 Electron 桌面应用程序 | Cross-platform Electron desktop application
-- 企业树浏览器 | Enterprise Tree Browser
-- Monaco 多标签代码编辑器 | Monaco multi-tab code editor
-- 代码折叠和括号匹配高亮 | Code folding and bracket matching highlight
-- AI 助手面板（支持多种模型）| AI Assistant panel (multiple model support)
-- 每提供商独立 API Key 配置 | Per-provider API Key configuration
-- 源码管理器（导出/导入 SDP 包）| Source Control Manager (Export/Import SDP packages)
-- 跳转到定义（F11）| Go To Navigation (F11)
-- 全局代码搜索（Ctrl+Alt+F）| Global Code Search (Ctrl+Alt+F)
-- HTML 表单调试 | HTML Form Debugging
+编辑器右键菜单会按当前界面语言显示，并自动使用对应平台的快捷键符号。
+
+## 安全与隐私
+
+- STARLIMS 密码、通用 Agent API Key 和外部 MCP secrets 使用 Electron 本机密钥存储，不写入普通配置或导出文件。
+- 本地 MCP 默认只监听 `127.0.0.1`；不要把端口转发到不受信任网络。
+- Plan/Ask 强制只读；未知外部 MCP 工具不默认视为安全读操作。
+- 完全访问会允许写入、运行或删除等高风险操作，只应在受控工作区和测试环境短时开启。
+- 提交 Issue、日志与截图前，请移除服务器地址、用户名、脚本内容、内部路径、对话、Token 和 API Key。
+- 仓库中的示例、测试与文档截图统一使用 `example.test`、`DEMO_USER` 等虚构数据。
+
+## 上游维护
+
+上游版本统一记录在 [`upstreams/upstreams.lock.json`](upstreams/upstreams.lock.json)，详细策略见 [`UPSTREAM_SYNC.md`](UPSTREAM_SYNC.md)。自动化只检查公开元数据并创建更新提示，不会自动执行或合并上游代码。
+
+```bash
+# 检查 starlims-lsp 发布与 starlimsvscode 参考提交
+npm run upstream:check
+
+# 生成 starlimsvscode 选择性移植报告
+npm run upstream:audit:starlimsvscode -- --output upstreams/reports/starlimsvscode.md
+
+# 审查后推进参考提交
+npm run upstream:accept:starlimsvscode -- <40位commit> --confirm-reviewed
+
+# 下载、校验和测试指定 starlims-lsp Release
+npm run upstream:update:lsp -- v0.22.0
+```
+
+- [`mahoskye/starlims-lsp`](https://github.com/mahoskye/starlims-lsp)：作为受版本锁与 SHA-256 校验的语言服务组件。
+- [`MrDoe/starlimsvscode`](https://github.com/MrDoe/starlimsvscode)：作为 STARLIMS SCM 契约、语言规则和兼容测试的参考来源，按能力选择性移植，不作为运行时依赖。
+
+## 项目结构
+
+```text
+electron/                 Electron 主进程、Agent/MCP/LSP/工作区运行时
+src/components/           React 工作台、编辑器、侧边栏、AI 与 SCM 界面
+src/services/             STARLIMS API、语言能力、权限、写入门禁与索引
+src/scm_api/              需要部署到 STARLIMS 的后端脚本
+resources/starlims-lsp/   构建时准备的已校验语言服务资源
+scripts/                  smoke tests、打包准备与上游维护工具
+upstreams/                上游版本锁、能力映射和兼容记录
+docs/                     扩展示例与脱敏产品截图
+```
+
+## 技术栈
+
+Electron 44 · React 18 · TypeScript 5.9 · Vite 8 · Monaco Editor · Tailwind CSS · Zustand · Model Context Protocol
+
+## 贡献与版本
+
+欢迎通过 [Issues](https://github.com/tenlyc/starlims-devtools/issues) 报告兼容问题或提出改进，也欢迎提交 Pull Request。请为新功能补充 smoke test，并确保 `npm run check` 通过。
+
+- 完整变更记录：[CHANGELOG.md](CHANGELOG.md)
+- 上游同步策略：[UPSTREAM_SYNC.md](UPSTREAM_SYNC.md)
+- 开源许可：[MIT](LICENSE)
+
+项目主页：https://github.com/tenlyc/starlims-devtools

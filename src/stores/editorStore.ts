@@ -6,6 +6,7 @@ export interface OpenFile {
   type: string;
   language?: string;
   content: string;
+  baselineContent?: string;
   isDirty?: boolean;
   guid?: string;
 }
@@ -67,7 +68,7 @@ export const editorStore = create<EditorState>((set, get) => ({
       set({ activeFileUri: file.uri });
     } else {
       set({
-        openFiles: [...openFiles, file],
+        openFiles: [...openFiles, { ...file, baselineContent: file.baselineContent ?? file.content }],
         activeFileUri: file.uri
       });
     }
@@ -94,7 +95,7 @@ export const editorStore = create<EditorState>((set, get) => ({
     const { openFiles } = get();
     set({
       openFiles: openFiles.map(f =>
-        f.uri === uri ? { ...f, content, isDirty: true } : f
+        f.uri === uri ? { ...f, content, isDirty: content !== (f.baselineContent ?? f.content) } : f
       )
     });
   },
@@ -108,7 +109,7 @@ export const editorStore = create<EditorState>((set, get) => ({
     const { openFiles } = get();
     set({
       openFiles: openFiles.map(f =>
-        f.uri === uri ? { ...f, isDirty: false } : f
+        f.uri === uri ? { ...f, isDirty: false, baselineContent: f.content } : f
       )
     });
   },

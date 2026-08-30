@@ -4,6 +4,8 @@
  */
 
 import * as monaco from 'monaco-editor';
+import { getEnterpriseService } from './enterpriseService';
+import { SQL_COMPLETION_KEYWORDS, sqlCompletionContext, tableDefinitionFields } from './sqlIntelligence';
 
 // SSL Snippets
 export const sslSnippets: Record<string, monaco.languages.CompletionItem> = {
@@ -366,10 +368,42 @@ export const slsqlSnippets: Record<string, monaco.languages.CompletionItem> = {
   }
 };
 
+let snippetsRegistered = false;
+const tableSearchCache = new Map<string, { expires: number; items: Array<{ name: string; uri?: string; guid?: string }> }>();
+const tableFieldCache = new Map<string, { expires: number; fields: Array<{ name: string; detail?: string }> }>();
+
+async function searchSqlTables(prefix: string): Promise<Array<{ name: string; uri?: string; guid?: string }>> {
+  const key = prefix.trim().toUpperCase();
+  if (!key) return [];
+  const cached = tableSearchCache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.items;
+  const result = await getEnterpriseService().search(prefix, 'TABLE', false);
+  const items = result.items.slice(0, 100).map((item) => ({ name: item.name, uri: item.uri, guid: item.guid }));
+  tableSearchCache.set(key, { expires: Date.now() + 30_000, items });
+  return items;
+}
+
+async function loadSqlTableFields(tableName: string): Promise<Array<{ name: string; detail?: string }>> {
+  const key = tableName.toUpperCase();
+  const cached = tableFieldCache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.fields;
+  const result = await getEnterpriseService().search(tableName, 'TABLE', true);
+  const table = result.items.find((item) => item.name.toUpperCase() === key) || result.items[0];
+  if (!table) return [];
+  const tableId = table.guid || table.uri;
+  if (!tableId) return [];
+  const definition = await getEnterpriseService().getTableDefinition(tableId);
+  const fields = tableDefinitionFields(definition);
+  tableFieldCache.set(key, { expires: Date.now() + 5 * 60_000, fields });
+  return fields;
+}
+
 /**
  * Register snippets with Monaco Editor
  */
 export function registerSnippets() {
+  if (snippetsRegistered) return;
+  snippetsRegistered = true;
   // Register SSL snippets
   monaco.languages.registerCompletionItemProvider('ssl', {
     provideCompletionItems: (model, position) => {
@@ -392,7 +426,8 @@ export function registerSnippets() {
 
   // Register SLSQL snippets
   monaco.languages.registerCompletionItemProvider('slsql', {
-    provideCompletionItems: (model, position) => {
+    triggerCharacters: ['.', '?'],
+    provideCompletionItems: async (model, position) => {
       const word = model.getWordUntilPosition(position);
       const range = {
         startLineNumber: position.lineNumber,
@@ -401,10 +436,63 @@ export function registerSnippets() {
         endColumn: word.endColumn
       };
 
-      const suggestions = Object.values(slsqlSnippets).map(snippet => ({
+      const beforeCursor = model.getValueInRange({
+        startLineNumber: 1, startColumn: 1,
+        endLineNumber: position.lineNumber, endColumn: position.column
+      });
+      const context = sqlCompletionContext(beforeCursor, model.getValue());
+      const suggestions: monaco.languages.CompletionItem[] = Object.values(slsqlSnippets).map(snippet => ({
         ...snippet,
         range
       }));
+
+      suggestions.push(...SQL_COMPLETION_KEYWORDS.map((keyword) => ({
+        label: keyword,
+        kind: monaco.languages.CompletionItemKind.Keyword,
+        insertText: keyword,
+        detail: 'SQL keyword',
+        sortText: `2_${keyword}`,
+        range
+      })));
+      suggestions.push({
+        label: '?parameter?',
+        kind: monaco.languages.CompletionItemKind.Snippet,
+        insertText: '?${1:parameter}?',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        detail: 'STARLIMS Data Source parameter',
+        documentation: 'STARLIMS Data Source parameters use ?name? placeholders.',
+        sortText: '0_parameter',
+        range
+      });
+
+      try {
+        if (context.kind === 'table' && context.prefix) {
+          const tables = await searchSqlTables(context.prefix);
+          suggestions.push(...tables.map((table) => ({
+            label: table.name,
+            kind: monaco.languages.CompletionItemKind.Struct,
+            insertText: table.name,
+            detail: 'STARLIMS table',
+            documentation: table.uri || table.guid || table.name,
+            sortText: `0_${table.name}`,
+            range
+          })));
+        } else if (context.kind === 'column' && context.table) {
+          const fields = await loadSqlTableFields(context.table);
+          suggestions.push(...fields
+            .filter((field) => !context.prefix || field.name.toUpperCase().startsWith(context.prefix.toUpperCase()))
+            .map((field) => ({
+              label: field.name,
+              kind: monaco.languages.CompletionItemKind.Field,
+              insertText: field.name,
+              detail: field.detail || `Column in ${context.table}`,
+              sortText: `0_${field.name}`,
+              range
+            })));
+        }
+      } catch (error) {
+        console.warn('STARLIMS SQL metadata completion is unavailable:', error);
+      }
 
       return { suggestions };
     }

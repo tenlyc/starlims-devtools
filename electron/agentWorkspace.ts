@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { execFile } from 'child_process';
 import { mkdir, readFile, stat, writeFile } from 'fs/promises';
 import { basename, dirname, join } from 'path';
+import { pathToFileURL } from 'url';
 
 export type AgentWorkspaceContext = {
   serverName: string;
@@ -25,6 +26,9 @@ export type AgentWorkspaceChange = Omit<AgentWorkspaceFile, 'content'> & {
   kind: 'modified' | 'deleted';
   before: string;
   after: string;
+  baselineHash: string;
+  proposedHash: string;
+  fingerprint: string;
 };
 
 type ManifestFile = Omit<AgentWorkspaceFile, 'content'> & {
@@ -52,6 +56,7 @@ const LOCALIZED_TYPES = new Set([
   'HTMLFORMXML', 'HTMLFORMCODE', 'HTMLFORMGUIDE', 'HTMLFORMRESOURCES',
   'XFDFORMXML', 'XFDFORMCODE', 'XFDFORMRESOURCES'
 ]);
+const SSL_TYPES = new Set(['SS', 'APPSS', 'SRVSCR', 'SERVERSCRIPT', 'APPSERVERSCRIPT']);
 
 function safePart(value: string): string {
   const normalized = value.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/^\.+$/, '_');
@@ -90,6 +95,10 @@ function fileIdentity(file: Pick<AgentWorkspaceFile, 'uri' | 'language'>): strin
 
 function baselineRelativePath(file: Pick<AgentWorkspaceFile, 'uri' | 'language'>): string {
   return join('baselines', `${contentHash(fileIdentity(file))}.txt`);
+}
+
+function changeFingerprint(file: Pick<AgentWorkspaceFile, 'uri' | 'language' | 'type'>, kind: 'modified' | 'deleted', baselineHash: string, proposedHash: string, workspaceScope: string): string {
+  return contentHash(JSON.stringify({ version: 1, workspaceScope, uri: file.uri, language: file.language || '', type: file.type, kind, baselineHash, proposedHash }));
 }
 
 async function initializeGit(path: string): Promise<void> {
@@ -220,6 +229,7 @@ export class AgentWorkspaceManager {
   async getChanges(): Promise<AgentWorkspaceChange[]> {
     const root = this.currentPath();
     const statePath = this.currentStatePath();
+    const workspaceScope = `${this.active?.serverName || ''}\n${this.active?.user || ''}`;
     const manifest = await this.readManifest();
     const changes: AgentWorkspaceChange[] = [];
     for (const file of manifest.files) {
@@ -227,17 +237,41 @@ export class AgentWorkspaceManager {
       if (before === undefined) continue;
       const after = await readText(join(root, file.relativePath));
       if (after === undefined) {
-        changes.push({ ...file, kind: 'deleted', before, after: '' });
+        const proposedHash = contentHash('');
+        changes.push({ ...file, kind: 'deleted', before, after: '', proposedHash, fingerprint: changeFingerprint(file, 'deleted', file.baselineHash, proposedHash, workspaceScope) });
       } else if (contentHash(after) !== file.baselineHash) {
-        changes.push({ ...file, kind: 'modified', before, after });
+        const proposedHash = contentHash(after);
+        changes.push({ ...file, kind: 'modified', before, after, proposedHash, fingerprint: changeFingerprint(file, 'modified', file.baselineHash, proposedHash, workspaceScope) });
       }
     }
     return changes;
   }
 
-  async acceptChanges(identities: Array<{ uri: string; language?: string }>): Promise<number> {
+  async lspDocuments(): Promise<Array<{ sourceUri: string; documentUri: string; name: string; type: string; language?: string; content: string }>> {
+    const root = this.currentPath();
+    const manifest = await this.readManifest();
+    const documents: Array<{ sourceUri: string; documentUri: string; name: string; type: string; language?: string; content: string }> = [];
+    for (const file of manifest.files) {
+      if (!SSL_TYPES.has(file.type.toUpperCase())) continue;
+      const absolutePath = join(root, file.relativePath);
+      const content = await readText(absolutePath);
+      if (content === undefined) continue;
+      documents.push({
+        sourceUri: file.uri,
+        documentUri: pathToFileURL(absolutePath).href,
+        name: file.name,
+        type: file.type,
+        language: file.language,
+        content
+      });
+    }
+    return documents;
+  }
+
+  async acceptChanges(identities: Array<{ uri: string; language?: string; fingerprint?: string }>): Promise<number> {
     const root = this.currentPath();
     const statePath = this.currentStatePath();
+    const workspaceScope = `${this.active?.serverName || ''}\n${this.active?.user || ''}`;
     const manifest = await this.readManifest();
     const accepted = new Set(identities.map(fileIdentity));
     let count = 0;
@@ -245,8 +279,12 @@ export class AgentWorkspaceManager {
       if (!accepted.has(fileIdentity(file))) continue;
       const content = await readText(join(root, file.relativePath));
       if (content === undefined) continue;
+      const requested = identities.find((identity) => fileIdentity(identity) === fileIdentity(file));
+      const proposedHash = contentHash(content);
+      const currentFingerprint = changeFingerprint(file, 'modified', file.baselineHash, proposedHash, workspaceScope);
+      if (requested?.fingerprint && requested.fingerprint !== currentFingerprint) continue;
       await writeFile(join(statePath, file.baselinePath), content, 'utf8');
-      file.baselineHash = contentHash(content);
+      file.baselineHash = proposedHash;
       count++;
     }
     await this.writeManifest({ ...manifest, updatedAt: new Date().toISOString() });

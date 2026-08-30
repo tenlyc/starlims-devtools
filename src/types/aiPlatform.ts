@@ -44,6 +44,7 @@ export type QualityTestCase = {
   command?: string;
   status: 'pending' | 'passed' | 'failed';
   result?: string;
+  changeSetFingerprint?: string;
   updatedAt: number;
 };
 
@@ -101,7 +102,9 @@ export type EffectiveAiConfig = {
 };
 
 export type WorkspaceReviewState = {
-  reviewedKeys: string[];
+  /** @deprecated Kept only so older local settings can be read safely. */
+  reviewedKeys?: string[];
+  reviewedFingerprints: string[];
   tests: QualityTestCase[];
 };
 

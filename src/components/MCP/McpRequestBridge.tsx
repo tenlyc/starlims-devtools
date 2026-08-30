@@ -1,10 +1,12 @@
 import { useEffect } from 'react';
 import { getEnterpriseService } from '../../services/enterpriseService';
 import { useOutputLogStore } from '../../services/outputLogStore';
-import { isStateChangingMcpTool } from '../../services/agentPermissions';
+import { isStateChangingMcpTool, requiresMcpApproval } from '../../services/agentPermissions';
+import { requestInlineMcpApproval } from '../../services/mcpApprovalStore';
+import { checkInItemWithGate, checkoutItemWithGate, executeDataSourceWithGate, executeServerScriptWithGate, saveItemWithGate, undoCheckoutWithGate } from '../../services/writeGateService';
 
 type McpRequest = { id: string; tool: string; arguments: Record<string, unknown> };
-type McpToolPermissionPolicy = 'read-only' | 'ask-writes' | 'full-access';
+type McpToolPermissionPolicy = 'read-only' | 'ask-writes' | 'auto-safe' | 'full-access';
 
 const MCP_TOOL_PERMISSION_STORE_KEY = 'mcpToolPermissionPolicy.v1';
 
@@ -30,20 +32,15 @@ const truncate = (text: string, requested?: unknown): { value: string; totalChar
 async function ensureMcpToolAllowed(request: McpRequest): Promise<void> {
   if (!isStateChangingMcpTool(request.tool)) return;
   const saved = await window.electronAPI?.storeGet(MCP_TOOL_PERMISSION_STORE_KEY).catch(() => null);
-  const policy: McpToolPermissionPolicy = saved === 'read-only' || saved === 'full-access' ? saved : 'ask-writes';
+  const policy: McpToolPermissionPolicy = saved === 'read-only' || saved === 'auto-safe' || saved === 'full-access' ? saved : 'ask-writes';
   if (policy === 'read-only') throw new Error(`MCP tool '${request.tool}' is blocked by the current read-only conversation mode.`);
-  if (policy === 'full-access') return;
-  const result = await window.electronAPI?.showMessageBox({
-    type: 'warning',
-    title: 'STARLIMS MCP 操作确认',
-    message: `允许 AI 执行“${request.tool}”吗？`,
-    detail: summarizeArguments(request.arguments),
-    buttons: ['拒绝', '允许一次'],
-    cancelId: 0,
-    defaultId: 1,
-    noLink: true
+  if (!requiresMcpApproval(request.tool, policy)) return;
+  const allowed = await requestInlineMcpApproval({
+    id: request.id,
+    tool: request.tool,
+    detail: summarizeArguments(request.arguments)
   });
-  if (!result || result.response !== 1) throw new Error(`MCP tool '${request.tool}' was declined by the user.`);
+  if (!allowed) throw new Error(`MCP tool '${request.tool}' was declined by the user.`);
 }
 
 async function executeMcpTool(request: McpRequest): Promise<unknown> {
@@ -95,31 +92,30 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
       return { filter, items, totalItems: items.length };
     }
     case 'checkout_item': {
-      const result = await service.checkOut(uri(), args.language ? String(args.language) : undefined);
+      const result = await checkoutItemWithGate({ source: 'agent', action: 'checkout', uri: uri(), language: args.language ? String(args.language) : undefined, approved: true });
       if (!result.success) throw new Error(result.message || 'Checkout failed.');
       return { uri: uri(), ...result };
     }
     case 'save_item': {
-      const success = await service.saveItemCode(uri(), String(args.code ?? ''), args.language ? String(args.language) : undefined);
-      if (!success) throw new Error('Saving the STARLIMS item failed.');
-      return { uri: uri(), saved: true };
+      const result = await saveItemWithGate({ source: 'agent', action: 'save', uri: uri(), language: args.language ? String(args.language) : undefined, type: args.type ? String(args.type) : undefined, code: String(args.code ?? ''), approved: true });
+      return { uri: uri(), ...result };
     }
     case 'checkin_item': {
-      const result = await service.checkIn(uri(), String(args.reason), args.language ? String(args.language) : undefined);
+      const result = await checkInItemWithGate({ source: 'agent', action: 'checkin', uri: uri(), reason: String(args.reason), language: args.language ? String(args.language) : undefined, approved: true });
       if (!result.success) throw new Error(result.message || 'Check-in failed.');
       return { uri: uri(), ...result };
     }
     case 'undo_checkout': {
-      if (!await service.undoCheckOut(uri())) throw new Error('Undo checkout failed.');
+      if (!await undoCheckoutWithGate({ source: 'agent', action: 'undo-checkout', uri: uri(), approved: true })) throw new Error('Undo checkout failed.');
       return { uri: uri(), undone: true };
     }
     case 'execute_server_script': {
-      const result = await service.runScript(uri(), Array.isArray(args.parameters) ? args.parameters : []);
+      const result = await executeServerScriptWithGate({ source: 'agent', action: 'execute-script', uri: uri(), parameters: Array.isArray(args.parameters) ? args.parameters : [], approved: true });
       if (!result.success) throw new Error(result.error || 'Server script execution failed.');
       return { uri: uri(), ...result };
     }
     case 'execute_data_source': {
-      const result = await service.runDataSource(uri());
+      const result = await executeDataSourceWithGate({ source: 'agent', action: 'execute-data-source', uri: uri(), approved: true });
       if (!result.success) throw new Error(result.error || 'Data source execution failed.');
       return { uri: uri(), ...result };
     }

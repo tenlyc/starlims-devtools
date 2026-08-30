@@ -4,6 +4,7 @@ import { getEnterpriseService } from './enterpriseService';
 import { editorStore } from '../stores/editorStore';
 import { SSLParser } from '../lsp/ssl/parser';
 import { buildDependencyIndex, saveDependencyIndex } from './starlimsDependencyIndex';
+import { saveItemWithGate } from './writeGateService';
 
 const TYPE_MAP: Record<string, string> = {
   AppServerScript: 'APPSS',
@@ -107,6 +108,13 @@ export async function applyWorkspaceChanges(changes: AgentWorkspaceChange[]): Pr
   const result: WorkspaceApplyResult = { applied: [], conflicts: [], errors: [], cancelled: false };
   if (!changes.length) return result;
 
+  const freshChanges = await getWorkspaceChanges();
+  const freshByIdentity = new Map(freshChanges.map((change) => [identity(change), change]));
+  const staleChanges = changes.filter((change) => freshByIdentity.get(identity(change))?.fingerprint !== change.fingerprint);
+  for (const change of staleChanges) result.conflicts.push({ change, reason: '本地内容在审查后已发生变化，原内容指纹已失效；请重新审查。' });
+  changes = changes.filter((change) => !staleChanges.some((stale) => identity(stale) === identity(change)));
+  if (!changes.length) return result;
+
   const validationFailures = changes
     .map((change) => ({ change, reason: validateLocalChange(change) }))
     .filter((item): item is WorkspaceApplyConflict => Boolean(item.reason));
@@ -149,16 +157,10 @@ export async function applyWorkspaceChanges(changes: AgentWorkspaceChange[]): Pr
       continue;
     }
     try {
-      const saved = await getEnterpriseService().saveItemCode(change.uri, change.after, change.language);
-      if (!saved) {
-        result.errors.push({ change, reason: 'STARLIMS SaveCode 返回失败。' });
-        continue;
-      }
-      const verifiedContent = await getEnterpriseService().getItemCode(change.uri, change.language);
-      if (verifiedContent !== change.after) {
-        result.errors.push({ change, reason: '保存后回读校验不一致，本地修改仍保留为待审查状态。' });
-        continue;
-      }
+      await saveItemWithGate({
+        source: 'workspace', action: 'save', uri: change.uri, language: change.language,
+        type: change.type, code: change.after, expectedRemoteContent: change.before, approved: true
+      });
       result.applied.push(change);
       const openFile = editorStore.getState().openFiles.find((file) => file.uri === change.uri && (file.language || '') === (change.language || ''));
       if (openFile) {
@@ -171,7 +173,13 @@ export async function applyWorkspaceChanges(changes: AgentWorkspaceChange[]): Pr
   }
 
   if (result.applied.length) {
-    await window.electronAPI.agentWorkspaceAcceptChanges(result.applied.map(({ uri, language }) => ({ uri, language })));
+    const accepted = await window.electronAPI.agentWorkspaceAcceptChanges(result.applied.map(({ uri, language, fingerprint }) => ({ uri, language, fingerprint })));
+    if (accepted !== result.applied.length) {
+      const acceptedFingerprints = new Set((await getWorkspaceChanges()).map((change) => change.fingerprint));
+      const staleApplied = result.applied.filter((change) => acceptedFingerprints.has(change.fingerprint));
+      for (const change of staleApplied) result.errors.push({ change, reason: '保存后本地内容再次变化，未更新基线；请重新审查当前版本。' });
+      result.applied = result.applied.filter((change) => !staleApplied.includes(change));
+    }
     window.dispatchEvent(new CustomEvent('agent-workspace:applied', { detail: result }));
   }
   return result;
