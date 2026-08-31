@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { isStateChangingMcpTool, permissionPolicyForMode } from '../src/services/agentPermissions';
 import { buildCliPrompt, estimatePromptTokens } from '../src/services/aiContextStore';
 
@@ -9,6 +10,7 @@ const prompt = buildCliPrompt(
     name: 'TEST',
     uri: '/Server Scripts/TEST',
     type: 'ServerScript',
+    language: 'CHS',
     content: ':PROCEDURE TEST;\n:RETURN .T.;\n:ENDPROC;',
     source: 'checkout'
   }],
@@ -17,9 +19,13 @@ const prompt = buildCliPrompt(
 );
 
 assert.match(prompt, /STARLIMS MCP endpoint is http:\/\/127\.0\.0\.1:3102\/mcp/);
-assert.match(prompt, /MCP is required for remote STARLIMS operations/);
+assert.match(prompt, /Use MCP when the request needs current remote STARLIMS state/);
+assert.match(prompt, /do not rediscover or reread them/i);
+assert.match(prompt, /exact STARLIMS URI is known/i);
+assert.match(prompt, /Do not call get_capabilities unless/i);
 assert.match(prompt, /Do not infer or fabricate remote state/);
 assert.match(prompt, /STARLIMS URI: \/Server Scripts\/TEST/);
+assert.match(prompt, /Item language: CHS/);
 assert.match(prompt, /:PROCEDURE TEST/);
 assert.match(prompt, /Explain this procedure/);
 
@@ -54,3 +60,9 @@ assert.equal(permissionPolicyForMode('agent'), 'ask-writes');
 assert.equal(permissionPolicyForMode('debug'), 'ask-writes');
 assert.equal(isStateChangingMcpTool('save_item'), true);
 assert.equal(isStateChangingMcpTool('get_item_code'), false);
+
+const panelSource = readFileSync(new URL('../src/components/MCP/MCPPanel.tsx', import.meta.url), 'utf8');
+const appSource = readFileSync(new URL('../src/app/App.tsx', import.meta.url), 'utf8');
+assert.match(panelSource, /syncAgentTurnWorkspace\(contexts\)/);
+assert.doesNotMatch(panelSource, /syncCheckedOutWorkspace/);
+assert.doesNotMatch(appSource, /syncCheckedOutWorkspace/);

@@ -5,6 +5,9 @@ const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
 const windows = packageJson.build?.win;
 const nsis = packageJson.build?.nsis;
 const resources = packageJson.build?.extraResources || [];
+const electronMain = readFileSync('electron/main.ts', 'utf8');
+const preload = readFileSync('electron/preload.ts', 'utf8');
+const themeStore = readFileSync('src/stores/themeStore.ts', 'utf8');
 
 assert.equal(windows?.icon, 'build/icon.ico');
 assert.notEqual(windows?.signAndEditExecutable, false, 'Windows executable resource editing must remain enabled.');
@@ -30,4 +33,11 @@ for (const size of [16, 24, 32, 48, 64, 128, 256]) {
   assert.equal(sizes.has(size), true, `Windows ICO is missing ${size}x${size}.`);
 }
 
-console.log(`Windows application icon smoke test passed (${[...sizes].sort((a, b) => a - b).join(', ')} px).`);
+assert.match(electronMain, /nativeTheme\.themeSource = theme/);
+assert.match(electronMain, /applyNativeTheme\(store\.get\('theme'\), false\)/);
+assert.match(electronMain, /ipcMain\.handle\('theme:set'/);
+assert.match(electronMain, /backgroundColor: nativeWindowBackground\(\)/);
+assert.match(preload, /themeSet: \(theme: 'dark' \| 'light' \| 'system'\) => ipcRenderer\.invoke\('theme:set', theme\)/);
+assert.match(themeStore, /window\.electronAPI\.themeSet\(theme\)/);
+
+console.log(`Windows application icon and native theme smoke test passed (${[...sizes].sort((a, b) => a - b).join(', ')} px).`);

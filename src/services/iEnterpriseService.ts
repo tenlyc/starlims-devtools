@@ -158,6 +158,7 @@ export interface IEnterpriseService {
   // Session
   refreshSession(): Promise<boolean>;
   getSessionInfo(): SessionInfo | null;
+  getPreviewCredentials(): { user: string; password: string } | null;
 
   // Enterprise items
   getEnterpriseItems(uri?: string): Promise<EnterpriseItem[]>;

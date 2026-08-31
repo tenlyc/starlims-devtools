@@ -2,8 +2,39 @@ import assert from 'node:assert/strict';
 import { AgentRuntimeManager, normalizeCodexModels } from '../electron/agentRuntime';
 import { withLocalMcpNoProxy } from '../electron/localMcpEnv';
 import type { AgentEvent } from '../electron/agentTypes';
+import { createUnifiedDiff, parseUnifiedDiff, summarizeAgentDiff } from '../src/services/agentDiff';
 
 async function main() {
+  const parsedDiff = parseUnifiedDiff([
+    'diff --git a/src/old.ts b/src/new.ts',
+    'similarity index 80%',
+    'rename from src/old.ts',
+    'rename to src/new.ts',
+    '--- a/src/old.ts',
+    '+++ b/src/new.ts',
+    '@@ -1,2 +1,2 @@',
+    '-const oldName = true;',
+    '+const newName = true;',
+    ' unchanged();'
+  ].join('\n'));
+  assert.equal(parsedDiff.length, 1);
+  assert.equal(parsedDiff[0].path, 'src/new.ts');
+  assert.equal(parsedDiff[0].oldPath, 'src/old.ts');
+  assert.equal(parsedDiff[0].kind, 'move');
+  assert.deepEqual(summarizeAgentDiff(parsedDiff), { files: [{ ...parsedDiff[0], additions: 1, deletions: 1 }], additions: 1, deletions: 1 });
+  const legacyStructuredDiff = summarizeAgentDiff(undefined, JSON.stringify([{ path: '/tmp/demo.ts', kind: { type: 'update' }, diff: '@@ -1 +1 @@\n-old\n+new' }]));
+  assert.equal(legacyStructuredDiff.files[0].path, '/tmp/demo.ts');
+  assert.equal(legacyStructuredDiff.additions, 1);
+  assert.equal(legacyStructuredDiff.deletions, 1);
+  const generatedDiff = createUnifiedDiff('/Applications/QM/Test', 'line one\nold value\nline three', 'line one\nnew value\nline three');
+  assert.match(generatedDiff, /--- a\/Applications\/QM\/Test/);
+  assert.match(generatedDiff, /\+\+\+ b\/Applications\/QM\/Test/);
+  assert.deepEqual(summarizeAgentDiff(undefined, generatedDiff), {
+    files: [{ path: 'Applications/QM/Test', oldPath: undefined, kind: 'update', diff: generatedDiff, additions: 1, deletions: 1 }],
+    additions: 1,
+    deletions: 1
+  });
+
   assert.deepEqual(normalizeCodexModels({ models: [
     { id: 'new-schema', name: 'New schema', default: true },
     { model: 'legacy-schema', displayName: 'Legacy schema' },

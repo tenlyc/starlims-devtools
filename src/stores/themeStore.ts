@@ -28,9 +28,9 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     document.documentElement.classList.remove('dark', 'light');
     document.documentElement.classList.add(resolvedTheme);
 
-    // Save preference
+    // Save preference and keep Electron's native Windows title/menu bars in sync.
     if (window.electronAPI) {
-      window.electronAPI.storeSet('theme', theme);
+      void window.electronAPI.themeSet(theme);
     }
   },
 
@@ -48,6 +48,12 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     // Apply theme to document
     document.documentElement.classList.remove('dark', 'light');
     document.documentElement.classList.add(resolvedTheme);
+
+    // Older builds only applied the renderer theme. Re-apply the saved value to
+    // the main process during startup so native window chrome is corrected too.
+    if (window.electronAPI) {
+      void window.electronAPI.themeSet(theme);
+    }
 
     // Listen for system theme changes
     if (typeof window !== 'undefined' && window.matchMedia) {

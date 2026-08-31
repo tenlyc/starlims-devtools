@@ -137,7 +137,8 @@ export class AgentWorkspaceManager {
       '# STARLIMS Agent Workspace', '',
       `Server: ${context.serverName} (${context.serverUrl})`,
       `User: ${context.user || 'unknown'}`, '',
-      'Files under `items/` are working copies of the current user’s checked-out STARLIMS scripts.',
+      'Files under `items/` are working copies synchronized on demand from the active editor and explicit AI references.',
+      'A full checked-out workspace and dependency index are synchronized only when requested from the AI Capability Center.',
       'Local edits are reviewed in STARLIMS DevTools before they are written back to STARLIMS.',
       'User-configured AI rules are managed separately; this workspace never creates or replaces AGENTS.md/agent.md.',
       'Use `.starlims/manifest.json` as an informational URI/language index; STARLIMS DevTools keeps the authoritative baseline separately.'
@@ -172,12 +173,13 @@ export class AgentWorkspaceManager {
     await writeFile(join(root, '.starlims', 'manifest.json'), JSON.stringify(publicManifest, null, 2));
   }
 
-  async syncFiles(files: AgentWorkspaceFile[]): Promise<{ path: string; files: number; preservedChanges: number }> {
+  async syncFiles(files: AgentWorkspaceFile[], options: { replace?: boolean } = {}): Promise<{ path: string; files: number; preservedChanges: number }> {
     const root = this.currentPath();
     const statePath = this.currentStatePath();
     await mkdir(join(root, '.starlims'), { recursive: true });
     await mkdir(join(statePath, 'baselines'), { recursive: true });
     const previous = await this.readManifest();
+    const replace = options.replace !== false;
     const previousByIdentity = new Map(previous.files.map((file) => [fileIdentity(file), file]));
     const manifest: ManifestFile[] = [];
     let preservedChanges = 0;
@@ -214,6 +216,10 @@ export class AgentWorkspaceManager {
     // as a checkout conflict instead of silently losing the local edit.
     for (const old of previous.files) {
       if (currentIdentities.has(fileIdentity(old))) continue;
+      if (!replace) {
+        manifest.push(old);
+        continue;
+      }
       const baseline = await readText(join(statePath, old.baselinePath));
       const current = await readText(join(root, old.relativePath));
       if (baseline === undefined) continue;
@@ -288,6 +294,30 @@ export class AgentWorkspaceManager {
       count++;
     }
     await this.writeManifest({ ...manifest, updatedAt: new Date().toISOString() });
+    return count;
+  }
+
+  async discardChanges(identities: Array<{ uri: string; language?: string; fingerprint?: string }>): Promise<number> {
+    const root = this.currentPath();
+    const statePath = this.currentStatePath();
+    const workspaceScope = `${this.active?.serverName || ''}\n${this.active?.user || ''}`;
+    const manifest = await this.readManifest();
+    let count = 0;
+    for (const requested of identities) {
+      const file = manifest.files.find((candidate) => fileIdentity(candidate) === fileIdentity(requested));
+      if (!file) continue;
+      const before = await readText(join(statePath, file.baselinePath));
+      const after = await readText(join(root, file.relativePath));
+      if (before === undefined || after === before) continue;
+      const kind = after === undefined ? 'deleted' : 'modified';
+      const proposedHash = contentHash(after || '');
+      const fingerprint = changeFingerprint(file, kind, file.baselineHash, proposedHash, workspaceScope);
+      if (requested.fingerprint && requested.fingerprint !== fingerprint) continue;
+      const target = join(root, file.relativePath);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, before, 'utf8');
+      count++;
+    }
     return count;
   }
 }

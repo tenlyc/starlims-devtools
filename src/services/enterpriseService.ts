@@ -10,6 +10,7 @@ import { cleanUrl, isJson, getErrorMessage } from './miscUtils';
 import { isBridgeRunning, launchXFDForm, launchHTMLForm } from './bridge';
 import { useOutputLogStore } from './outputLogStore';
 import { decodeFormResourcePayload } from './formResources';
+import type { FormPreviewConfig, FormPreviewMode } from '../types/formPreview';
 
 export function isEnterpriseItemCheckedOut(item: Record<string, unknown>): boolean {
   const flag = item.isCheckedOut ?? item.checkedOut;
@@ -286,6 +287,12 @@ export class EnterpriseService implements IEnterpriseService {
    */
   getSessionInfo(): SessionInfo | null {
     return this.sessionInfo;
+  }
+
+  /** Credentials used only to bootstrap the isolated HTML preview session. */
+  getPreviewCredentials(): { user: string; password: string } | null {
+    if (!this.config || !this.password) return null;
+    return { user: this.config.user || '', password: this.password };
   }
 
   /**
@@ -1499,13 +1506,15 @@ export class EnterpriseService implements IEnterpriseService {
    */
   async getGUID(uri: string): Promise<string | null> {
     try {
-      const data = await this.apiRequest<any>(`GetGUID?URI=${encodeURIComponent(uri)}`, {
+      const data = await this.apiRequest<any>(`GetItemGUID?URI=${encodeURIComponent(uri)}`, {
         method: 'GET'
       });
 
-      if (data?.success && data.data?.guid) {
-        return data.data.guid;
-      }
+      if (!data) return null;
+      const value = data?.success === true ? data.data : data;
+      if (typeof value === 'string' && value.trim()) return value.trim();
+      const guid = value?.guid || value?.GUID || data?.guid || data?.GUID;
+      if (typeof guid === 'string' && guid.trim()) return guid.trim();
       return null;
     } catch (error) {
       console.error('Failed to get GUID:', getErrorMessage(error));
@@ -1653,6 +1662,47 @@ export class EnterpriseService implements IEnterpriseService {
 
     const formId = uri.replace('.xml', '').replace('HTMLForms/', '');
     return launchHTMLForm(this.config.url, formId, this.sessionInfo, 'open');
+  }
+
+  /** Build the authenticated URL and metadata used by the integrated Form preview. */
+  async getHTMLFormPreviewConfig(
+    uri: string,
+    guid?: string,
+    mode: FormPreviewMode = 'run',
+    language?: string,
+    formXml?: string
+  ): Promise<FormPreviewConfig | null> {
+    if (!this.sessionInfo || !this.config) return null;
+
+    const formGuid = guid || await this.getGUID(uri);
+    if (!formGuid) return null;
+
+    const serverUrl = cleanUrl(this.config.url);
+    const langid = language || this.sessionInfo.langid || 'ENG';
+    const formName = uri.split('/').filter(Boolean).pop()?.replace(/\.(?:xml|js)$/i, '') || formGuid;
+    const formDesignerGuid = '1D09BB79-2D28-4594-8B03-26306F5C8AEC';
+    const url = mode === 'design'
+      ? `${serverUrl}/starthtml.lims?FormId=${formDesignerGuid}&LangId=ENG&Debug=true&FormArgs=%22${encodeURIComponent(formGuid)}%22`
+      : `${serverUrl}/starthtml.lims?FormId=${encodeURIComponent(formGuid)}&LangId=${encodeURIComponent(langid)}${mode === 'debug' ? '&Debug=true' : ''}`;
+
+    let resolvedFormXml = formXml;
+    if (!resolvedFormXml) {
+      const xmlUri = /\/(?:CodeBehind|Guide|Resources)\//i.test(uri)
+        ? uri.replace(/\/(?:CodeBehind|Guide|Resources)\//i, '/XML/')
+        : uri;
+      resolvedFormXml = await this.getItemCode(xmlUri, langid).catch(() => '');
+    }
+
+    return {
+      sourceUri: uri,
+      formGuid,
+      formName,
+      language: langid,
+      mode,
+      url,
+      serverOrigin: new URL(serverUrl).origin,
+      formXml: resolvedFormXml || undefined
+    };
   }
 
   /**

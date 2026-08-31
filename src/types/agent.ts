@@ -11,6 +11,16 @@ export type AgentRuntimeStatus = {
 export type AgentItemKind = 'mcp' | 'command' | 'file' | 'reasoning' | 'plan' | 'other';
 export type AgentItemStatus = 'running' | 'completed' | 'failed' | 'declined';
 
+export type AgentFileChange = {
+  path: string;
+  kind: 'add' | 'update' | 'delete' | 'move';
+  diff: string;
+  oldPath?: string;
+  origin?: 'workspace' | 'remote';
+  uri?: string;
+  language?: string;
+};
+
 export type AgentEvent = {
   provider: AgentProvider;
   type: 'session' | 'status' | 'text-delta' | 'item' | 'item-output' | 'diff' | 'approval' | 'done' | 'error';
@@ -25,6 +35,7 @@ export type AgentEvent = {
   detail?: string;
   output?: string;
   diff?: string;
+  files?: AgentFileChange[];
   canAcceptForSession?: boolean;
 };
 

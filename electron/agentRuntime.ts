@@ -3,6 +3,7 @@ import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
 import type { AgentApprovalDecision, AgentEvent, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, ExternalMcpServers } from '../src/types/agent';
 import { withLocalMcpNoProxy } from './localMcpEnv';
+import { MCP_EFFICIENCY_INSTRUCTIONS } from '../src/services/mcpEfficiency';
 
 type JsonRpcId = number | string;
 type JsonObject = Record<string, any>;
@@ -92,6 +93,23 @@ function itemStatus(value: unknown): 'running' | 'completed' | 'failed' | 'decli
   return 'running';
 }
 
+function normalizeFileChanges(value: unknown): AgentEvent['files'] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return [];
+    const change = candidate as JsonObject;
+    if (typeof change.path !== 'string' || typeof change.diff !== 'string') return [];
+    const rawKind = typeof change.kind === 'string' ? change.kind : change.kind?.type;
+    const kind = rawKind === 'add' || rawKind === 'delete' || rawKind === 'move' ? rawKind : 'update';
+    return [{
+      path: change.path,
+      diff: change.diff,
+      kind,
+      oldPath: typeof change.kind?.move_path === 'string' ? change.kind.move_path : undefined
+    }];
+  });
+}
+
 export class CodexAppServerRuntime {
   private child?: ChildProcessWithoutNullStreams;
   private stopping = false;
@@ -149,7 +167,7 @@ export class CodexAppServerRuntime {
         approvalPolicy: toolPermissionPolicy === 'full-access' ? 'never' : toolPermissionPolicy === 'auto-safe' ? 'on-request' : 'untrusted',
         sandbox: toolPermissionPolicy === 'read-only' ? 'read-only' : toolPermissionPolicy === 'full-access' ? 'danger-full-access' : 'workspace-write',
         serviceName: 'starlims-devtools',
-        developerInstructions: 'You are the coding agent inside STARLIMS DevTools. Use the required starlims MCP server for remote STARLIMS data and changes. Never claim a remote operation succeeded unless the MCP tool confirms it.',
+        developerInstructions: `You are the coding agent inside STARLIMS DevTools. Use the required starlims MCP server for remote STARLIMS data and changes. ${MCP_EFFICIENCY_INSTRUCTIONS} Never claim a remote operation succeeded unless the MCP tool confirms it.`,
         ...(requestedModel ? { model: requestedModel } : {})
       });
       this.threadId = result.thread.id;
@@ -168,6 +186,16 @@ export class CodexAppServerRuntime {
   async interrupt(): Promise<void> {
     if (!this.threadId || !this.activeTurnId) return;
     await this.request('turn/interrupt', { threadId: this.threadId, turnId: this.activeTurnId });
+  }
+
+  async steer(prompt: string): Promise<AgentStartResult> {
+    if (!this.threadId || !this.activeTurnId) throw new Error('There is no active Codex turn to steer.');
+    const result = await this.request('turn/steer', {
+      threadId: this.threadId,
+      expectedTurnId: this.activeTurnId,
+      input: [{ type: 'text', text: prompt }]
+    });
+    return { sessionId: this.threadId, turnId: String(result.turnId || this.activeTurnId) };
   }
 
   async newSession(): Promise<void> {
@@ -327,6 +355,16 @@ export class CodexAppServerRuntime {
       this.emit({ ...base, type: 'diff', itemId: `diff:${params.turnId}`, title: 'Working tree changes', diff: params.diff });
       return;
     }
+    if (method === 'item/fileChange/patchUpdated') {
+      this.emit({
+        ...base,
+        type: 'diff',
+        itemId: params.itemId,
+        title: `File changes (${Array.isArray(params.changes) ? params.changes.length : 0})`,
+        files: normalizeFileChanges(params.changes)
+      });
+      return;
+    }
     if (method === 'item/mcpToolCall/progress') {
       this.emit({ ...base, type: 'item-output', itemId: params.itemId, output: `${params.message}\n` });
       return;
@@ -356,7 +394,15 @@ export class CodexAppServerRuntime {
     } else if (item.type === 'commandExecution') {
       this.emit({ ...base, type: 'item', itemId: item.id, kind: 'command', status, title: item.command, detail: item.cwd, output: item.aggregatedOutput || undefined });
     } else if (item.type === 'fileChange') {
-      this.emit({ ...base, type: 'item', itemId: item.id, kind: 'file', status, title: `File changes (${item.changes?.length || 0})`, diff: stringify(item.changes || []) });
+      this.emit({
+        ...base,
+        type: 'item',
+        itemId: item.id,
+        kind: 'file',
+        status,
+        title: `File changes (${Array.isArray(item.changes) ? item.changes.length : 0})`,
+        files: normalizeFileChanges(item.changes)
+      });
     } else if (item.type === 'reasoning' || item.type === 'plan') {
       this.emit({ ...base, type: 'item', itemId: item.id, kind: item.type, status, title: item.type === 'plan' ? 'Plan' : 'Reasoning', detail: item.text || stringify(item.summary || []) });
     }
@@ -383,6 +429,11 @@ export class AgentRuntimeManager {
   send(provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes'): Promise<AgentStartResult> {
     if (provider === 'codex') return this.codex.send(prompt, model, toolPermissionPolicy);
     throw new Error('This provider remains in CLI compatibility mode.');
+  }
+
+  steer(provider: AgentProvider, prompt: string): Promise<AgentStartResult> {
+    if (provider === 'codex') return this.codex.steer(prompt);
+    throw new Error('This provider does not support active-turn steering.');
   }
 
   async interrupt(provider: AgentProvider): Promise<void> {

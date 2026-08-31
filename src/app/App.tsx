@@ -13,7 +13,6 @@ import { useServerStore } from '../stores/serverStore';
 import { useThemeStore } from '../stores/themeStore';
 import { editorStore } from '../stores/editorStore';
 import { useDiagnosticStore } from '../services/diagnosticStore';
-import { syncCheckedOutWorkspace } from '../services/agentWorkspaceService';
 import { useI18n } from '../i18n';
 import { loadAiLayers, mergeAiLayers } from '../services/aiPlatform';
 import { configureExtensionLanguages } from '../services/editorLanguage';
@@ -126,9 +125,6 @@ export default function App() {
       localStorage.setItem('gitWorkspacePath', workspace.path);
       window.dispatchEvent(new CustomEvent('agent-workspace:configured', { detail: workspace }));
       void loadAiLayers().then((layers) => configureExtensionLanguages(mergeAiLayers(layers).extensions.flatMap((extension) => extension.contributes?.languages || [])));
-      return syncCheckedOutWorkspace();
-    }).then((result) => {
-      if (result?.preservedChanges) console.info(`Preserved ${result.preservedChanges} local Agent workspace change(s).`);
     }).catch((error) => console.error('Failed to configure Agent workspace:', error));
   }, [agentWorkspaceRoot, isConnected, currentServer]);
 

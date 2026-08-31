@@ -2,11 +2,13 @@ import { useEffect } from 'react';
 import { getEnterpriseService } from '../../services/enterpriseService';
 import { useOutputLogStore } from '../../services/outputLogStore';
 import { isStateChangingMcpTool, requiresMcpApproval } from '../../services/agentPermissions';
-import { requestInlineMcpApproval } from '../../services/mcpApprovalStore';
+import { requestInlineMcpApproval, useMcpApprovalStore } from '../../services/mcpApprovalStore';
 import { assertExpectedContentVersion, checkInItemWithGate, checkoutItemWithGate, contentVersion, executeDataSourceWithGate, executeServerScriptWithGate, saveItemWithGate, undoCheckoutWithGate } from '../../services/writeGateService';
 import { formResourceVersion, normalizeFormResourcesUri, parseFormResources, setFormResourceValue } from '../../services/formResources';
+import { publishAgentRemoteChange } from '../../services/agentRemoteChange';
+import { executeFormPreviewMcpTool, isFormPreviewMcpTool } from '../../services/formPreviewService';
 
-type McpRequest = { id: string; tool: string; arguments: Record<string, unknown> };
+type McpRequest = { id: string; tool: string; arguments: Record<string, unknown>; provider?: 'codex' | 'generic' };
 type McpToolPermissionPolicy = 'read-only' | 'ask-writes' | 'auto-safe' | 'full-access';
 
 const MCP_TOOL_PERMISSION_STORE_KEY = 'mcpToolPermissionPolicy.v1';
@@ -55,7 +57,22 @@ async function ensureMcpToolAllowed(request: McpRequest): Promise<void> {
   if (!allowed) throw new Error(`MCP tool '${request.tool}' was declined by the user.`);
 }
 
+function publishRemoteChange(request: McpRequest, uri: string, language: string | undefined, before: string, after: string): void {
+  if (before === after) return;
+  publishAgentRemoteChange({
+    id: request.id,
+    provider: request.provider || useMcpApprovalStore.getState().activeProvider,
+    uri,
+    language,
+    before,
+    after
+  });
+}
+
 async function executeMcpTool(request: McpRequest): Promise<unknown> {
+  if (isFormPreviewMcpTool(request.tool)) {
+    return executeFormPreviewMcpTool(request.tool, request.arguments, request.provider);
+  }
   const service = getEnterpriseService();
   if (!service.isConnected()) {
     throw new Error('STARLIMS is not connected. Open STARLIMS DevTools and connect to a server first.');
@@ -128,6 +145,7 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
       await assertExpectedContentVersion(args.expectedVersion, remoteBefore);
       const result = await saveItemWithGate({ source: 'agent', action: 'save', uri: uri(), language, type: args.type ? String(args.type) : undefined, code: String(args.code ?? ''), expectedRemoteContent: remoteBefore, approved: true });
       const remoteAfter = await service.getItemCode(uri(), language);
+      publishRemoteChange(request, uri(), language, remoteBefore, remoteAfter);
       return { uri: uri(), language, ...result, version: await contentVersion(remoteAfter) };
     }
     case 'save_form_resources': {
@@ -145,6 +163,7 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
         expectedRemoteContent: current.xml, approved: true, verifyReadBack: sameFormResources
       });
       const saved = parseFormResources(await service.getItemCode(resourceUri, language));
+      publishRemoteChange(request, resourceUri, language, current.xml, saved.xml);
       return { uri: resourceUri, language, ...result, version: await formResourceVersion(saved.xml), totalItems: saved.resources.length };
     }
     case 'set_form_resource': {
@@ -161,6 +180,7 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
         expectedRemoteContent: current.xml, approved: true, verifyReadBack: sameFormResources
       });
       const saved = parseFormResources(await service.getItemCode(resourceUri, language));
+      publishRemoteChange(request, resourceUri, language, current.xml, saved.xml);
       return {
         uri: resourceUri, language, resourceId: String(args.resourceId), created: updated.created, ...result,
         version: await formResourceVersion(saved.xml), totalItems: saved.resources.length

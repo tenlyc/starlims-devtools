@@ -3,6 +3,7 @@ import { GENERIC_AGENT_SYSTEM_PROMPT, genericAgentCapabilities, genericBuiltinTo
 import { isEnterpriseItemCheckedOut } from '../src/services/enterpriseService';
 import { permissionPolicyForMode, requiresMcpApproval } from '../src/services/agentPermissions';
 import { readFileSync } from 'node:fs';
+import { mcpReadCacheKey } from '../src/services/mcpEfficiency';
 
 const names = (policy: 'read-only' | 'ask-writes' | 'auto-safe' | 'full-access') =>
   genericBuiltinToolsForPolicy(policy).map((tool) => tool.name);
@@ -53,6 +54,13 @@ assert.doesNotMatch(mainSource, /Allow external MCP tool/);
 assert.match(GENERIC_AGENT_SYSTEM_PROMPT, /check it out/i);
 assert.match(GENERIC_AGENT_SYSTEM_PROMPT, /read it again/i);
 assert.match(GENERIC_AGENT_SYSTEM_PROMPT, /explicitly requests/i);
+assert.match(GENERIC_AGENT_SYSTEM_PROMPT, /smallest sufficient STARLIMS tool sequence/i);
+assert.equal(
+  mcpReadCacheKey('search_by_name', { maxItems: 10, filter: { type: 'ServerScript', name: 'TEST' } }),
+  mcpReadCacheKey('search_by_name', { filter: { name: 'TEST', type: 'ServerScript' }, maxItems: 10 })
+);
+assert.match(mainSource, /MCP_READ_CACHE_TTL_MS = 15_000/);
+assert.match(mainSource, /if \(!readOnly\) mcpReadCache\.clear\(\)/);
 
 assert.equal(isEnterpriseItemCheckedOut({ checkedOut: true }), true);
 assert.equal(isEnterpriseItemCheckedOut({ checkedOut: 'true' }), true);

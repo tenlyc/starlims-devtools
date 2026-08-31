@@ -46,6 +46,7 @@ export interface ElectronAPI {
   storeGet: (key: string) => Promise<any>;
   storeSet: (key: string, value: any) => Promise<boolean>;
   storeDelete: (key: string) => Promise<boolean>;
+  themeSet: (theme: 'dark' | 'light' | 'system') => Promise<boolean>;
 
   // Secrets
   secretsGet: (key: string) => Promise<string | null>;
@@ -66,6 +67,9 @@ export interface ElectronAPI {
   // Shell
   shellOpenExternal: (url: string) => Promise<void>;
   openSystemBrowser: (url: string) => Promise<{ success: boolean; error?: string }>;
+  formPreviewSaveScreenshot: (dataUrl: string, suggestedName?: string) => Promise<string>;
+  formPreviewConfigureSession: (webContentsId: number, options: { serverOrigin: string; aspnetSessionId?: string; starlimsSessionId?: string; langid?: string; user?: string; password?: string; runtimeAuthentication?: boolean }) => Promise<boolean>;
+  formPreviewClick: (webContentsId: number, x: number, y: number) => Promise<boolean>;
 
   // App
   getAppVersion: () => Promise<string>;
@@ -109,11 +113,13 @@ export interface ElectronAPI {
   aiConfigImport: () => Promise<{ filePath: string; value: unknown } | null>;
   aiConfigExport: (suggestedName: string, value: unknown) => Promise<string | null>;
   agentWorkspaceConfigure: (context: AgentWorkspaceContext) => Promise<AgentWorkspaceInfo>;
-  agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => Promise<AgentWorkspaceSyncResult>;
+  agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[], options?: { replace?: boolean }) => Promise<AgentWorkspaceSyncResult>;
   agentWorkspaceGetChanges: () => Promise<AgentWorkspaceChange[]>;
   agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'> & { fingerprint?: string }>) => Promise<number>;
+  agentWorkspaceDiscardChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'> & { fingerprint?: string }>) => Promise<number>;
   agentRunQualityTest: (command: string) => Promise<QualityTestRunResult & { cancelled?: boolean }>;
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
+  agentSteer: (provider: AgentProvider, prompt: string) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
   agentNewSession: (provider: AgentProvider) => Promise<void>;
   agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => Promise<boolean>;
@@ -122,6 +128,7 @@ export interface ElectronAPI {
   genericAgentComplete: (config: GenericAgentConfig, prompt: string) => Promise<string>;
   genericAgentTask: (config: GenericAgentConfig, system: string, prompt: string) => Promise<string>;
   genericAgentStart: (config: GenericAgentConfig, prompt: string) => Promise<AgentStartResult>;
+  genericAgentSteer: (prompt: string) => Promise<AgentStartResult>;
   genericAgentInterrupt: () => Promise<void>;
   genericAgentNewSession: () => Promise<void>;
 }

@@ -5,6 +5,11 @@ import { editorStore } from '../stores/editorStore';
 import { SSLParser } from '../lsp/ssl/parser';
 import { buildDependencyIndex, saveDependencyIndex } from './starlimsDependencyIndex';
 import { saveItemWithGate } from './writeGateService';
+import type { AiContextItem } from './aiContextStore';
+import type { OpenFile } from '../stores/editorStore';
+import type { AgentFileChange } from '../types/agent';
+import { evaluateQualityGate, loadAiLayers, mergeAiLayers, qualityReviewStoreKey } from './aiPlatform';
+import type { WorkspaceReviewState } from '../types/aiPlatform';
 
 const TYPE_MAP: Record<string, string> = {
   AppServerScript: 'APPSS',
@@ -80,15 +85,128 @@ export async function syncCheckedOutWorkspace(): Promise<AgentWorkspaceSyncResul
     const file = await loadWorkspaceFile(item);
     if (file) files.push(file);
   }
-  const result = await window.electronAPI.agentWorkspaceSyncFiles(files);
+  const result = await window.electronAPI.agentWorkspaceSyncFiles(files, { replace: true });
   await saveDependencyIndex(buildDependencyIndex(files));
   window.dispatchEvent(new CustomEvent('agent-workspace:synced', { detail: result }));
+  return result;
+}
+
+/**
+ * Build the smallest useful Agent workspace for one turn. No remote request is
+ * made here: the active editor and explicit @ references already carry content.
+ */
+export function collectAgentTurnWorkspaceFiles(contexts: AiContextItem[], activeFile?: OpenFile): AgentWorkspaceFile[] {
+  const files = new Map<string, AgentWorkspaceFile>();
+  const add = (file: AgentWorkspaceFile) => {
+    if (!file.uri.startsWith('/') || file.type.toUpperCase() === 'CUSTOMIZE') return;
+    const key = identity(file);
+    if (!files.has(key)) files.set(key, file);
+  };
+  if (activeFile) add({
+    uri: activeFile.uri, name: activeFile.name, type: activeFile.type,
+    language: activeFile.language, content: activeFile.content
+  });
+  for (const context of contexts) {
+    if (context.source === 'file') continue;
+    add({
+      uri: context.uri, name: context.name, type: context.type,
+      language: context.language, content: context.content
+    });
+  }
+  return [...files.values()];
+}
+
+/** Incrementally sync only the active editor and explicit Agent references. */
+export async function syncAgentTurnWorkspace(contexts: AiContextItem[]): Promise<AgentWorkspaceSyncResult | null> {
+  if (!window.electronAPI) return null;
+  const files = collectAgentTurnWorkspaceFiles(contexts, editorStore.getState().getActiveFile());
+  if (!files.length) return null;
+  const result = await window.electronAPI.agentWorkspaceSyncFiles(files, { replace: false });
+  window.dispatchEvent(new CustomEvent('agent-workspace:targeted-synced', { detail: result }));
   return result;
 }
 
 export async function getWorkspaceChanges(): Promise<AgentWorkspaceChange[]> {
   if (!window.electronAPI) return [];
   return window.electronAPI.agentWorkspaceGetChanges();
+}
+
+function filePathMatches(change: AgentWorkspaceChange, file: AgentFileChange): boolean {
+  const normalize = (value: string) => value.replace(/\\/g, '/').replace(/^\.\//, '');
+  const reported = normalize(file.path);
+  const relative = normalize(change.relativePath);
+  return file.uri === change.uri || reported === relative || reported.endsWith(`/${relative}`);
+}
+
+export async function resolveAgentFileChange(file: AgentFileChange): Promise<AgentWorkspaceChange | null> {
+  if (file.origin === 'remote') return null;
+  return (await getWorkspaceChanges()).find((change) => filePathMatches(change, file)) || null;
+}
+
+export async function openAgentFileChange(file: AgentFileChange): Promise<boolean> {
+  if (file.origin === 'remote' && file.uri) {
+    const content = await getEnterpriseService().getItemCode(file.uri, file.language);
+    const name = file.uri.split('/').filter(Boolean).at(-1) || file.path;
+    editorStore.getState().openFile({ uri: file.uri, name, type: 'Remote', language: file.language, content });
+    return true;
+  }
+  const change = await resolveAgentFileChange(file);
+  if (!change) return false;
+  editorStore.getState().openFile({
+    uri: change.uri, name: change.name, type: change.type,
+    language: change.language, content: change.after, baselineContent: change.before, isDirty: true
+  });
+  return true;
+}
+
+export async function discardAgentFileChange(file: AgentFileChange): Promise<boolean> {
+  const change = await resolveAgentFileChange(file);
+  if (!change || !window.electronAPI) return false;
+  const confirmation = await window.electronAPI.showMessageBox({
+    type: 'warning',
+    title: 'Discard Agent change',
+    message: `Discard the Agent change to “${displayName(change)}”?`,
+    detail: 'The local working copy will be restored to its synchronized baseline. STARLIMS remote content will not be changed.',
+    buttons: ['Cancel', 'Discard change'], defaultId: 0, cancelId: 0, noLink: true
+  });
+  if (confirmation.response !== 1) return false;
+  const discarded = await window.electronAPI.agentWorkspaceDiscardChanges([{ uri: change.uri, language: change.language, fingerprint: change.fingerprint }]);
+  if (!discarded) return false;
+  const open = editorStore.getState().openFiles.find((candidate) => candidate.uri === change.uri && (candidate.language || '') === (change.language || ''));
+  if (open) {
+    editorStore.getState().updateFileContent(open.uri, change.before);
+    editorStore.getState().markFileAsSaved(open.uri);
+  }
+  window.dispatchEvent(new CustomEvent('agent-workspace:discarded', { detail: change }));
+  return true;
+}
+
+export async function reviewAndApplyAgentFileChange(file: AgentFileChange): Promise<WorkspaceApplyResult> {
+  const change = await resolveAgentFileChange(file);
+  if (!change) throw new Error('This file change is no longer present in the Agent workspace.');
+  const [layers, savedReview] = await Promise.all([
+    loadAiLayers(),
+    window.electronAPI?.storeGet(qualityReviewStoreKey()).catch(() => null)
+  ]);
+  const stored = savedReview && typeof savedReview === 'object' ? savedReview as Partial<WorkspaceReviewState> : {};
+  const reviewState: WorkspaceReviewState = {
+    reviewedFingerprints: [...new Set([...(Array.isArray(stored.reviewedFingerprints) ? stored.reviewedFingerprints : []), change.fingerprint])],
+    tests: Array.isArray(stored.tests) ? stored.tests : []
+  };
+  const gate = evaluateQualityGate({ changes: [change], reviewState, policy: mergeAiLayers(layers).quality });
+  if (!gate.passed) throw new Error(gate.findings.filter((finding) => finding.level === 'error').map((finding) => finding.message).join('\n'));
+  const result = await applyWorkspaceChanges([change]);
+  if (!result.cancelled) {
+    const nextReview = {
+      ...reviewState,
+      reviewedFingerprints: result.applied.length
+        ? reviewState.reviewedFingerprints.filter((fingerprint) => fingerprint !== change.fingerprint)
+        : reviewState.reviewedFingerprints
+    };
+    await window.electronAPI?.storeSet(qualityReviewStoreKey(), nextReview);
+    window.dispatchEvent(new CustomEvent('ai-quality:changed', { detail: nextReview }));
+  }
+  return result;
 }
 
 function validateLocalChange(change: AgentWorkspaceChange): string | null {

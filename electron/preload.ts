@@ -45,6 +45,7 @@ export interface ElectronAPI {
   storeGet: (key: string) => Promise<any>;
   storeSet: (key: string, value: any) => Promise<boolean>;
   storeDelete: (key: string) => Promise<boolean>;
+  themeSet: (theme: 'dark' | 'light' | 'system') => Promise<boolean>;
 
   // Secrets
   secretsGet: (key: string) => Promise<string | null>;
@@ -61,6 +62,9 @@ export interface ElectronAPI {
 
   // Open URL in system browser
   openSystemBrowser: (url: string) => Promise<{ success: boolean; error?: string }>;
+  formPreviewSaveScreenshot: (dataUrl: string, suggestedName?: string) => Promise<string>;
+  formPreviewConfigureSession: (webContentsId: number, options: { serverOrigin: string; aspnetSessionId?: string; starlimsSessionId?: string; langid?: string; user?: string; password?: string; runtimeAuthentication?: boolean }) => Promise<boolean>;
+  formPreviewClick: (webContentsId: number, x: number, y: number) => Promise<boolean>;
 
   // App
   getAppVersion: () => Promise<string>;
@@ -115,6 +119,7 @@ export interface ElectronAPI {
   agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'> & { fingerprint?: string }>) => Promise<number>;
   agentRunQualityTest: (command: string) => Promise<(QualityTestRunResult & { cancelled?: boolean })>;
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
+  agentSteer: (provider: AgentProvider, prompt: string) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
   agentNewSession: (provider: AgentProvider) => Promise<void>;
   agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => Promise<boolean>;
@@ -123,6 +128,7 @@ export interface ElectronAPI {
   genericAgentComplete: (config: GenericAgentConfig, prompt: string) => Promise<string>;
   genericAgentTask: (config: GenericAgentConfig, system: string, prompt: string) => Promise<string>;
   genericAgentStart: (config: GenericAgentConfig, prompt: string) => Promise<AgentStartResult>;
+  genericAgentSteer: (prompt: string) => Promise<AgentStartResult>;
   genericAgentInterrupt: () => Promise<void>;
   genericAgentNewSession: () => Promise<void>;
 }
@@ -178,6 +184,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   storeGet: (key: string) => ipcRenderer.invoke('store:get', key),
   storeSet: (key: string, value: any) => ipcRenderer.invoke('store:set', key, value),
   storeDelete: (key: string) => ipcRenderer.invoke('store:delete', key),
+  themeSet: (theme: 'dark' | 'light' | 'system') => ipcRenderer.invoke('theme:set', theme),
 
   // Secrets
   secretsGet: (key: string) => ipcRenderer.invoke('secrets:get', key),
@@ -194,6 +201,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Open URL in system browser
   openSystemBrowser: (url: string) => ipcRenderer.invoke('window:openSystemBrowser', url),
+  formPreviewSaveScreenshot: (dataUrl: string, suggestedName?: string) => ipcRenderer.invoke('preview:saveScreenshot', dataUrl, suggestedName),
+  formPreviewConfigureSession: (webContentsId: number, options: { serverOrigin: string; aspnetSessionId?: string; starlimsSessionId?: string; langid?: string; user?: string; password?: string; runtimeAuthentication?: boolean }) => ipcRenderer.invoke('preview:configureSession', webContentsId, options),
+  formPreviewClick: (webContentsId: number, x: number, y: number) => ipcRenderer.invoke('preview:click', webContentsId, x, y),
 
   // Window
   openDebugWindow: (options: { url: string; title?: string; width?: number; height?: number }) =>
@@ -256,11 +266,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   aiConfigImport: () => ipcRenderer.invoke('ai-config:import'),
   aiConfigExport: (suggestedName: string, value: unknown) => ipcRenderer.invoke('ai-config:export', suggestedName, value),
   agentWorkspaceConfigure: (context: AgentWorkspaceContext) => ipcRenderer.invoke('agent:workspaceConfigure', context),
-  agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[]) => ipcRenderer.invoke('agent:workspaceSyncFiles', files),
+  agentWorkspaceSyncFiles: (files: AgentWorkspaceFile[], options?: { replace?: boolean }) => ipcRenderer.invoke('agent:workspaceSyncFiles', files, options),
   agentWorkspaceGetChanges: () => ipcRenderer.invoke('agent:workspaceGetChanges'),
   agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'> & { fingerprint?: string }>) => ipcRenderer.invoke('agent:workspaceAcceptChanges', files),
+  agentWorkspaceDiscardChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'> & { fingerprint?: string }>) => ipcRenderer.invoke('agent:workspaceDiscardChanges', files),
   agentRunQualityTest: (command: string) => ipcRenderer.invoke('agent:runQualityTest', command),
   agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => ipcRenderer.invoke('agent:start', provider, prompt, model, toolPermissionPolicy),
+  agentSteer: (provider: AgentProvider, prompt: string) => ipcRenderer.invoke('agent:steer', provider, prompt),
   agentInterrupt: (provider: AgentProvider) => ipcRenderer.invoke('agent:interrupt', provider),
   agentNewSession: (provider: AgentProvider) => ipcRenderer.invoke('agent:newSession', provider),
   agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => ipcRenderer.invoke('agent:respondApproval', provider, requestId, decision),
@@ -273,6 +285,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   genericAgentComplete: (config: GenericAgentConfig, prompt: string) => ipcRenderer.invoke('generic-agent:complete', config, prompt),
   genericAgentTask: (config: GenericAgentConfig, system: string, prompt: string) => ipcRenderer.invoke('generic-agent:task', config, system, prompt),
   genericAgentStart: (config: GenericAgentConfig, prompt: string) => ipcRenderer.invoke('generic-agent:start', config, prompt),
+  genericAgentSteer: (prompt: string) => ipcRenderer.invoke('generic-agent:steer', prompt),
   genericAgentInterrupt: () => ipcRenderer.invoke('generic-agent:interrupt'),
   genericAgentNewSession: () => ipcRenderer.invoke('generic-agent:newSession')
 } as ElectronAPI);

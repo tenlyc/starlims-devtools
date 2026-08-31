@@ -1,6 +1,6 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu, net, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, net, nativeTheme, safeStorage, webContents } from 'electron';
 import { delimiter, join } from 'path';
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import Store from 'electron-store';
@@ -20,6 +20,7 @@ import { SslLspSession } from './sslLspSession';
 import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentProvider, AgentRuntimeStatus, AgentToolPermissionPolicy, AgentWorkspaceContext, AgentWorkspaceFile, ExternalMcpServers } from '../src/types/agent';
 import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
 import type { SharedMcpDetails, SharedMcpToolInfo } from '../src/types/sharedMcp';
+import { mcpReadCacheKey } from '../src/services/mcpEfficiency';
 
 // Configure logging
 log.transports.file.level = 'info';
@@ -39,6 +40,29 @@ const store = new Store({
   }
 });
 const secretsStore = new Store({ name: 'starlims-secrets' });
+
+type AppTheme = 'dark' | 'light' | 'system';
+const normalizeAppTheme = (value: unknown): AppTheme =>
+  value === 'dark' || value === 'light' ? value : 'system';
+const nativeWindowBackground = (): string => nativeTheme.shouldUseDarkColors ? '#181818' : '#ffffff';
+const updateNativeWindowBackgrounds = (): void => {
+  if (!app.isReady()) return;
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.setBackgroundColor(nativeWindowBackground());
+  }
+};
+const applyNativeTheme = (value: unknown, persist = true): AppTheme => {
+  const theme = normalizeAppTheme(value);
+  nativeTheme.themeSource = theme;
+  if (persist) store.set('theme', theme);
+  updateNativeWindowBackgrounds();
+  return theme;
+};
+
+// Apply the saved preference before the first BrowserWindow is created so the
+// Windows title bar and native application menu do not start in light mode.
+applyNativeTheme(store.get('theme'), false);
+nativeTheme.on('updated', updateNativeWindowBackgrounds);
 
 // Port 3002 belongs to starlimsvscode and 3003-3099 is its form callback
 // range. Migrate the old DevTools default outside both reserved ranges.
@@ -99,6 +123,12 @@ const pendingMcpCalls = new Map<string, {
   reject: (reason: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }>();
+const READ_MCP_TOOLS = new Set([
+  'browse_tree', 'search_by_name', 'global_code_search', 'list_languages', 'get_item_code',
+  'get_form_resources', 'read_log', 'get_table_definition', 'list_checked_out_items', 'query_checkin_history'
+]);
+const MCP_READ_CACHE_TTL_MS = 15_000;
+const mcpReadCache = new Map<string, { expiresAt: number; value: unknown }>();
 
 const stripSensitiveConfiguration = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(stripSensitiveConfiguration);
@@ -108,19 +138,29 @@ const stripSensitiveConfiguration = (value: unknown): unknown => {
     .map(([key, item]) => [key, stripSensitiveConfiguration(item)]));
 };
 
-const callRenderer = (tool: string, arguments_: Record<string, unknown>): Promise<unknown> => {
+const callRenderer = async (tool: string, arguments_: Record<string, unknown>, provider: AgentProvider = 'codex'): Promise<unknown> => {
   if (!mainWindow || mainWindow.isDestroyed()) {
-    return Promise.reject(new Error('STARLIMS DevTools window is not available.'));
+    throw new Error('STARLIMS DevTools window is not available.');
   }
+  const readOnly = READ_MCP_TOOLS.has(tool);
+  const cacheKey = readOnly ? mcpReadCacheKey(tool, arguments_) : '';
+  const cached = cacheKey ? mcpReadCache.get(cacheKey) : undefined;
+  if (cached && cached.expiresAt > Date.now()) {
+    log.debug(`Reused cached STARLIMS MCP result for ${tool}.`);
+    return cached.value;
+  }
+  if (!readOnly) mcpReadCache.clear();
   const id = randomUUID();
-  return new Promise((resolve, reject) => {
+  const result = await new Promise<unknown>((resolve, reject) => {
     const timer = setTimeout(() => {
       pendingMcpCalls.delete(id);
       reject(new Error(`STARLIMS MCP tool '${tool}' timed out after 60 seconds.`));
     }, 60_000);
     pendingMcpCalls.set(id, { resolve, reject, timer });
-    mainWindow!.webContents.send('mcp:request', { id, tool, arguments: arguments_ });
+    mainWindow!.webContents.send('mcp:request', { id, tool, arguments: arguments_, provider });
   });
+  if (cacheKey) mcpReadCache.set(cacheKey, { expiresAt: Date.now() + MCP_READ_CACHE_TTL_MS, value: result });
+  return result;
 };
 
 const logMcpRuntime = (message: string, error?: unknown): void => {
@@ -214,6 +254,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     title: 'STARLIMS DevTools',
+    backgroundColor: nativeWindowBackground(),
     ...(process.platform === 'win32' ? { icon: WINDOW_ICON_PATH } : {}),
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
@@ -425,6 +466,11 @@ ipcMain.handle('store:delete', (_, key: string) => {
   return true;
 });
 
+ipcMain.handle('theme:set', (_, theme: AppTheme) => {
+  applyNativeTheme(theme);
+  return true;
+});
+
 // Secret storage. Existing plain-string entries remain readable and migrate on the next save.
 // The retired AI panel stored provider metadata (and, in older releases, keys)
 // in the ordinary config store. Generic Agent profiles are now the sole source
@@ -507,6 +553,7 @@ ipcMain.handle('window:openDebugWindow', async (_, options: {
     width,
     height,
     title,
+    backgroundColor: nativeWindowBackground(),
     ...(process.platform === 'win32' ? { icon: WINDOW_ICON_PATH } : {}),
     webPreferences: {
       devTools: true,
@@ -522,6 +569,105 @@ ipcMain.handle('window:openDebugWindow', async (_, options: {
   debugWindow.webContents.openDevTools();
 
   return { success: true };
+});
+
+ipcMain.handle('preview:saveScreenshot', async (_, dataUrl: string, suggestedName?: string) => {
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,')) {
+    throw new Error('Only PNG form preview screenshots are accepted.');
+  }
+  const encoded = dataUrl.slice('data:image/png;base64,'.length);
+  if (encoded.length > 40 * 1024 * 1024) throw new Error('The form preview screenshot is too large.');
+  const directory = join(app.getPath('temp'), 'starlims-devtools-previews');
+  mkdirSync(directory, { recursive: true });
+  const safeName = String(suggestedName || 'form-preview').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '') || 'form-preview';
+  const filePath = join(directory, `${safeName}-${Date.now()}.png`);
+  writeFileSync(filePath, Buffer.from(encoded, 'base64'));
+  return filePath;
+});
+
+type PreviewSessionPolicy = {
+  origin: string;
+  headers: Record<string, string>;
+};
+const previewSessionPolicies = new WeakMap<object, PreviewSessionPolicy>();
+
+ipcMain.handle('preview:configureSession', async (event, webContentsId: number, options: {
+  serverOrigin?: string;
+  aspnetSessionId?: string;
+  starlimsSessionId?: string;
+  langid?: string;
+  user?: string;
+  password?: string;
+  runtimeAuthentication?: boolean;
+}) => {
+  const guest = webContents.fromId(Number(webContentsId));
+  if (!guest || guest.isDestroyed() || guest.getType() !== 'webview' || guest.hostWebContents?.id !== event.sender.id) {
+    throw new Error('The form preview WebView is unavailable or does not belong to this window.');
+  }
+  const originUrl = new URL(String(options?.serverOrigin || ''));
+  if (originUrl.protocol !== 'http:' && originUrl.protocol !== 'https:') {
+    throw new Error('Only HTTP(S) STARLIMS preview origins are allowed.');
+  }
+  // SCM_API credentials/session headers authenticate API calls but do not
+  // create a valid STARLIMS HTML Runtime session. Runtime previews therefore
+  // use their isolated cookie jar and complete the normal Runtime login flow.
+  const useScmHeaders = options.runtimeAuthentication !== true;
+  const policy: PreviewSessionPolicy = {
+    origin: originUrl.origin,
+    headers: useScmHeaders ? {
+      ...(options.aspnetSessionId ? { 'aspnet-sessionid': String(options.aspnetSessionId) } : {}),
+      ...(options.starlimsSessionId ? { 'starlims-sessionid': String(options.starlimsSessionId) } : {}),
+      ...(options.langid ? { langid: String(options.langid) } : {}),
+      ...(options.user ? { STARLIMSUser: String(options.user) } : {}),
+      ...(options.password ? { STARLIMSPass: String(options.password) } : {})
+    } : {}
+  };
+  const previewSession = guest.session;
+  if (useScmHeaders && options.aspnetSessionId) {
+    await previewSession.cookies.set({
+      url: originUrl.origin,
+      name: 'ASP.NET_SessionId',
+      value: String(options.aspnetSessionId),
+      path: '/',
+      httpOnly: true,
+      sameSite: 'unspecified'
+    });
+  }
+  const installed = previewSessionPolicies.get(previewSession);
+  if (installed) {
+    installed.origin = policy.origin;
+    installed.headers = policy.headers;
+    return true;
+  }
+  previewSessionPolicies.set(previewSession, policy);
+  previewSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const activePolicy = previewSessionPolicies.get(previewSession);
+    let requestHeaders = details.requestHeaders;
+    try {
+      if (activePolicy && new URL(details.url).origin === activePolicy.origin) {
+        requestHeaders = { ...requestHeaders, ...activePolicy.headers };
+      }
+    } catch {
+      // Preserve the original request for malformed or non-standard URLs.
+    }
+    callback({ requestHeaders });
+  });
+  return true;
+});
+
+ipcMain.handle('preview:click', async (event, webContentsId: number, x: number, y: number) => {
+  const guest = webContents.fromId(Number(webContentsId));
+  if (!guest || guest.isDestroyed() || guest.getType() !== 'webview' || guest.hostWebContents?.id !== event.sender.id) {
+    throw new Error('The form preview WebView is unavailable or does not belong to this window.');
+  }
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > 10000 || y > 10000) {
+    throw new Error('Invalid form preview click coordinates.');
+  }
+  guest.focus();
+  guest.sendInputEvent({ type: 'mouseMove', x: Math.round(x), y: Math.round(y), movementX: 0, movementY: 0 });
+  guest.sendInputEvent({ type: 'mouseDown', x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 });
+  guest.sendInputEvent({ type: 'mouseUp', x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 });
+  return true;
 });
 
 // App info
@@ -744,7 +890,7 @@ const getAgentRuntime = (): AgentRuntimeManager => {
 };
 
 const getGenericAgentRuntime = (): GenericAgentRuntime => {
-  genericAgentRuntime ||= new GenericAgentRuntime(callRenderer, externalMcpManager, (event) => {
+  genericAgentRuntime ||= new GenericAgentRuntime((tool, arguments_) => callRenderer(tool, arguments_, 'generic'), externalMcpManager, (event) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent:event', event);
   });
   return genericAgentRuntime;
@@ -1017,7 +1163,7 @@ ipcMain.handle('agent:workspaceConfigure', async (_, context: AgentWorkspaceCont
   return info;
 });
 
-ipcMain.handle('agent:workspaceSyncFiles', async (_, files: AgentWorkspaceFile[]) => {
+ipcMain.handle('agent:workspaceSyncFiles', async (_, files: AgentWorkspaceFile[], options?: { replace?: boolean }) => {
   if (!Array.isArray(files)) throw new Error('Workspace files must be an array.');
   const result = await agentWorkspace.syncFiles(files.map((file) => ({
     uri: String(file.uri || ''), name: String(file.name || 'script'), type: String(file.type || 'text'),
@@ -1025,7 +1171,7 @@ ipcMain.handle('agent:workspaceSyncFiles', async (_, files: AgentWorkspaceFile[]
     checkedOutBy: file.checkedOutBy ? String(file.checkedOutBy) : undefined,
     checkedOutDate: file.checkedOutDate ? String(file.checkedOutDate) : undefined,
     content: String(file.content || '')
-  })));
+  })), { replace: options?.replace !== false });
   if (sslLspRuntime.isAvailable()) {
     try { await sslLspSession.configureWorkspace(result.path, await agentWorkspace.lspDocuments()); }
     catch (error) { log.warn('Unable to index Agent workspace with starlims-lsp', error); }
@@ -1039,6 +1185,15 @@ ipcMain.handle('agent:workspaceAcceptChanges', async (_, files: Array<{ uri: str
   if (!Array.isArray(files)) throw new Error('Accepted workspace files must be an array.');
   return agentWorkspace.acceptChanges(files.map((file) => ({
     uri: String(file.uri || ''), language: file.language ? String(file.language) : undefined,
+    fingerprint: file.fingerprint ? String(file.fingerprint) : undefined
+  })));
+});
+
+ipcMain.handle('agent:workspaceDiscardChanges', async (_, files: Array<{ uri: string; language?: string; fingerprint?: string }>) => {
+  if (!Array.isArray(files)) throw new Error('Workspace change identities must be an array.');
+  return agentWorkspace.discardChanges(files.map((file) => ({
+    uri: String(file.uri || ''),
+    language: file.language ? String(file.language) : undefined,
     fingerprint: file.fingerprint ? String(file.fingerprint) : undefined
   })));
 });
@@ -1076,6 +1231,11 @@ ipcMain.handle('agent:runQualityTest', async (_, command: string) => {
 });
 
 ipcMain.handle('agent:interrupt', async (_, provider: AgentProvider) => getAgentRuntime().interrupt(provider));
+ipcMain.handle('agent:steer', async (_, provider: AgentProvider, prompt: string) => {
+  if (provider !== 'codex') throw new Error('This provider does not support Codex active-turn steering.');
+  if (!String(prompt || '').trim()) throw new Error('A direction update is required.');
+  return getAgentRuntime().steer(provider, String(prompt));
+});
 ipcMain.handle('agent:newSession', async (_, provider: AgentProvider) => getAgentRuntime().newSession(provider));
 ipcMain.handle('agent:respondApproval', async (_, provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => {
   if (provider === 'generic') getGenericAgentRuntime().respond(requestId, decision);
@@ -1097,6 +1257,7 @@ ipcMain.handle('generic-agent:start', async (_, config, prompt: string) => {
   store.set(MCP_TOOL_PERMISSION_STORE_KEY, normalizeToolPermissionPolicy(config.toolPermissionPolicy));
   return getGenericAgentRuntime().send(config, prompt);
 });
+ipcMain.handle('generic-agent:steer', async (_, prompt: string) => getGenericAgentRuntime().steer(String(prompt || '')));
 ipcMain.handle('generic-agent:interrupt', async () => getGenericAgentRuntime().interrupt());
 ipcMain.handle('generic-agent:newSession', async () => getGenericAgentRuntime().newSession());
 

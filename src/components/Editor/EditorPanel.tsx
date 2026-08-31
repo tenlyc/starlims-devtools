@@ -18,6 +18,14 @@ import { CustomizePage } from '../Customize/CustomizePage';
 import { checkInItemWithGate, checkoutItemWithGate, executeDataSourceWithGate, executeServerScriptWithGate, saveItemWithGate, undoCheckoutWithGate } from '../../services/writeGateService';
 import { saveEditorFileWithFeedback } from '../../services/editorSaveService';
 import { hasPrimaryModifier, primaryShortcut } from '../../services/platformShortcuts';
+import { FormPreviewPanel } from './FormPreviewPanel';
+import { FORM_PREVIEW_TYPE, openFormPreviewEditor } from '../../services/formPreviewService';
+import type { FormPreviewMode } from '../../types/formPreview';
+
+// The integrated Form preview remains available to automated tests and future
+// development, but its editor actions stay hidden until Runtime/Designer
+// compatibility is reliable across supported STARLIMS versions.
+const ENABLE_FORM_PREVIEW_UI = false;
 
 interface EditorContextMenu {
   x: number;
@@ -882,6 +890,7 @@ export function EditorPanel() {
       name: isSelection ? `${activeFile.name} (selection)` : activeFile.name,
       uri: activeFile.uri,
       type: activeFile.type,
+      language: activeFile.language,
       content: selectedContent || activeFile.content,
       source: 'editor'
     });
@@ -1004,8 +1013,7 @@ export function EditorPanel() {
     }
   };
 
-  // Debug Form handler - opens form in BrowserWindow with DevTools
-  const handleDebugForm = async () => {
+  const handleFormPreview = async (mode: FormPreviewMode) => {
     if (!activeFile) return;
 
     // Check if this is an HTML Form file
@@ -1016,7 +1024,7 @@ export function EditorPanel() {
     if (!isHTMLForm) {
       addEntry({
         level: 'warning',
-        message: 'Debug Form is only available for HTML Form files',
+        message: 'Form preview is only available for HTML Form files',
         source: 'Editor'
       });
       return;
@@ -1024,93 +1032,52 @@ export function EditorPanel() {
 
     addEntry({
       level: 'info',
-      message: `Opening debug window for: ${activeFile.name}...`,
+      message: `Opening ${mode} preview for: ${activeFile.name}...`,
       source: 'Editor'
     });
 
-    console.log('handleDebugForm called');
-    console.log('activeFile.uri:', activeFile.uri);
-    console.log('activeFile.guid:', activeFile.guid);
-
     try {
       const enterpriseService = getEnterpriseService();
-      const result = await enterpriseService.debugHTMLFormInWindow(activeFile.uri, activeFile.guid);
-
-      if (result.success) {
+      const embeddedGuid = activeFile.type === 'HTMLFORMXML'
+        ? activeFile.content.match(/<Guid>\s*([^<]+?)\s*<\/Guid>/i)?.[1]?.trim()
+        : undefined;
+      // Checked-out/tree GUIDs identify the SCM item and are not guaranteed to be
+      // the FormId consumed by starthtml.lims. The root Form XML GUID is the
+      // authoritative runtime identifier whenever it is available.
+      const runtimeFormGuid = embeddedGuid || activeFile.guid;
+      const config = await enterpriseService.getHTMLFormPreviewConfig(
+        activeFile.uri,
+        runtimeFormGuid,
+        mode,
+        activeFile.language,
+        activeFile.type === 'HTMLFORMXML' ? activeFile.content : undefined
+      );
+      if (config) {
+        openFormPreviewEditor(config);
         addEntry({
           level: 'success',
-          message: result.message || 'Debug window opened',
+          message: `${activeFile.name} opened in the integrated ${mode} preview`,
           source: 'Editor'
         });
       } else {
         addEntry({
           level: 'error',
-          message: result.message || 'Failed to open debug window',
+          message: 'Could not create the form preview. Check the connection and form GUID.',
           source: 'Editor'
         });
       }
     } catch (err) {
       addEntry({
         level: 'error',
-        message: `Debug error: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Preview error: ${err instanceof Error ? err.message : String(err)}`,
         source: 'Editor'
       });
     }
   };
 
-  // Design Form handler - opens FormDesigner in system browser
-  const handleDesignForm = async () => {
-    if (!activeFile) return;
-
-    // Check if this is an HTML Form file
-    const isHTMLForm = activeFile.type === 'HTMLFORMXML' || activeFile.type === 'HTMLFORMCODE';
-
-    const addEntry = useOutputLogStore.getState().addEntry;
-
-    if (!isHTMLForm) {
-      addEntry({
-        level: 'warning',
-        message: 'Design Form is only available for HTML Form files',
-        source: 'Editor'
-      });
-      return;
-    }
-
-    addEntry({
-      level: 'info',
-      message: `Opening FormDesigner for: ${activeFile.name}...`,
-      source: 'Editor'
-    });
-
-    console.log('handleDesignForm called');
-    console.log('activeFile.uri:', activeFile.uri);
-    console.log('activeFile.guid:', activeFile.guid);
-
-    try {
-      const enterpriseService = getEnterpriseService();
-      const result = await enterpriseService.designHTMLFormInWindow(activeFile.uri, activeFile.guid);
-
-      if (result.success) {
-        addEntry({
-          level: 'success',
-          message: result.message || 'FormDesigner opened',
-          source: 'Editor'
-        });
-      } else {
-        addEntry({
-          level: 'error',
-          message: result.message || 'Failed to open FormDesigner',
-          source: 'Editor'
-        });
-      }
-    } catch (err) {
-      addEntry({
-        level: 'error',
-        message: `Design error: ${err instanceof Error ? err.message : String(err)}`,
-        source: 'Editor'
-      });
-    }
-  };
+  const handlePreviewForm = () => handleFormPreview('run');
+  const handleDebugForm = () => handleFormPreview('debug');
+  const handleDesignForm = () => handleFormPreview('design');
 
   // GoTo navigation handlers
   const handleGoTo = async (type: 'auto' | 'server' | 'client' | 'datasource' | 'form') => {
@@ -1405,6 +1372,8 @@ export function EditorPanel() {
         return '▤';
       case 'CUSTOMIZE':
         return '▦';
+      case FORM_PREVIEW_TYPE:
+        return '▣';
       default:
         return '📄';
     }
@@ -1460,7 +1429,18 @@ export function EditorPanel() {
             </button>
           )}
           {/* Debug Form button - for HTML Forms */}
-          {activeFile && (
+          {ENABLE_FORM_PREVIEW_UI && activeFile && (
+            (activeFile.type === 'HTMLFORMXML' || activeFile.type === 'HTMLFORMCODE')
+          ) && (
+            <button
+              className="mx-1 flex items-center gap-1 rounded px-2 py-1 text-xs text-blue-600 hover:bg-slate-300 dark:text-[#4daafc] dark:hover:bg-[#2a2d2e]"
+              onClick={handlePreviewForm}
+              title="Open integrated form preview"
+            >
+              ◉ Preview
+            </button>
+          )}
+          {ENABLE_FORM_PREVIEW_UI && activeFile && (
             (activeFile.type === 'HTMLFORMXML' || activeFile.type === 'HTMLFORMCODE')
           ) && (
             <button
@@ -1475,7 +1455,7 @@ export function EditorPanel() {
             </button>
           )}
           {/* Design Form button - for HTML Forms */}
-          {activeFile && (
+          {ENABLE_FORM_PREVIEW_UI && activeFile && (
             (activeFile.type === 'HTMLFORMXML' || activeFile.type === 'HTMLFORMCODE')
           ) && (
             <button
@@ -1489,7 +1469,7 @@ export function EditorPanel() {
               Design
             </button>
           )}
-          {activeFile?.type !== 'CUSTOMIZE' && <>
+          {activeFile?.type !== 'CUSTOMIZE' && activeFile?.type !== FORM_PREVIEW_TYPE && <>
           {/* View Controls - Separator */}
           <div className="my-2 mx-1 border-l border-slate-400 dark:border-[#3c3c3c]" />
           {/* Font Size Controls */}
@@ -1548,7 +1528,7 @@ export function EditorPanel() {
       )}
 
       {/* Breadcrumb Navigation */}
-      {activeFile && activeFile.type !== 'CUSTOMIZE' && (
+      {activeFile && activeFile.type !== 'CUSTOMIZE' && activeFile.type !== FORM_PREVIEW_TYPE && (
         <div className="flex h-7 items-center gap-1 overflow-x-auto border-b border-[#d4d4d4] bg-[#f3f3f3] px-3 text-xs text-slate-500 dark:border-[#2b2b2b] dark:bg-[#1e1e1e] dark:text-[#969696]">
           <span>📁</span>
           <span className="truncate">{activeFile.uri || '未分类'}</span>
@@ -1578,7 +1558,7 @@ export function EditorPanel() {
 
       {/* Editor content */}
       <div className="flex-1 overflow-hidden" onContextMenu={handleContextMenu}>
-        {activeFile?.type === 'CUSTOMIZE' ? <CustomizePage /> : activeFile ? (
+        {activeFile?.type === 'CUSTOMIZE' ? <CustomizePage /> : activeFile?.type === FORM_PREVIEW_TYPE ? <FormPreviewPanel content={activeFile.content} /> : activeFile ? (
           <MonacoEditor
             key={`${currentActiveUri || 'empty'}-${settingsKey}`}
             path={activeFile.uri}
@@ -1790,8 +1770,15 @@ export function EditorPanel() {
             </>
           )}
           {/* Debug Form - for HTML Forms */}
-          {(activeFile.type === 'HTMLFORMXML' || activeFile.type === 'HTMLFORMCODE') && (
+          {ENABLE_FORM_PREVIEW_UI && (activeFile.type === 'HTMLFORMXML' || activeFile.type === 'HTMLFORMCODE') && (
             <>
+              <button
+                className="w-full px-3 py-2 text-left text-sm text-blue-600 dark:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
+                onClick={() => { handlePreviewForm(); setContextMenu(null); }}
+              >
+                <span>◉</span>
+                <span>Form Preview</span>
+              </button>
               <button
                 className="w-full px-3 py-2 text-left text-sm text-orange-600 dark:text-orange-400 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
                 onClick={() => { handleDebugForm(); setContextMenu(null); }}

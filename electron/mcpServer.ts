@@ -139,7 +139,7 @@ export class StarlimsMcpHttpServer {
       }]
     };
 
-    return createStarlimsMcpServer({
+    const server = createStarlimsMcpServer({
       serverName: 'starlims-devtools',
       version,
       profile: 'devtools',
@@ -147,6 +147,7 @@ export class StarlimsMcpHttpServer {
       instructions: DEVTOOLS_MCP_INSTRUCTIONS,
       onError: (tool, error) => this.log(`STARLIMS MCP tool '${tool}' failed.`, error)
     });
+    return server;
   }
 
   private respondError(res: Response, status: number, code: number, message: string): void {

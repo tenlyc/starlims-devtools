@@ -10,10 +10,13 @@ import { editorStore } from '../../stores/editorStore';
 import type { AgentApprovalDecision, AgentEvent, AgentItemKind, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentToolPermissionPolicy, GenericAgentConfig } from '../../types/agent';
 import type { EnterpriseItem } from '../../services/iEnterpriseService';
 import { useI18n } from '../../i18n';
-import { syncCheckedOutWorkspace } from '../../services/agentWorkspaceService';
+import { discardAgentFileChange, openAgentFileChange, reviewAndApplyAgentFileChange, syncAgentTurnWorkspace } from '../../services/agentWorkspaceService';
 import { dependencyContextForPrompt, loadDependencyIndex } from '../../services/starlimsDependencyIndex';
 import { loadAiLayers, mergeAiLayers } from '../../services/aiPlatform';
 import { useMcpApprovalStore } from '../../services/mcpApprovalStore';
+import { createUnifiedDiff, diffLineTone, summarizeAgentDiff } from '../../services/agentDiff';
+import type { AgentFileChange } from '../../types/agent';
+import { AGENT_REMOTE_CHANGE_EVENT, type AgentRemoteChange } from '../../services/agentRemoteChange';
 
 type MessageEntry = {
   entryType: 'message';
@@ -33,6 +36,7 @@ type ActivityEntry = {
   detail?: string;
   output?: string;
   diff?: string;
+  files?: AgentFileChange[];
 };
 type ApprovalEntry = {
   entryType: 'approval';
@@ -44,10 +48,21 @@ type ApprovalEntry = {
   detail?: string;
   canAcceptForSession?: boolean;
 };
-type TimelineEntry = MessageEntry | ActivityEntry | ApprovalEntry;
+type TaskSummaryEntry = {
+  entryType: 'task-summary';
+  id: string;
+  provider: AgentProvider;
+  changedFiles: string[];
+  mcpCalls: number;
+  commands: number;
+  failed: number;
+  durationMs: number;
+};
+type AgentTaskStage = 'idle' | 'preparing' | 'reading' | 'editing' | 'executing' | 'verifying' | 'responding' | 'waiting' | 'adjusting' | 'completed' | 'failed';
+type TimelineEntry = MessageEntry | ActivityEntry | ApprovalEntry | TaskSummaryEntry;
 type ActivityGroupEntry = { entryType: 'activity-group'; id: string; entries: ActivityEntry[] };
-type DisplayTimelineEntry = MessageEntry | ApprovalEntry | ActivityGroupEntry;
-type ProviderConversation = { entries: TimelineEntry[]; running: boolean; sequence: number };
+type DisplayTimelineEntry = MessageEntry | ApprovalEntry | TaskSummaryEntry | ActivityGroupEntry | ActivityEntry;
+type ProviderConversation = { entries: TimelineEntry[]; running: boolean; sequence: number; stage: AgentTaskStage; startedAt?: number; steerState?: 'queued' | 'applied' };
 type Conversations = Record<AgentProvider, ProviderConversation>;
 type McpStatus = { running: boolean; url: string; port: number; error?: string };
 type ScriptMentionCandidate = {
@@ -156,7 +171,7 @@ const ToolbarIcons = {
 };
 
 function emptyConversation(): ProviderConversation {
-  return { entries: [], running: false, sequence: 0 };
+  return { entries: [], running: false, sequence: 0, stage: 'idle' };
 }
 
 function initialConversations(): Conversations {
@@ -228,7 +243,7 @@ function replaceOrAppend(entries: TimelineEntry[], entry: TimelineEntry): Timeli
 function groupTimelineEntries(entries: TimelineEntry[]): DisplayTimelineEntry[] {
   const grouped: DisplayTimelineEntry[] = [];
   for (const entry of entries) {
-    if (entry.entryType !== 'activity') {
+    if (entry.entryType !== 'activity' || entry.kind === 'file') {
       grouped.push(entry);
       continue;
     }
@@ -239,6 +254,56 @@ function groupTimelineEntries(entries: TimelineEntry[]): DisplayTimelineEntry[] 
   return grouped;
 }
 
+function stageForActivity(activity: Pick<ActivityEntry, 'kind' | 'title' | 'status'>): AgentTaskStage {
+  if (activity.status === 'failed' || activity.status === 'declined') return 'failed';
+  const title = activity.title.toLowerCase();
+  if (activity.kind === 'file') return activity.status === 'running' ? 'editing' : 'verifying';
+  if (activity.kind === 'command') return 'executing';
+  if (activity.kind === 'mcp') {
+    if (/save|write|edit|update|delete|checkout|check.?out|checkin|check.?in|undo|execute|run/.test(title)) {
+      return activity.status === 'running' ? 'editing' : 'verifying';
+    }
+    return 'reading';
+  }
+  if (activity.kind === 'reasoning' || activity.kind === 'plan') return 'preparing';
+  return 'executing';
+}
+
+function taskEntries(conversation: ProviderConversation): TimelineEntry[] {
+  let previousSummaryIndex = -1;
+  for (let index = conversation.entries.length - 1; index >= 0; index -= 1) {
+    if (conversation.entries[index].entryType === 'task-summary') {
+      previousSummaryIndex = index;
+      break;
+    }
+  }
+  return conversation.entries.slice(previousSummaryIndex + 1);
+}
+
+function completeConversation(conversation: ProviderConversation, provider: AgentProvider, id: string): ProviderConversation {
+  const activities = taskEntries(conversation).filter((entry): entry is ActivityEntry => entry.entryType === 'activity');
+  const changedFiles = new Set<string>();
+  for (const activity of activities) {
+    if (activity.kind !== 'file' && !activity.files?.length && !activity.diff) continue;
+    for (const file of summarizeAgentDiff(activity.files, activity.diff).files) changedFiles.add(file.path);
+  }
+  const summary: TaskSummaryEntry = {
+    entryType: 'task-summary', id, provider,
+    changedFiles: [...changedFiles],
+    mcpCalls: activities.filter((entry) => entry.kind === 'mcp').length,
+    commands: activities.filter((entry) => entry.kind === 'command').length,
+    failed: activities.filter((entry) => entry.status === 'failed' || entry.status === 'declined').length,
+    durationMs: Math.max(0, Date.now() - (conversation.startedAt || Date.now()))
+  };
+  return {
+    ...conversation,
+    running: false,
+    stage: 'completed',
+    steerState: undefined,
+    entries: replaceOrAppend(conversation.entries, summary)
+  };
+}
+
 function applyAgentEvent(conversation: ProviderConversation, event: AgentEvent): ProviderConversation {
   if (event.type === 'text-delta' && event.text) {
     const id = `${event.provider}:message:${event.itemId || event.turnId || `response-${conversation.sequence}`}`;
@@ -247,7 +312,12 @@ function applyAgentEvent(conversation: ProviderConversation, event: AgentEvent):
       entryType: 'message', id, role: 'assistant', provider: event.provider,
       content: `${existing?.content || ''}${event.text}`
     };
-    return { ...conversation, entries: replaceOrAppend(conversation.entries, message) };
+    return {
+      ...conversation,
+      stage: 'responding',
+      steerState: conversation.steerState === 'queued' ? 'applied' : conversation.steerState,
+      entries: replaceOrAppend(conversation.entries, message)
+    };
   }
 
   if ((event.type === 'item' || event.type === 'diff') && event.itemId) {
@@ -260,9 +330,15 @@ function applyAgentEvent(conversation: ProviderConversation, event: AgentEvent):
       title: event.title || existing?.title || 'Agent activity',
       detail: event.detail ?? existing?.detail,
       output: event.output ?? existing?.output,
-      diff: event.diff ?? existing?.diff
+      diff: event.diff ?? existing?.diff,
+      files: event.files ?? existing?.files
     };
-    return { ...conversation, entries: replaceOrAppend(conversation.entries, activity) };
+    return {
+      ...conversation,
+      stage: stageForActivity(activity),
+      steerState: conversation.steerState === 'queued' ? 'applied' : conversation.steerState,
+      entries: replaceOrAppend(conversation.entries, activity)
+    };
   }
 
   if (event.type === 'item-output' && event.itemId) {
@@ -281,17 +357,23 @@ function applyAgentEvent(conversation: ProviderConversation, event: AgentEvent):
       title: event.title || 'Approval required', detail: event.detail,
       canAcceptForSession: event.canAcceptForSession
     };
-    return { ...conversation, entries: replaceOrAppend(conversation.entries, approval) };
+    return { ...conversation, stage: 'waiting', entries: replaceOrAppend(conversation.entries, approval) };
   }
 
-  if (event.type === 'done') return { ...conversation, running: false };
+  if (event.type === 'status' && event.text) {
+    const adjusting = /direction update|steer|adjust/i.test(event.text);
+    return adjusting ? { ...conversation, stage: 'adjusting', steerState: 'queued' } : conversation;
+  }
+  if (event.type === 'done') {
+    return completeConversation(conversation, event.provider, `${event.provider}:task-summary:${event.turnId || conversation.sequence}`);
+  }
   if (event.type === 'error') {
     const error: MessageEntry = {
       entryType: 'message', id: `${event.provider}:error:${crypto.randomUUID()}`,
       role: 'assistant', provider: event.provider, error: true,
       content: event.text || 'Agent runtime failed.'
     };
-    return { ...conversation, running: false, entries: [...conversation.entries, error] };
+    return { ...conversation, running: false, stage: 'failed', steerState: undefined, entries: [...conversation.entries, error] };
   }
   return conversation;
 }
@@ -322,6 +404,93 @@ function MarkdownMessage({ content }: { content: string }) {
         }}
       >{content}</ReactMarkdown>
     </div>
+  );
+}
+
+function FileChangeCard({ activity }: { activity: ActivityEntry }) {
+  const { t } = useI18n();
+  const [fileActions, setFileActions] = useState<Record<string, 'busy' | 'applied' | 'discarded' | 'error'>>({});
+  const [actionMessage, setActionMessage] = useState('');
+  const summary = summarizeAgentDiff(activity.files, activity.diff);
+  const statusTone = activity.status === 'failed' || activity.status === 'declined'
+    ? 'text-red-600 dark:text-[#f85149]'
+    : activity.status === 'running' ? 'text-amber-600 dark:text-[#d29922]' : 'text-emerald-600 dark:text-[#3fb950]';
+  const runFileAction = async (file: AgentFileChange, action: 'open' | 'apply' | 'discard') => {
+    const key = `${file.path}\n${file.language || ''}`;
+    if (action !== 'open') setFileActions((current) => ({ ...current, [key]: 'busy' }));
+    setActionMessage('');
+    try {
+      if (action === 'open') {
+        if (!await openAgentFileChange(file)) throw new Error(t('agent.changeNotFound'));
+      } else if (action === 'discard') {
+        const discarded = await discardAgentFileChange(file);
+        setFileActions((current) => {
+          const next = { ...current };
+          if (discarded) next[key] = 'discarded';
+          else delete next[key];
+          return next;
+        });
+      } else {
+        const result = await reviewAndApplyAgentFileChange(file);
+        if (result.cancelled) setFileActions((current) => { const next = { ...current }; delete next[key]; return next; });
+        else if (result.applied.length) setFileActions((current) => ({ ...current, [key]: 'applied' }));
+        else throw new Error([...result.conflicts, ...result.errors].map((item) => item.reason).join('\n') || t('agent.changeNotFound'));
+      }
+    } catch (error) {
+      if (action !== 'open') setFileActions((current) => ({ ...current, [key]: 'error' }));
+      setActionMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  return (
+    <section className="mb-3 overflow-hidden rounded-md border border-blue-200 bg-white shadow-sm dark:border-[#35506b] dark:bg-[#1e1e1e]">
+      <div className="flex min-h-10 items-center gap-2 border-b border-blue-100 bg-blue-50 px-2.5 font-sans dark:border-[#293f54] dark:bg-[#192734]">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-blue-100 font-mono text-[13px] font-semibold text-blue-700 dark:bg-[#233e55] dark:text-[#75beff]">Δ</span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[11px] font-medium text-slate-800 dark:text-[#e5e5e5]">{t('agent.fileChanges')}</div>
+          <div className="text-[10px] text-slate-500 dark:text-[#9a9a9a]">{t('agent.fileChangeSummary', { count: summary.files.length, additions: summary.additions, deletions: summary.deletions })}</div>
+        </div>
+        <span className={`shrink-0 text-[10px] ${statusTone}`}>{activity.status === 'running' ? t('agent.changingFiles') : activity.status === 'completed' ? t('agent.activityCompleted') : activity.status}</span>
+      </div>
+
+      {summary.files.length > 0 ? <div className="divide-y divide-slate-200 dark:divide-[#333]">
+        {summary.files.map((file, index) => {
+          const actionKey = `${file.path}\n${file.language || ''}`;
+          const actionState = fileActions[actionKey];
+          const visibleLines = file.diff.split(/\r?\n/).slice(0, 1200);
+          const truncated = file.diff.split(/\r?\n/).length > visibleLines.length;
+          return <details key={`${file.path}:${index}`} className="group/file" open={summary.files.length === 1 ? true : undefined}>
+            <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 px-2.5 font-sans hover:bg-slate-50 dark:hover:bg-[#252526]" title={file.path}>
+              <span className="w-3 shrink-0 text-center text-slate-400 transition-transform group-open/file:rotate-90">›</span>
+              <span className={`w-12 shrink-0 rounded px-1 py-0.5 text-center text-[9px] uppercase ${file.kind === 'add' ? 'bg-emerald-100 text-emerald-700 dark:bg-[#193b2a] dark:text-[#56d384]' : file.kind === 'delete' ? 'bg-red-100 text-red-700 dark:bg-[#462124] dark:text-[#ff7b72]' : 'bg-blue-100 text-blue-700 dark:bg-[#20384d] dark:text-[#75beff]'}`}>{t(`agent.changeKind.${file.kind}`)}</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-slate-700 dark:text-[#d4d4d4]">{file.path}</span>
+              <span className="shrink-0 font-mono text-[10px] text-emerald-600 dark:text-[#3fb950]">+{file.additions}</span>
+              <span className="shrink-0 font-mono text-[10px] text-red-600 dark:text-[#f85149]">-{file.deletions}</span>
+            </summary>
+            <div className="flex flex-wrap items-center gap-1.5 border-t border-slate-200 bg-white px-2.5 py-1.5 font-sans dark:border-[#333] dark:bg-[#1e1e1e]">
+              <button type="button" className="rounded border border-slate-300 px-2 py-0.5 text-[10px] hover:bg-slate-100 dark:border-[#444] dark:hover:bg-[#2a2d2e]" onClick={() => void runFileAction(file, 'open')}>{t('agent.openChange')}</button>
+              {file.origin !== 'remote' && actionState !== 'applied' && actionState !== 'discarded' && <>
+                <button type="button" disabled={actionState === 'busy'} className="rounded bg-blue-600 px-2 py-0.5 text-[10px] text-white disabled:opacity-50 dark:bg-[#0e639c]" onClick={() => void runFileAction(file, 'apply')}>{t('agent.acceptChange')}</button>
+                <button type="button" disabled={actionState === 'busy'} className="rounded border border-red-300 px-2 py-0.5 text-[10px] text-red-600 disabled:opacity-50 dark:border-[#6b3535] dark:text-[#f85149]" onClick={() => void runFileAction(file, 'discard')}>{t('agent.discardChange')}</button>
+              </>}
+              {file.origin === 'remote' && <span className="text-[10px] text-blue-600 dark:text-[#75beff]">{t('agent.remoteApplied')}</span>}
+              {actionState === 'applied' && <span className="text-[10px] text-emerald-600 dark:text-[#3fb950]">✓ {t('agent.changeApplied')}</span>}
+              {actionState === 'discarded' && <span className="text-[10px] text-slate-500 dark:text-[#999]">✓ {t('agent.changeDiscarded')}</span>}
+            </div>
+            <div className="max-h-[420px] overflow-auto border-t border-slate-200 bg-[#fafafa] py-1 font-mono text-[10px] leading-[17px] dark:border-[#333] dark:bg-[#151515]">
+              {!file.diff && <div className="px-2.5 py-2 font-sans text-slate-500 dark:text-[#888]">{t('agent.remoteDiffUnavailable')}</div>}
+              {file.diff && visibleLines.map((line, lineIndex) => {
+                const tone = diffLineTone(line);
+                const toneClass = tone === 'add' ? 'bg-emerald-50 text-emerald-900 dark:bg-[#15251b] dark:text-[#aff5b4]' : tone === 'delete' ? 'bg-red-50 text-red-900 dark:bg-[#2d1719] dark:text-[#ffdcd7]' : tone === 'hunk' ? 'bg-blue-50 text-blue-700 dark:bg-[#172638] dark:text-[#79c0ff]' : tone === 'header' ? 'text-slate-500 dark:text-[#8b949e]' : 'text-slate-700 dark:text-[#c9d1d9]';
+                return <div key={lineIndex} className={`min-w-max whitespace-pre px-2.5 ${toneClass}`}>{line || ' '}</div>;
+              })}
+              {truncated && <div className="px-2.5 py-2 font-sans text-slate-500 dark:text-[#888]">{t('agent.diffTruncated')}</div>}
+            </div>
+          </details>;
+        })}
+      </div> : <div className="px-3 py-2 font-sans text-[10px] text-slate-500 dark:text-[#888]">{activity.status === 'running' ? t('agent.waitingForDiff') : t('agent.diffUnavailable')}</div>}
+      {actionMessage && <div className="border-t border-red-200 bg-red-50 px-2.5 py-2 font-sans text-[10px] whitespace-pre-wrap text-red-700 dark:border-[#5a2a2a] dark:bg-[#2d1719] dark:text-[#ffb4ad]">{actionMessage}</div>}
+    </section>
   );
 }
 
@@ -595,6 +764,34 @@ export function MCPPanel() {
     }));
   }), []);
 
+  useEffect(() => {
+    const onRemoteChange = (event: Event) => {
+      const change = (event as CustomEvent<AgentRemoteChange>).detail;
+      if (!change?.uri) return;
+      const path = `${change.uri}${change.language ? ` [${change.language}]` : ''}`;
+      const agentEvent: AgentEvent = {
+        provider: change.provider,
+        type: 'diff',
+        itemId: `remote-change:${change.id}`,
+        title: 'STARLIMS remote file changed',
+        files: [{
+          path,
+          uri: change.uri,
+          language: change.language,
+          kind: 'update',
+          origin: 'remote',
+          diff: createUnifiedDiff(path, change.before, change.after)
+        }]
+      };
+      setConversations((current) => ({
+        ...current,
+        [change.provider]: applyAgentEvent(current[change.provider], agentEvent)
+      }));
+    };
+    window.addEventListener(AGENT_REMOTE_CHANGE_EVENT, onRemoteChange);
+    return () => window.removeEventListener(AGENT_REMOTE_CHANGE_EVENT, onRemoteChange);
+  }, []);
+
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [provider, entries, running, pendingMcpApprovals.length]);
   useEffect(() => { if (contexts.length) inputRef.current?.focus(); }, [contexts.length]);
 
@@ -648,30 +845,59 @@ export function MCPPanel() {
 
   const send = async () => {
     const question = input.trim();
-    if (!question || running || !activeStatus?.available || !window.electronAPI) return;
+    if (!question || !activeStatus?.available || !window.electronAPI) return;
+    const isSteering = running;
     const selectedProvider = provider;
     const userMessage: MessageEntry = { entryType: 'message', id: crypto.randomUUID(), role: 'user', content: question, provider: selectedProvider };
     const promptHistory = selectedProvider === 'opencode' || selectedProvider === 'generic' || replayHistory
       ? entries.filter((entry): entry is MessageEntry => entry.entryType === 'message' && !entry.error).map(({ role, content }) => ({ role, content }))
       : [];
-    updateConversation(selectedProvider, (current) => ({ ...current, entries: [...current.entries, userMessage], running: true, sequence: current.sequence + 1 }));
+    updateConversation(selectedProvider, (current) => ({
+      ...current,
+      entries: [...current.entries, userMessage],
+      running: true,
+      sequence: current.sequence + 1,
+      stage: isSteering ? 'adjusting' : 'preparing',
+      startedAt: isSteering ? current.startedAt : Date.now(),
+      steerState: isSteering ? 'queued' : undefined
+    }));
     setInput('');
     try {
       useMcpApprovalStore.getState().setActiveProvider(selectedProvider);
+      if (isSteering) {
+        if (selectedProvider === 'generic') await window.electronAPI.genericAgentSteer(question);
+        else await window.electronAPI.agentSteer(selectedProvider, question);
+        updateConversation(selectedProvider, (current) => ({ ...current, stage: 'adjusting', steerState: 'queued' }));
+        return;
+      }
       const effectivePermissionPolicy = permissionPolicyForMode(conversationMode, permissionPolicy);
       await window.electronAPI.storeSet(AGENT_PERMISSION_STORE_KEY, effectivePermissionPolicy);
-      await syncCheckedOutWorkspace().catch((error) => {
+      const activeEditor = editorStore.getState().getActiveFile();
+      const includeActiveEditor = activeEditor
+        && activeEditor.type.toUpperCase() !== 'CUSTOMIZE'
+        && activeEditor.uri.startsWith('/')
+        && !contexts.some((context) => context.uri === activeEditor.uri);
+      const turnContexts = includeActiveEditor ? [{
+        id: activeEditor.uri,
+        name: activeEditor.name,
+        uri: activeEditor.uri,
+        type: activeEditor.type,
+        language: activeEditor.language,
+        content: activeEditor.content,
+        source: 'editor' as const
+      }, ...contexts] : contexts;
+      await syncAgentTurnWorkspace(contexts).catch((error) => {
         useOutputLogStore.getState().addEntry({
           channel: 'ai-runtime', level: 'warning', source: 'Agent Workspace',
-          message: `Could not refresh checked-out files before this turn; using the existing workspace. ${error instanceof Error ? error.message : String(error)}`
+          message: `Could not sync the active and referenced files for this turn; using the existing workspace. ${error instanceof Error ? error.message : String(error)}`
         });
       });
-      const dependencyContext = dependencyContextForPrompt(await loadDependencyIndex(), contexts.map((context) => context.uri));
+      const dependencyContext = dependencyContextForPrompt(await loadDependencyIndex(), turnContexts.map((context) => context.uri));
       const layeredRules = mergeAiLayers(await loadAiLayers()).rules.map((rule) => `[${rule.layer}]\n${rule.content}`).join('\n\n');
       const effectiveRules = [layeredRules, agentRules.enabled ? agentRules.content : ''].filter(Boolean).join('\n\n');
       const prompt = buildCliPrompt(
         question,
-        contexts,
+        turnContexts,
         promptHistory,
         mcp?.url || 'http://127.0.0.1:3102/mcp',
         effectiveRules,
@@ -684,14 +910,24 @@ export function MCPPanel() {
       } else if (selectedProvider === 'opencode') {
         const output = await window.electronAPI.cliExecute(selectedProvider, prompt);
         const message: MessageEntry = { entryType: 'message', id: crypto.randomUUID(), role: 'assistant', provider: selectedProvider, content: stripAnsi(output) };
-        updateConversation(selectedProvider, (current) => ({ ...current, running: false, entries: [...current.entries, message] }));
+        updateConversation(selectedProvider, (current) => completeConversation(
+          { ...current, entries: [...current.entries, message] },
+          selectedProvider,
+          `${selectedProvider}:task-summary:${current.sequence}`
+        ));
       } else {
         await window.electronAPI.agentStart(selectedProvider, prompt, selectedProvider === 'codex' ? selectedModel : undefined, effectivePermissionPolicy);
       }
       setReplayHistory(false);
     } catch (error) {
       const message: MessageEntry = { entryType: 'message', id: crypto.randomUUID(), role: 'assistant', provider: selectedProvider, error: true, content: error instanceof Error ? error.message : String(error) };
-      updateConversation(selectedProvider, (current) => ({ ...current, running: false, entries: [...current.entries, message] }));
+      updateConversation(selectedProvider, (current) => ({
+        ...current,
+        running: isSteering ? current.running : false,
+        stage: 'failed',
+        steerState: undefined,
+        entries: [...current.entries, message]
+      }));
     }
   };
 
@@ -714,7 +950,7 @@ export function MCPPanel() {
       const content = candidate.content ?? await getEnterpriseService().getItemCode(candidate.uri, candidate.language);
       addAiContext({
         id: candidate.uri, name: candidate.name, uri: candidate.uri,
-        type: candidate.type, content, source: candidate.source === 'editor' ? 'editor' : 'checkout'
+        type: candidate.type, language: candidate.language, content, source: candidate.source === 'editor' ? 'editor' : 'checkout'
       });
     } catch (error) {
       useOutputLogStore.getState().addEntry({
@@ -772,7 +1008,7 @@ export function MCPPanel() {
     setProvider(saved.provider);
     setConversations((current) => ({
       ...current,
-      [saved.provider]: { entries: saved.entries, running: false, sequence: 0 }
+      [saved.provider]: { entries: saved.entries, running: false, sequence: 0, stage: 'idle' }
     }));
     setSessionIds((current) => ({ ...current, [saved.provider]: saved.id }));
     if (saved.provider === 'generic') await window.electronAPI?.genericAgentNewSession().catch(() => undefined);
@@ -970,6 +1206,17 @@ export function MCPPanel() {
             return <div key={entry.id} className="mb-4"><div className={`mb-1 text-[10px] uppercase tracking-wider ${entry.role === 'user' ? 'text-blue-600 dark:text-[#4daafc]' : entry.error ? 'text-red-600 dark:text-[#f85149]' : 'text-emerald-600 dark:text-[#3fb950]'}`}>{entry.role === 'user' ? t('agent.you') : entry.error ? t('agent.error', { name: assistantName }) : assistantName}</div>{entry.role === 'assistant' && !entry.error ? <MarkdownMessage content={entry.content} /> : <div className={`whitespace-pre-wrap break-words font-sans text-[13px] leading-6 ${entry.error ? 'text-red-700 dark:text-[#f0a09a]' : 'text-slate-800 dark:text-[#d4d4d4]'}`}>{entry.content}</div>}</div>;
           }
 
+          if (entry.entryType === 'task-summary') {
+            const duration = entry.durationMs < 1000 ? '<1s' : entry.durationMs < 60_000 ? `${Math.ceil(entry.durationMs / 1000)}s` : `${Math.floor(entry.durationMs / 60_000)}m ${Math.ceil((entry.durationMs % 60_000) / 1000)}s`;
+            return <section key={entry.id} className={`mb-3 rounded-md border p-2.5 font-sans ${entry.failed ? 'border-amber-200 bg-amber-50 dark:border-[#665428] dark:bg-[#292315]' : 'border-emerald-200 bg-emerald-50 dark:border-[#315342] dark:bg-[#17251e]'}`}>
+              <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-slate-800 dark:text-[#e5e5e5]"><span className={entry.failed ? 'text-amber-600 dark:text-[#d29922]' : 'text-emerald-600 dark:text-[#3fb950]'}>{entry.failed ? '!' : '✓'}</span>{t('agent.taskSummary')}</div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] text-slate-600 dark:text-[#aaa]"><span>{t('agent.summaryChangedFiles')}: <b>{entry.changedFiles.length}</b></span><span>{t('agent.summaryMcpCalls')}: <b>{entry.mcpCalls}</b></span><span>{t('agent.summaryCommands')}: <b>{entry.commands}</b></span><span>{t('agent.summaryDuration')}: <b>{duration}</b></span>{entry.failed > 0 && <span className="col-span-2 text-red-600 dark:text-[#f85149]">{t('agent.summaryFailed')}: <b>{entry.failed}</b></span>}</div>
+              {entry.changedFiles.length > 0 && <details className="mt-2 text-[10px] text-slate-600 dark:text-[#aaa]"><summary className="cursor-pointer select-none">{t('agent.summaryFiles', { count: entry.changedFiles.length })}</summary><ul className="mt-1 space-y-0.5 pl-4 font-mono">{entry.changedFiles.map((path) => <li key={path} className="truncate" title={path}>{path}</li>)}</ul></details>}
+            </section>;
+          }
+
+          if (entry.entryType === 'activity') return <FileChangeCard key={entry.id} activity={entry} />;
+
           if (entry.entryType === 'activity-group') {
             const runningCount = entry.entries.filter((item) => item.status === 'running').length;
             const failedCount = entry.entries.filter((item) => item.status === 'failed' || item.status === 'declined').length;
@@ -994,7 +1241,7 @@ export function MCPPanel() {
 
         {pendingMcpApprovals.map((approval) => <div key={approval.id} className="mb-3 rounded border border-amber-300 bg-amber-50 p-2 text-[11px] dark:border-[#6e5b24] dark:bg-[#2b2517]"><div className="font-sans font-medium text-amber-900 dark:text-[#e3c66d]">{t('agent.mcpApproval', { tool: approval.tool })}</div><pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-all text-amber-800 dark:text-[#c8b56a]">{approval.detail}</pre><div className="mt-2 flex gap-1.5 font-sans"><button className="rounded bg-blue-600 px-2 py-1 text-white" onClick={() => resolveMcpApproval(approval.id, true)}>{t('agent.allowOnce')}</button><button className="rounded border border-slate-300 px-2 py-1 text-slate-600 dark:border-[#555] dark:text-[#bbb]" onClick={() => resolveMcpApproval(approval.id, false)}>{t('agent.decline')}</button></div></div>)}
 
-        {running && <div className="flex items-center gap-2 text-slate-500 dark:text-[#888]"><span className="agent-pulse">●</span>{t('agent.working', { name: title })} {provider !== 'opencode' && <button className="font-sans text-red-600 hover:underline dark:text-[#f85149]" onClick={() => void (provider === 'generic' ? window.electronAPI?.genericAgentInterrupt() : window.electronAPI?.agentInterrupt(provider))}>{t('agent.stop')}</button>}</div>}
+        {running && <div className="rounded border border-blue-200 bg-blue-50 px-2.5 py-2 text-slate-600 dark:border-[#294b67] dark:bg-[#172432] dark:text-[#aaa]"><div className="flex items-center gap-2"><span className="agent-pulse text-blue-600 dark:text-[#4daafc]">●</span><span className="min-w-0 flex-1 truncate font-sans text-[11px]">{t(`agent.stage.${conversation.stage}`)}</span>{provider !== 'opencode' && <button className="font-sans text-[11px] text-red-600 hover:underline dark:text-[#f85149]" onClick={() => void (provider === 'generic' ? window.electronAPI?.genericAgentInterrupt() : window.electronAPI?.agentInterrupt(provider))}>{t('agent.stop')}</button>}</div>{conversation.steerState && <div className={`mt-1 pl-4 font-sans text-[10px] ${conversation.steerState === 'applied' ? 'text-emerald-600 dark:text-[#3fb950]' : 'text-blue-600 dark:text-[#4daafc]'}`}>{conversation.steerState === 'applied' ? `✓ ${t('agent.steerApplied')}` : `↗ ${t('agent.steerQueued')}`}</div>}</div>}
         <div ref={bottomRef} />
       </div>
 
@@ -1035,7 +1282,7 @@ export function MCPPanel() {
             if (event.key === 'Escape' && mentionQuery !== null) { event.preventDefault(); setMentionQuery(null); return; }
             if (event.key === 'Enter' && mentionQuery !== null) { event.preventDefault(); return; }
             if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); }
-          }} rows={4} disabled={running} placeholder={t('agent.placeholder', { name: title })} className="w-full resize-none bg-transparent px-3 py-2 text-xs leading-5 text-slate-900 placeholder-slate-400 outline-none dark:text-[#e1e1e1] dark:placeholder-[#666]" />
+          }} rows={4} placeholder={running ? t('agent.steerPlaceholder') : t('agent.placeholder', { name: title })} className="w-full resize-none bg-transparent px-3 py-2 text-xs leading-5 text-slate-900 placeholder-slate-400 outline-none dark:text-[#e1e1e1] dark:placeholder-[#666]" />
           <div className="flex items-center justify-between gap-2 px-2 pb-2 text-xs text-slate-500 dark:text-[#777]">
             <div className="flex min-w-0 flex-1 items-center gap-1">
               <button type="button" onClick={openMentionPicker} className="icon-button text-base font-semibold text-blue-600 dark:text-[#4daafc]" title={t('agent.mentionScripts')}>@</button>
@@ -1045,7 +1292,7 @@ export function MCPPanel() {
               {provider === 'codex' && <><select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} disabled={models.length === 0} className="h-8 min-w-0 max-w-[160px] flex-1 truncate rounded-md border border-slate-300 bg-transparent px-1.5 text-xs text-slate-700 outline-none dark:border-[#454545] dark:bg-[#202020] dark:text-[#c5c5c5]" title={modelsError || models.find((model) => model.id === selectedModel)?.description || t('agent.model')} aria-label={t('agent.model')}>{models.length === 0 && <option value="">{modelsLoading ? t('common.loading') : t('agent.modelUnavailable')}</option>}{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select>{!modelsLoading && models.length === 0 && <button type="button" onClick={() => void loadCodexModels(2)} className="icon-button h-8 w-8 shrink-0 text-base" title={`${t('agent.modelRetry')}${modelsError ? `: ${modelsError}` : ''}`} aria-label={t('agent.modelRetry')}>↻</button>}</>}
               {provider === 'generic' && <select value={genericModelSelection} onChange={(event) => selectGenericProfileModel(event.target.value)} disabled={genericModelChoices.length === 0} className="h-8 min-w-0 max-w-[180px] flex-1 truncate rounded-md border border-slate-300 bg-transparent px-1.5 text-xs text-slate-700 outline-none dark:border-[#454545] dark:bg-[#202020] dark:text-[#c5c5c5]" title={`${genericConfig.name} · ${genericConfig.model || t('agent.configure')}`} aria-label={t('agent.model')}>{genericModelChoices.length === 0 && <option value={genericModelSelection}>{t('agent.configure')}</option>}{genericModelChoices.map((choice) => <option key={choice.value} value={choice.value}>{choice.model}</option>)}</select>}
             </div>
-            <button disabled={!input.trim() || running || !activeStatus?.available} onClick={() => void send()} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-600 text-base font-medium text-white transition-colors hover:bg-blue-500 disabled:bg-slate-300 disabled:text-slate-500 dark:bg-[#0e639c] dark:hover:bg-[#1177bb] dark:disabled:bg-[#333] dark:disabled:text-[#666]" title={t('agent.send')}>↑</button>
+            <button disabled={!input.trim() || !activeStatus?.available} onClick={() => void send()} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-600 text-base font-medium text-white transition-colors hover:bg-blue-500 disabled:bg-slate-300 disabled:text-slate-500 dark:bg-[#0e639c] dark:hover:bg-[#1177bb] dark:disabled:bg-[#333] dark:disabled:text-[#666]" title={running ? t('agent.steer') : t('agent.send')}>{running ? '↗' : '↑'}</button>
           </div>
         </div>
       </div>

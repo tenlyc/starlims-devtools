@@ -1,10 +1,12 @@
 import { create } from 'zustand';
+import { MCP_EFFICIENCY_INSTRUCTIONS } from './mcpEfficiency';
 
 export interface AiContextItem {
   id: string;
   name: string;
   uri: string;
   type: string;
+  language?: string;
   content: string;
   source: 'checkout' | 'editor' | 'file';
 }
@@ -68,15 +70,17 @@ export function buildCliPrompt(
     `### ${item.name}`,
     `${item.source === 'file' ? 'Local file' : 'STARLIMS URI'}: ${item.uri}`,
     `Item type: ${item.type}`,
+    item.language ? `Item language: ${item.language}` : '',
     '```',
     clipToCharacterBudget(item.content, perReferenceBudget),
     '```'
-  ].join('\n')).join('\n\n');
+  ].filter(Boolean).join('\n')).join('\n\n');
 
   return [
     'You are assisting with STARLIMS development inside STARLIMS DevTools.',
     `The required local STARLIMS MCP endpoint is ${mcpUrl}.`,
-    'MCP is required for remote STARLIMS operations. For questions about remote STARLIMS items, checked-out state, server logs, table definitions, or online code, call the configured starlims MCP tools before answering.',
+    'Use MCP when the request needs current remote STARLIMS state or a remote operation. Do not call MCP merely to fetch scripts that are already attached below or already synchronized into the Agent workspace.',
+    MCP_EFFICIENCY_INSTRUCTIONS,
     'Do not infer or fabricate remote state from the prompt alone.',
     'Treat referenced STARLIMS scripts as context. Do not claim a remote write succeeded unless an MCP tool confirms it.',
     modeInstruction.trim() ? `## Conversation mode\n${modeInstruction.trim()}` : '',

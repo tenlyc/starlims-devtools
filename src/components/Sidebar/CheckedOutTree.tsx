@@ -224,7 +224,7 @@ export function CheckedOutTree() {
       const uri = await resolveItemUri(item);
       if (!uri) throw new Error('Could not resolve the STARLIMS item URI.');
       const content = await getEnterpriseService().getItemCode(uri, item.language);
-      addAiContext({ id: uri, name: item.name, uri, type: item.type, content, source: 'checkout' });
+      addAiContext({ id: uri, name: item.name, uri, type: item.type, language: item.language, content, source: 'checkout' });
       window.dispatchEvent(new CustomEvent('ai:show'));
     } catch (error) {
       console.error('Failed to reference checked-out item:', error);

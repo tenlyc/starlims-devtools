@@ -21,6 +21,7 @@ const tests = [
   'shared-mcp-package-runtime-smoke-test.ts',
   'mcp-smoke-test.ts',
   'form-resources-mcp-smoke-test.ts',
+  'form-preview-smoke-test.ts',
   'editor-language-smoke-test.ts',
   'editor-productivity-smoke-test.ts',
   'context-menu-smoke-test.ts',

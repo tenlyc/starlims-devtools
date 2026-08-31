@@ -6,6 +6,7 @@ import type { AgentApprovalDecision, AgentEvent, AgentStartResult, AgentToolPerm
 import type { RendererToolCall } from './mcpServer';
 import type { ExternalMcpManager } from './externalMcpManager';
 import { DEVTOOLS_MCP_CAPABILITIES, SHARED_MCP_PACKAGE, SHARED_MCP_VERSION } from './mcpCapabilities';
+import { MCP_EFFICIENCY_INSTRUCTIONS, mcpReadCacheKey } from '../src/services/mcpEfficiency';
 
 type Emit = (event: AgentEvent) => void;
 type ChatMessage = Record<string, unknown>;
@@ -72,6 +73,7 @@ export function genericBuiltinToolsForPolicy(policy: AgentToolPermissionPolicy):
 
 export const GENERIC_AGENT_SYSTEM_PROMPT = [
   'You are an AI coding agent inside STARLIMS DevTools. Use the available STARLIMS tools for authoritative remote data and changes.',
+  MCP_EFFICIENCY_INSTRUCTIONS,
   'For a remote edit: resolve and read the item, check it out when needed, save the complete updated code with the same language, then read it again to verify the saved result.',
   'For multilingual HTML/XFD form resources, use get_form_resources with the requested language and prefer set_form_resource for one ResourceId; use save_form_resources only for intentional whole-document edits.',
   'Never check in or undo checkout unless the user explicitly requests it. Never claim a remote change succeeded unless the corresponding tool confirms it.',
@@ -155,6 +157,8 @@ async function streamChatRequest(url: string, apiKey: string, body: Record<strin
 export class GenericAgentRuntime {
   private controller?: AbortController;
   private sessionId?: string;
+  private activeTurnId?: string;
+  private readonly queuedSteers: string[] = [];
   private readonly approvals = new Map<string, { name: string; resolve: (allowed: boolean) => void }>();
   private readonly sessionAllowedTools = new Set<string>();
 
@@ -226,6 +230,7 @@ export class GenericAgentRuntime {
     if (this.controller) throw new Error('Generic Agent is already processing a turn.');
     this.sessionId ||= randomUUID();
     const turnId = randomUUID();
+    this.activeTurnId = turnId;
     const controller = new AbortController();
     this.controller = controller;
     this.emit({ provider: 'generic', type: 'session', sessionId: this.sessionId, title: 'OpenAI-compatible Agent connected' });
@@ -241,6 +246,7 @@ export class GenericAgentRuntime {
       ...externalTools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } }))
     ];
     const maxToolRounds = resolveMaxToolRounds(config.maxToolRounds);
+    const readResultCache = new Map<string, unknown>();
 
     void (async () => {
       try {
@@ -255,6 +261,7 @@ export class GenericAgentRuntime {
           messages.push(message);
           const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
           if (calls.length === 0) {
+            if (this.appendQueuedSteers(messages) > 0) continue;
             this.emit({ provider: 'generic', type: 'done', sessionId: this.sessionId, turnId, status: 'completed' });
             return;
           }
@@ -266,7 +273,13 @@ export class GenericAgentRuntime {
             this.emit({ provider: 'generic', type: 'item', sessionId: this.sessionId, turnId, itemId, kind: 'mcp', status: 'running', title: `starlims.${name}`, detail: JSON.stringify(args, null, 2) });
             let output: unknown;
             try {
-              if (this.externalMcp.hasTool(name)) {
+              const builtinTool = BUILTIN_TOOLS.find((tool) => tool.name === name);
+              const externalReadOnly = this.externalMcp.hasTool(name) && this.externalMcp.isToolReadOnly(name);
+              const cacheKey = mcpReadCacheKey(name, args);
+              if ((builtinTool?.readOnly || externalReadOnly) && readResultCache.has(cacheKey)) {
+                output = readResultCache.get(cacheKey);
+                this.emit({ provider: 'generic', type: 'status', sessionId: this.sessionId, turnId, text: `Reused ${name} result for identical arguments.` });
+              } else if (this.externalMcp.hasTool(name)) {
                 const readOnly = this.externalMcp.isToolReadOnly(name);
                 if (!readOnly && policy === 'read-only') throw new Error(`Tool '${name}' is blocked by read-only mode.`);
                 const needsApproval = !readOnly && policy !== 'full-access';
@@ -277,6 +290,7 @@ export class GenericAgentRuntime {
               } else {
                 output = await this.callRenderer(name, args);
               }
+              if (builtinTool?.readOnly || externalReadOnly) readResultCache.set(cacheKey, output);
               this.emit({ provider: 'generic', type: 'item', sessionId: this.sessionId, turnId, itemId, kind: 'mcp', status: 'completed', title: `starlims.${name}`, output: JSON.stringify(output, null, 2) });
             } catch (error) {
               output = { error: error instanceof Error ? error.message : String(error) };
@@ -284,6 +298,7 @@ export class GenericAgentRuntime {
             }
             messages.push({ role: 'tool', tool_call_id: itemId, content: JSON.stringify(output) });
           }
+          this.appendQueuedSteers(messages);
         }
         throw new Error(`Generic Agent reached the configured limit of ${maxToolRounds} tool rounds. Increase “Maximum tool rounds” in Generic Agent settings, or narrow the request to reduce repeated tool calls.`);
       } catch (error) {
@@ -291,11 +306,31 @@ export class GenericAgentRuntime {
         else this.emit({ provider: 'generic', type: 'error', sessionId: this.sessionId, turnId, text: error instanceof Error ? error.message : String(error) });
       } finally {
         if (this.controller === controller) this.controller = undefined;
+        if (this.activeTurnId === turnId) this.activeTurnId = undefined;
+        this.queuedSteers.length = 0;
       }
     })();
     return { sessionId: this.sessionId, turnId };
   }
 
   interrupt(): void { this.controller?.abort(); }
-  newSession(): void { this.interrupt(); this.sessionId = undefined; this.sessionAllowedTools.clear(); }
+  steer(prompt: string): AgentStartResult {
+    const normalized = prompt.trim();
+    if (!normalized || !this.controller || !this.sessionId || !this.activeTurnId) throw new Error('There is no active Generic Agent turn to steer.');
+    this.queuedSteers.push(normalized);
+    this.emit({ provider: 'generic', type: 'status', sessionId: this.sessionId, turnId: this.activeTurnId, text: 'Direction update queued for the next Agent boundary.' });
+    return { sessionId: this.sessionId, turnId: this.activeTurnId };
+  }
+  newSession(): void { this.interrupt(); this.sessionId = undefined; this.activeTurnId = undefined; this.queuedSteers.length = 0; this.sessionAllowedTools.clear(); }
+
+  private appendQueuedSteers(messages: ChatMessage[]): number {
+    let appended = 0;
+    while (this.queuedSteers.length > 0) {
+      const prompt = this.queuedSteers.shift();
+      if (!prompt) continue;
+      messages.push({ role: 'user', content: `User direction update for the active task:\n${prompt}` });
+      appended += 1;
+    }
+    return appended;
+  }
 }

@@ -34,14 +34,14 @@ async function main(): Promise<void> {
       name: 'SCM_API', version, source: 'MrDoe/starlimsvscode + tenlyc/starlims-mcp', commit: '92b9014244eb09a56ed589db5155c3b7914b70a2'
     }]
   };
-  const createServer = () => createStarlimsMcpServer({
-    serverName: 'starlims-devtools',
-    version,
-    profile: 'devtools',
-    adapter,
-    instructions: DEVTOOLS_MCP_INSTRUCTIONS,
-    onError: (tool, error) => logger.error(`STARLIMS MCP tool '${tool}' failed.`, error)
-  });
+  const createServer = () => {
+    const server = createStarlimsMcpServer({
+      serverName: 'starlims-devtools', version, profile: 'devtools', adapter,
+      instructions: DEVTOOLS_MCP_INSTRUCTIONS,
+      onError: (tool, error) => logger.error(`STARLIMS MCP tool '${tool}' failed.`, error)
+    });
+    return server;
+  };
   const handle = await startHttpTransport({ host, port, logger, createServer });
   logger.info(`Shared STARLIMS MCP server listening at ${handle.url}`);
   const shutdown = async () => {

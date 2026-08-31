@@ -1,4 +1,5 @@
 import { STARLIMS_TOOL_CATALOG } from '@tenlyc/starlims-mcp';
+import { MCP_EFFICIENCY_INSTRUCTIONS } from '../src/services/mcpEfficiency';
 
 type LegacyTool = {
   origin: string;
@@ -43,4 +44,4 @@ export const DEVTOOLS_MCP_CAPABILITIES = [
 export const SHARED_MCP_PACKAGE = '@tenlyc/starlims-mcp';
 export const SHARED_MCP_VERSION = '0.5.1';
 
-export const DEVTOOLS_MCP_INSTRUCTIONS = 'Use STARLIMS tools as the authoritative source for remote item lookup and code. Browse or search before reading. For multilingual HTML/XFD resources, use get_form_resources and set_form_resource with the explicit language instead of editing an unspecified generic document. Check out an item before saving changes. Treat save, check-in, undo-checkout, and execution tools as write or execution operations requiring user intent.';
+export const DEVTOOLS_MCP_INSTRUCTIONS = `Use STARLIMS tools as the authoritative source for remote item lookup and code. ${MCP_EFFICIENCY_INSTRUCTIONS} For multilingual HTML/XFD resources, use get_form_resources and set_form_resource with the explicit language instead of editing an unspecified generic document. Check out an item before saving changes. Treat save, check-in, undo-checkout, and execution tools as write or execution operations requiring user intent.`;

@@ -1,6 +1,6 @@
 {
   "name": "starlims-devtools",
-  "version": "1.7.0-beta.2",
+  "version": "1.7.0-beta.3",
   "description": "Cross-platform STARLIMS Development Tools with MCP integration | 跨平台 STARLIMS 开发工具",
   "main": "dist-electron/main.js",
   "author": "STARLIMS DevTools Team",
@@ -22,6 +22,7 @@
     "test:shared-mcp-fallback": "tsx scripts/shared-mcp-fallback-smoke-test.ts",
     "test:shared-mcp-package": "tsx scripts/shared-mcp-package-runtime-smoke-test.ts",
     "test:form-resources": "tsx scripts/form-resources-mcp-smoke-test.ts",
+    "test:form-preview": "tsx scripts/form-preview-smoke-test.ts",
     "test:ssl": "tsx scripts/ssl-lsp-smoke-test.ts",
     "test:ssl-package": "tsx scripts/ssl-lsp-package-runtime-smoke-test.ts",
     "test:ssl-upstream": "tsx scripts/starlims-lsp-upstream-smoke-test.ts",

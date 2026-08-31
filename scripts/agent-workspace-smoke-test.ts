@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { AgentWorkspaceManager } from '../electron/agentWorkspace';
 import { isReadOnlyAgentToolBlocked } from '../electron/agentRuntime';
+import { collectAgentTurnWorkspaceFiles } from '../src/services/agentWorkspaceService';
 
 async function main() {
   const root = await mkdtemp(join(tmpdir(), 'starlims-agent-workspace-'));
@@ -20,6 +21,16 @@ async function main() {
     const manifest = JSON.parse(await readFile(join(info.path, '.starlims', 'manifest.json'), 'utf8'));
     assert.equal(manifest.files[0].language, 'CHS');
     assert.match(await readFile(join(info.path, manifest.files[0].relativePath), 'utf8'), /:RETURN \.T\.;/);
+    await manager.syncFiles([{
+      uri: '/Applications/QualityManager/Test/Server Scripts/Helper',
+      name: 'Helper', type: 'APPSS', content: ':RETURN NIL;'
+    }], { replace: false });
+    const incrementalManifest = JSON.parse(await readFile(join(info.path, '.starlims', 'manifest.json'), 'utf8'));
+    assert.equal(incrementalManifest.files.length, 2, 'Targeted sync must retain clean files from previous turns.');
+    await manager.syncFiles([{
+      uri: '/Applications/QualityManager/Test/Server Scripts/Validate',
+      name: 'Validate', type: 'APPSS', language: 'CHS', content: ':RETURN .T.;'
+    }]);
     const workingCopy = join(info.path, manifest.files[0].relativePath);
     await writeFile(workingCopy, ':RETURN .F.;', 'utf8');
     const preserved = await manager.syncFiles([{
@@ -35,6 +46,12 @@ async function main() {
     assert.equal(changes[0].fingerprint.length, 64);
     assert.equal(await manager.acceptChanges([{ uri: changes[0].uri, language: changes[0].language, fingerprint: 'stale' }]), 0);
     assert.equal(await manager.acceptChanges([{ uri: changes[0].uri, language: changes[0].language, fingerprint: changes[0].fingerprint }]), 1);
+    assert.equal((await manager.getChanges()).length, 0);
+    await writeFile(workingCopy, ':RETURN "discard me";', 'utf8');
+    const disposableChange = (await manager.getChanges())[0];
+    assert.equal(await manager.discardChanges([{ uri: disposableChange.uri, language: disposableChange.language, fingerprint: 'stale' }]), 0);
+    assert.equal(await manager.discardChanges([{ uri: disposableChange.uri, language: disposableChange.language, fingerprint: disposableChange.fingerprint }]), 1);
+    assert.equal(await readFile(workingCopy, 'utf8'), ':RETURN .F.;');
     assert.equal((await manager.getChanges()).length, 0);
     const refreshed = await manager.syncFiles([{
       uri: '/Applications/QualityManager/Test/Server Scripts/Validate',
@@ -58,6 +75,16 @@ async function main() {
     assert.equal(isReadOnlyAgentToolBlocked('Write'), true);
     assert.equal(isReadOnlyAgentToolBlocked('mcp__starlims__save_item'), true);
     assert.equal(isReadOnlyAgentToolBlocked('mcp__starlims__get_item_code'), false);
+    const targeted = collectAgentTurnWorkspaceFiles([{
+      id: 'context', uri: '/Applications/QM/App/Server Scripts/Referenced', name: 'Referenced',
+      type: 'APPSS', language: 'CHS', content: ':RETURN .T.;', source: 'checkout'
+    }, {
+      id: 'local', uri: '/tmp/notes.txt', name: 'notes.txt', type: 'File', content: 'notes', source: 'file'
+    }], {
+      uri: '/Applications/QM/App/Server Scripts/Active', name: 'Active', type: 'APPSS',
+      content: ':RETURN NIL;'
+    });
+    assert.deepEqual(targeted.map((file) => file.name), ['Active', 'Referenced']);
 
     const customRoot = join(root, 'custom-root');
     const customInfo = await manager.configure({
