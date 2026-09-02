@@ -10,6 +10,8 @@
 - [贡献指南](../CONTRIBUTING.md)
 - [v1.7.0-beta.1 发布说明](releases/v1.7.0-beta.1.md)
 - [v1.7.0-beta.2 发布说明](releases/v1.7.0-beta.2.md)
+- [v1.7.0-beta.3 发布说明](releases/v1.7.0-beta.3.md)
+- [v1.7.0-beta.4 发布说明](releases/v1.7.0-beta.4.md)
 
 **English**:
 
@@ -21,5 +23,7 @@
 - [Contributing guide](../CONTRIBUTING.md)
 - [v1.7.0-beta.1 release notes](releases/v1.7.0-beta.1.md)
 - [v1.7.0-beta.2 release notes](releases/v1.7.0-beta.2.md)
+- [v1.7.0-beta.3 release notes](releases/v1.7.0-beta.3.md)
+- [v1.7.0-beta.4 release notes](releases/v1.7.0-beta.4.md)
 
 Legal notices and vendored upstream license texts remain in their authoritative source language. / 法律声明和归档上游许可文本保留其权威原文。
