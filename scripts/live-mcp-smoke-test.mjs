@@ -8,8 +8,8 @@ const client = new Client({ name: 'starlims-devtools-live-smoke-test', version: 
 try {
   await client.connect(new StreamableHTTPClientTransport(new URL(endpoint)));
   const tools = await client.listTools();
-  assert.equal(tools.tools.length, 19);
-  for (const name of ['get_capabilities', 'browse_tree', 'list_checked_out_items', 'get_form_resources', 'save_form_resources']) {
+  assert.equal(tools.tools.length, 22);
+  for (const name of ['get_capabilities', 'browse_tree', 'list_checked_out_items', 'get_form_resources', 'save_form_resources', 'validate_ssl', 'get_editor_diagnostics', 'get_devtools_output']) {
     assert.ok(tools.tools.some((tool) => tool.name === name), `Missing live MCP tool: ${name}`);
   }
 

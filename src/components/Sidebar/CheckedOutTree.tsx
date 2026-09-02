@@ -7,6 +7,7 @@ import { useAiContextStore } from '../../services/aiContextStore';
 import { useI18n } from '../../i18n';
 import { checkInItemWithGate, undoCheckoutWithGate } from '../../services/writeGateService';
 import { TreeItemIcon } from './TreeItemIcon';
+import { compareEnterpriseTreeItems } from '../../services/enterpriseTreeOrder';
 
 export interface CheckedOutItem {
   id: string;
@@ -28,16 +29,6 @@ interface CheckedOutTreeNode {
   item?: CheckedOutItem;
 }
 
-const FORM_PART_ORDER: Record<string, number> = {
-  HTMLFORMXML: 0,
-  XFDFORMXML: 0,
-  HTMLFORMCODE: 1,
-  XFDFORMCODE: 1,
-  HTMLFORMGUIDE: 2,
-  HTMLFORMRESOURCES: 3,
-  XFDFORMRESOURCES: 3
-};
-
 const LOCALIZED_FORM_PART_TYPES = new Set([
   'HTMLFORMXML',
   'HTMLFORMGUIDE',
@@ -50,10 +41,6 @@ export function getCheckedOutDisplayLanguage(item: CheckedOutItem): string | und
   if (!LOCALIZED_FORM_PART_TYPES.has(item.type.toUpperCase())) return undefined;
   const language = item.language?.trim();
   return language ? language.toUpperCase() : undefined;
-}
-
-function formBaseName(label: string): string {
-  return label.replace(/\s*\[(?:XML|Code Behind|Guide|Resources)\]\s*$/i, '');
 }
 
 export function buildCheckedOutTree(items: CheckedOutItem[]): CheckedOutTreeNode[] {
@@ -85,13 +72,11 @@ export function buildCheckedOutTree(items: CheckedOutItem[]): CheckedOutTreeNode
   const sortNodes = (nodes: CheckedOutTreeNode[]) => {
     nodes.sort((left, right) => {
       if (!!left.item !== !!right.item) return left.item ? 1 : -1;
-      if (left.item && right.item) {
-        const baseOrder = formBaseName(left.label).localeCompare(formBaseName(right.label), undefined, { sensitivity: 'base' });
-        if (baseOrder !== 0) return baseOrder;
-        const partOrder = (FORM_PART_ORDER[left.item.type.toUpperCase()] ?? 99) - (FORM_PART_ORDER[right.item.type.toUpperCase()] ?? 99);
-        if (partOrder !== 0) return partOrder;
-      }
-      return left.label.localeCompare(right.label, undefined, { sensitivity: 'base' });
+      return compareEnterpriseTreeItems({
+        label: left.label, type: left.item?.type || 'FOLDER', hasChildren: !left.item
+      }, {
+        label: right.label, type: right.item?.type || 'FOLDER', hasChildren: !right.item
+      });
     });
     nodes.forEach((node) => sortNodes(node.children));
   };

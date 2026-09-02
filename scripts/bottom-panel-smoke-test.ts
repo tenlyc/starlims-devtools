@@ -14,9 +14,11 @@ const content = [
 
 const entries = parseServerLog(content, 'ALICE');
 assert.equal(entries.length, 3);
-assert.deepEqual(entries.map((entry) => entry.level), ['success', 'warning', 'error']);
+assert.deepEqual(entries.map((entry) => entry.level), ['error', 'warning', 'success']);
 assert.equal(entries[0].timestamp.getFullYear(), 2026);
 assert.equal(entries[0].timestamp.getMonth(), 7);
+assert.equal(entries[0].timestamp.getHours(), 10);
+assert.equal(entries[0].timestamp.getMinutes(), 22);
 assert.equal(classifyServerLogEntry('Exception occurred'), 'error');
 assert.equal(classifyServerLogEntry('normal user message'), 'info');
 assert.equal(hasServerLogContent(content), true);

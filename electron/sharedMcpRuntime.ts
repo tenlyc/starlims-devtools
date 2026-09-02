@@ -2,7 +2,7 @@ import { randomBytes } from 'crypto';
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'http';
 import { join } from 'path';
 import { spawn, type ChildProcess } from 'child_process';
-import type { McpStatus, RendererToolCall, StarlimsMcpHttpServer } from './mcpServer';
+import { MCP_JSON_BODY_LIMIT_BYTES, type McpStatus, type RendererToolCall, type StarlimsMcpHttpServer } from './mcpServer';
 import { withLocalMcpNoProxy } from './localMcpEnv';
 import { DEVTOOLS_MCP_CAPABILITIES, SHARED_MCP_PACKAGE, SHARED_MCP_VERSION } from './mcpCapabilities';
 
@@ -49,7 +49,7 @@ class RendererToolBridge {
       for await (const chunk of request) {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         size += buffer.length;
-        if (size > 2 * 1024 * 1024) throw new Error('MCP bridge request exceeds 2 MB.');
+        if (size > MCP_JSON_BODY_LIMIT_BYTES) throw new Error('MCP bridge request exceeds 8 MB.');
         chunks.push(buffer);
       }
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { tool?: unknown; arguments?: unknown };

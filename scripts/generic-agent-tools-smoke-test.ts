@@ -11,6 +11,9 @@ const names = (policy: 'read-only' | 'ask-writes' | 'auto-safe' | 'full-access')
 assert.ok(names('read-only').includes('get_item_code'));
 assert.ok(names('read-only').includes('get_capabilities'));
 assert.ok(names('read-only').includes('get_form_resources'));
+assert.ok(names('read-only').includes('validate_ssl'));
+assert.ok(names('read-only').includes('get_editor_diagnostics'));
+assert.ok(names('read-only').includes('get_devtools_output'));
 assert.ok(!names('read-only').includes('checkout_item'));
 assert.ok(!names('read-only').includes('save_item'));
 
@@ -48,7 +51,10 @@ const mainSource = readFileSync('electron/main.ts', 'utf8');
 assert.doesNotMatch(bridgeSource, /showMessageBox/);
 assert.match(bridgeSource, /requestInlineMcpApproval/);
 assert.match(panelSource, /pendingMcpApprovals/);
+assert.match(panelSource, /pendingApproval && question/);
+assert.match(panelSource, /LiveTaskChanges/);
 assert.match(panelSource, /auto-safe/);
+assert.match(mainSource, /5 \* 60_000/);
 assert.doesNotMatch(mainSource, /Allow external MCP tool/);
 
 assert.match(GENERIC_AGENT_SYSTEM_PROMPT, /check it out/i);

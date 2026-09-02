@@ -43,6 +43,7 @@ export function parseServerLog(content: string, user: string): ServerLogEntry[] 
     const timestamp = timestampMatch
       ? new Date(Number(timestampMatch[1]), Number(timestampMatch[2]) - 1, Number(timestampMatch[3]), Number(timestampMatch[4]), Number(timestampMatch[5]), Number(timestampMatch[6]))
       : new Date();
-    return { id: `server-log-${index}-${start}`, timestamp, level: classifyServerLogEntry(message), message };
-  });
+    return { entry: { id: `server-log-${index}-${start}`, timestamp, level: classifyServerLogEntry(message), message }, start };
+  }).sort((left, right) => right.entry.timestamp.getTime() - left.entry.timestamp.getTime() || right.start - left.start)
+    .map(({ entry }) => entry);
 }

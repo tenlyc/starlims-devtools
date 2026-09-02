@@ -1,7 +1,7 @@
 /**
  * Type declarations for Electron API exposed via preload
  */
-import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceChange, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, AgentWorkspaceSyncResult, ExternalMcpServers, GenericAgentConfig } from './agent';
+import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentImageAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceChange, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, AgentWorkspaceSyncResult, ExternalMcpServers, GenericAgentConfig } from './agent';
 import type { DiagnosticLogEvent } from './diagnosticLog';
 import type { QualityTestRunResult } from './aiPlatform';
 import type { NativeLspLocation, NativeLspPosition, NativeLspReleaseInfo, NativeLspSessionStatus, NativeLspUpstreamMetadata, NativeLspVersionInfo, NativeLspWorkspaceDocument, NativeLspWorkspaceEdit, NativeLspWorkspaceSymbol, NativeSslFormatResult, NativeSslInventory, NativeSslValidationResult } from './sslLsp';
@@ -108,6 +108,7 @@ export interface ElectronAPI {
   agentGetStatuses: () => Promise<Partial<Record<AgentProvider, AgentRuntimeStatus>>>;
   agentGetModels: (provider: AgentProvider) => Promise<AgentModelOption[]>;
   agentSelectFiles: () => Promise<AgentFileAttachment[]>;
+  agentSaveImage: (dataUrl: string, suggestedName?: string) => Promise<AgentImageAttachment>;
   agentGetExternalMcpServers: () => Promise<ExternalMcpServers>;
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => Promise<boolean>;
   aiConfigImport: () => Promise<{ filePath: string; value: unknown } | null>;
@@ -118,8 +119,8 @@ export interface ElectronAPI {
   agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'> & { fingerprint?: string }>) => Promise<number>;
   agentWorkspaceDiscardChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'> & { fingerprint?: string }>) => Promise<number>;
   agentRunQualityTest: (command: string) => Promise<QualityTestRunResult & { cancelled?: boolean }>;
-  agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
-  agentSteer: (provider: AgentProvider, prompt: string) => Promise<AgentStartResult>;
+  agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy, images?: AgentImageAttachment[]) => Promise<AgentStartResult>;
+  agentSteer: (provider: AgentProvider, prompt: string, images?: AgentImageAttachment[]) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
   agentNewSession: (provider: AgentProvider) => Promise<void>;
   agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => Promise<boolean>;
@@ -127,8 +128,8 @@ export interface ElectronAPI {
   genericAgentListModels: (config: Pick<GenericAgentConfig, 'baseUrl' | 'apiKey'>) => Promise<string[]>;
   genericAgentComplete: (config: GenericAgentConfig, prompt: string) => Promise<string>;
   genericAgentTask: (config: GenericAgentConfig, system: string, prompt: string) => Promise<string>;
-  genericAgentStart: (config: GenericAgentConfig, prompt: string) => Promise<AgentStartResult>;
-  genericAgentSteer: (prompt: string) => Promise<AgentStartResult>;
+  genericAgentStart: (config: GenericAgentConfig, prompt: string, images?: AgentImageAttachment[]) => Promise<AgentStartResult>;
+  genericAgentSteer: (prompt: string, images?: AgentImageAttachment[]) => Promise<AgentStartResult>;
   genericAgentInterrupt: () => Promise<void>;
   genericAgentNewSession: () => Promise<void>;
 }

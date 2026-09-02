@@ -11,6 +11,7 @@ assert.match(electronMain, /LEGACY_MCP_PORT = 3002/);
 assert.match(electronMain, /DEFAULT_MCP_PORT = 3102/);
 assert.match(electronMain, /store\.set\('mcpPort', DEFAULT_MCP_PORT\)/);
 assert.match(mcpServerSource, /private port = 3102/);
+assert.match(mcpServerSource, /MCP_JSON_BODY_LIMIT = '8mb'/);
 const calls: Array<{ tool: string; arguments_: Record<string, unknown> }> = [];
 const server = new StarlimsMcpHttpServer(
   async (tool, arguments_) => {
@@ -43,6 +44,9 @@ try {
   assert.ok(tools.tools.some((tool) => tool.name === 'set_form_resource'));
   assert.ok(tools.tools.some((tool) => tool.name === 'query_checkin_history'));
   assert.ok(tools.tools.some((tool) => tool.name === 'get_capabilities'));
+  assert.ok(tools.tools.some((tool) => tool.name === 'validate_ssl'));
+  assert.ok(tools.tools.some((tool) => tool.name === 'get_editor_diagnostics'));
+  assert.ok(tools.tools.some((tool) => tool.name === 'get_devtools_output'));
 
   const capabilities = await client.callTool({ name: 'get_capabilities', arguments: {} });
   const capabilityDocument = capabilities.structuredContent as {
@@ -63,6 +67,27 @@ try {
   assert.equal(result.isError, undefined);
   assert.equal(calls[0]?.tool, 'browse_tree');
   assert.deepEqual(calls[0]?.arguments_, { uri: '/Applications', maxItems: 10 });
+
+  const validation = await client.callTool({
+    name: 'validate_ssl', arguments: { code: ':RETURN 1;', dataSource: false }
+  });
+  assert.equal(validation.isError, undefined);
+  assert.equal(calls.at(-1)?.tool, 'validate_ssl');
+  assert.deepEqual(calls.at(-1)?.arguments_, { code: ':RETURN 1;', dataSource: false });
+
+  await client.callTool({ name: 'get_editor_diagnostics', arguments: { scope: 'current', levels: ['error', 'warning'] } });
+  assert.equal(calls.at(-1)?.tool, 'get_editor_diagnostics');
+  await client.callTool({ name: 'get_devtools_output', arguments: { channel: 'ssl-language', maxItems: 20 } });
+  assert.equal(calls.at(-1)?.tool, 'get_devtools_output');
+
+  const largeCode = `/* large HTML Form code */\n${'x'.repeat(256 * 1024)}`;
+  const saveResult = await client.callTool({
+    name: 'save_item',
+    arguments: { uri: '/Applications/Test/HTMLForms/CodeBehind/LargeForm', language: 'ENG', code: largeCode }
+  });
+  assert.equal(saveResult.isError, undefined);
+  assert.equal(calls.at(-1)?.tool, 'save_item');
+  assert.equal(calls.at(-1)?.arguments_.code, largeCode);
 
   await client.close();
   console.log(`MCP smoke test passed (${tools.tools.length} tools).`);

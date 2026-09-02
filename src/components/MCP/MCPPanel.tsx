@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { buildCliPrompt, useAiContextStore } from '../../services/aiContextStore';
@@ -7,16 +7,17 @@ import { getEnterpriseService } from '../../services/enterpriseService';
 import { permissionPolicyForMode, type ConversationMode } from '../../services/agentPermissions';
 import { GENERIC_PROFILES_STORE_KEY } from '../../services/genericAgentConfig';
 import { editorStore } from '../../stores/editorStore';
-import type { AgentApprovalDecision, AgentEvent, AgentItemKind, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentToolPermissionPolicy, GenericAgentConfig } from '../../types/agent';
+import type { AgentApprovalDecision, AgentEvent, AgentImageAttachment, AgentItemKind, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentToolPermissionPolicy, GenericAgentConfig } from '../../types/agent';
 import type { EnterpriseItem } from '../../services/iEnterpriseService';
 import { useI18n } from '../../i18n';
 import { discardAgentFileChange, openAgentFileChange, reviewAndApplyAgentFileChange, syncAgentTurnWorkspace } from '../../services/agentWorkspaceService';
 import { dependencyContextForPrompt, loadDependencyIndex } from '../../services/starlimsDependencyIndex';
 import { loadAiLayers, mergeAiLayers } from '../../services/aiPlatform';
 import { useMcpApprovalStore } from '../../services/mcpApprovalStore';
-import { createUnifiedDiff, diffLineTone, summarizeAgentDiff } from '../../services/agentDiff';
+import { createUnifiedDiff, diffLineTone, summarizeAgentDiff, type AgentDiffFileSummary } from '../../services/agentDiff';
 import type { AgentFileChange } from '../../types/agent';
 import { AGENT_REMOTE_CHANGE_EVENT, type AgentRemoteChange } from '../../services/agentRemoteChange';
+import { isImeCompositionKey } from '../../services/textInput';
 
 type MessageEntry = {
   entryType: 'message';
@@ -53,9 +54,13 @@ type TaskSummaryEntry = {
   id: string;
   provider: AgentProvider;
   changedFiles: string[];
+  files?: AgentDiffFileSummary[];
+  additions?: number;
+  deletions?: number;
   mcpCalls: number;
   commands: number;
   failed: number;
+  attemptFailures?: number;
   durationMs: number;
 };
 type AgentTaskStage = 'idle' | 'preparing' | 'reading' | 'editing' | 'executing' | 'verifying' | 'responding' | 'waiting' | 'adjusting' | 'completed' | 'failed';
@@ -243,7 +248,10 @@ function replaceOrAppend(entries: TimelineEntry[], entry: TimelineEntry): Timeli
 function groupTimelineEntries(entries: TimelineEntry[]): DisplayTimelineEntry[] {
   const grouped: DisplayTimelineEntry[] = [];
   for (const entry of entries) {
-    if (entry.entryType !== 'activity' || entry.kind === 'file') {
+    // Never expose raw or empty model reasoning. The compact stage indicator and
+    // grouped tool activity communicate progress without consuming the transcript.
+    if (entry.entryType === 'activity' && entry.kind === 'reasoning') continue;
+    if (entry.entryType !== 'activity' || entry.kind === 'file' || entry.kind === 'plan') {
       grouped.push(entry);
       continue;
     }
@@ -280,19 +288,37 @@ function taskEntries(conversation: ProviderConversation): TimelineEntry[] {
   return conversation.entries.slice(previousSummaryIndex + 1);
 }
 
+function currentTaskFileSummary(conversation: ProviderConversation) {
+  const changedFiles = new Map<string, AgentFileChange>();
+  for (const entry of taskEntries(conversation)) {
+    if (entry.entryType !== 'activity' || (entry.kind !== 'file' && !entry.files?.length && !entry.diff)) continue;
+    for (const file of summarizeAgentDiff(entry.files, entry.diff).files) changedFiles.set(file.path, file);
+  }
+  return summarizeAgentDiff([...changedFiles.values()]);
+}
+
 function completeConversation(conversation: ProviderConversation, provider: AgentProvider, id: string): ProviderConversation {
   const activities = taskEntries(conversation).filter((entry): entry is ActivityEntry => entry.entryType === 'activity');
-  const changedFiles = new Set<string>();
+  const fileSummary = currentTaskFileSummary(conversation);
+  const failedAttempts = activities.filter((entry) => entry.status === 'failed' || entry.status === 'declined').length;
+  const latestOperations = new Map<string, ActivityEntry>();
   for (const activity of activities) {
-    if (activity.kind !== 'file' && !activity.files?.length && !activity.diff) continue;
-    for (const file of summarizeAgentDiff(activity.files, activity.diff).files) changedFiles.add(file.path);
+    const operation = activity.kind === 'mcp'
+      ? `mcp:${activity.title}`
+      : activity.kind === 'file'
+        ? `file:${activity.files?.map((file) => file.path).join('|') || activity.title}`
+        : activity.kind;
+    latestOperations.set(operation, activity);
   }
+  const unresolvedFailures = [...latestOperations.values()].filter((entry) => entry.status === 'failed' || entry.status === 'declined').length;
   const summary: TaskSummaryEntry = {
     entryType: 'task-summary', id, provider,
-    changedFiles: [...changedFiles],
+    changedFiles: fileSummary.files.map((file) => file.path), files: fileSummary.files,
+    additions: fileSummary.additions, deletions: fileSummary.deletions,
     mcpCalls: activities.filter((entry) => entry.kind === 'mcp').length,
     commands: activities.filter((entry) => entry.kind === 'command').length,
-    failed: activities.filter((entry) => entry.status === 'failed' || entry.status === 'declined').length,
+    failed: unresolvedFailures,
+    attemptFailures: failedAttempts,
     durationMs: Math.max(0, Date.now() - (conversation.startedAt || Date.now()))
   };
   return {
@@ -321,6 +347,9 @@ function applyAgentEvent(conversation: ProviderConversation, event: AgentEvent):
   }
 
   if ((event.type === 'item' || event.type === 'diff') && event.itemId) {
+    if (event.type === 'item' && event.kind === 'reasoning') {
+      return { ...conversation, stage: 'preparing', steerState: conversation.steerState === 'queued' ? 'applied' : conversation.steerState };
+    }
     const id = `${event.provider}:activity:${event.itemId}`;
     const existing = conversation.entries.find((entry): entry is ActivityEntry => entry.id === id && entry.entryType === 'activity');
     const activity: ActivityEntry = {
@@ -459,7 +488,7 @@ function FileChangeCard({ activity }: { activity: ActivityEntry }) {
           const actionState = fileActions[actionKey];
           const visibleLines = file.diff.split(/\r?\n/).slice(0, 1200);
           const truncated = file.diff.split(/\r?\n/).length > visibleLines.length;
-          return <details key={`${file.path}:${index}`} className="group/file" open={summary.files.length === 1 ? true : undefined}>
+          return <details key={`${file.path}:${index}`} className="group/file">
             <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 px-2.5 font-sans hover:bg-slate-50 dark:hover:bg-[#252526]" title={file.path}>
               <span className="w-3 shrink-0 text-center text-slate-400 transition-transform group-open/file:rotate-90">›</span>
               <span className={`w-12 shrink-0 rounded px-1 py-0.5 text-center text-[9px] uppercase ${file.kind === 'add' ? 'bg-emerald-100 text-emerald-700 dark:bg-[#193b2a] dark:text-[#56d384]' : file.kind === 'delete' ? 'bg-red-100 text-red-700 dark:bg-[#462124] dark:text-[#ff7b72]' : 'bg-blue-100 text-blue-700 dark:bg-[#20384d] dark:text-[#75beff]'}`}>{t(`agent.changeKind.${file.kind}`)}</span>
@@ -494,13 +523,96 @@ function FileChangeCard({ activity }: { activity: ActivityEntry }) {
   );
 }
 
-export function MCPPanel() {
+function PlanSummaryCard({ activity }: { activity: ActivityEntry }) {
   const { t } = useI18n();
+  const content = (activity.detail || activity.output || '').trim();
+  const failed = activity.status === 'failed' || activity.status === 'declined';
+  return <details className="group/reasoning mb-2 overflow-hidden rounded border border-slate-200 bg-slate-50 dark:border-[#333] dark:bg-[#202020]">
+    <summary className="flex h-8 cursor-pointer list-none items-center gap-2 px-2 text-[11px]">
+      <span className="w-4 shrink-0 text-center text-slate-400 transition-transform group-open/reasoning:rotate-90">›</span>
+      <span className="shrink-0 text-violet-600 dark:text-[#c586c0]">≡</span>
+      <span className="min-w-0 flex-1 truncate font-sans text-slate-700 dark:text-[#ccc]">{t('agent.planSummary')}</span>
+      <span className={`shrink-0 text-[10px] ${failed ? 'text-red-600 dark:text-[#f85149]' : activity.status === 'running' ? 'text-amber-600 dark:text-[#d29922]' : 'text-emerald-600 dark:text-[#3fb950]'}`}>{activity.status === 'running' ? t('agent.activityRunning', { count: 1 }) : activity.status === 'completed' ? t('agent.activityCompleted') : activity.status}</span>
+    </summary>
+    <div className="max-h-40 overflow-auto border-t border-slate-200 px-2.5 py-2 font-sans text-[11px] leading-5 text-slate-600 dark:border-[#333] dark:text-[#aaa]">
+      {content && <div className="whitespace-pre-wrap break-words">{content}</div>}
+    </div>
+  </details>;
+}
+
+function TaskFileReview({ entry }: { entry: TaskSummaryEntry }) {
+  const { t } = useI18n();
+  const files = entry.files || [];
+  const additions = entry.additions ?? files.reduce((sum, file) => sum + file.additions, 0);
+  const deletions = entry.deletions ?? files.reduce((sum, file) => sum + file.deletions, 0);
+  if (!entry.changedFiles.length) return null;
+  return <details className="group/review mt-2 overflow-hidden rounded border border-slate-200 bg-white dark:border-[#3a3a3a] dark:bg-[#1e1e1e]">
+    <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 px-2 text-[10px] hover:bg-slate-50 dark:hover:bg-[#252526]">
+      <span className="text-slate-400 transition-transform group-open/review:rotate-90">›</span>
+      <span className="min-w-0 flex-1 font-medium text-slate-700 dark:text-[#ddd]">{t('agent.summaryFiles', { count: entry.changedFiles.length })}</span>
+      <span className="font-mono text-emerald-600 dark:text-[#3fb950]">+{additions}</span><span className="font-mono text-red-600 dark:text-[#f85149]">-{deletions}</span>
+    </summary>
+    <div className="max-h-[360px] divide-y divide-slate-200 overflow-auto border-t border-slate-200 dark:divide-[#333] dark:border-[#333]">
+      {files.length === 0 && entry.changedFiles.map((path) => <div key={path} className="truncate px-2 py-1.5 font-mono text-[10px] text-slate-600 dark:text-[#aaa]" title={path}>{path}</div>)}
+      {files.map((file, index) => <details key={`${file.path}:${index}`} className="group/task-file">
+        <summary className="flex min-h-8 cursor-pointer list-none items-center gap-1.5 px-2 hover:bg-slate-50 dark:hover:bg-[#252526]" title={file.path}>
+          <span className="text-slate-400 transition-transform group-open/task-file:rotate-90">›</span>
+          <button type="button" className="min-w-0 flex-1 truncate text-left font-mono text-[10px] text-blue-700 hover:underline dark:text-[#75beff]" onClick={(event) => { event.preventDefault(); void openAgentFileChange(file); }}>{file.path}</button>
+          <span className="font-mono text-[9px] text-emerald-600 dark:text-[#3fb950]">+{file.additions}</span><span className="font-mono text-[9px] text-red-600 dark:text-[#f85149]">-{file.deletions}</span>
+        </summary>
+        <div className="max-h-56 overflow-auto border-t border-slate-200 bg-[#fafafa] py-1 font-mono text-[9px] leading-4 dark:border-[#333] dark:bg-[#151515]">
+          {file.diff ? file.diff.split(/\r?\n/).slice(0, 500).map((line, lineIndex) => {
+            const tone = diffLineTone(line);
+            const toneClass = tone === 'add' ? 'bg-emerald-50 text-emerald-900 dark:bg-[#15251b] dark:text-[#aff5b4]' : tone === 'delete' ? 'bg-red-50 text-red-900 dark:bg-[#2d1719] dark:text-[#ffdcd7]' : tone === 'hunk' ? 'text-blue-700 dark:text-[#79c0ff]' : 'text-slate-600 dark:text-[#aaa]';
+            return <div key={lineIndex} className={`min-w-max whitespace-pre px-2 ${toneClass}`}>{line || ' '}</div>;
+          }) : <div className="px-2 py-2 font-sans text-slate-500 dark:text-[#888]">{t('agent.diffUnavailable')}</div>}
+        </div>
+      </details>)}
+    </div>
+  </details>;
+}
+
+function LiveTaskChanges({ conversation }: { conversation: ProviderConversation }) {
+  const { t } = useI18n();
+  const summary = currentTaskFileSummary(conversation);
+  if (!conversation.running || summary.files.length === 0) return null;
+  return <div className="z-10 shrink-0 bg-gradient-to-t from-[#f3f3f3] via-[#f3f3f3] to-transparent px-3 pt-2 dark:from-[#1b1b1b] dark:via-[#1b1b1b]">
+    <details className="group/live-changes mx-auto max-w-[520px] overflow-hidden rounded-lg border border-slate-300 bg-white shadow-lg dark:border-[#454545] dark:bg-[#252525]">
+      <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 px-3 font-sans text-[11px] hover:bg-slate-50 dark:hover:bg-[#2d2d2d]">
+        <span className="text-slate-400 transition-transform group-open/live-changes:rotate-90">›</span>
+        <span className="min-w-0 flex-1 font-medium text-slate-700 dark:text-[#e5e5e5]">{t('agent.summaryFiles', { count: summary.files.length })}</span>
+        <span className="font-mono text-emerald-600 dark:text-[#3fb950]">+{summary.additions}</span>
+        <span className="font-mono text-red-600 dark:text-[#f85149]">-{summary.deletions}</span>
+      </summary>
+      <div className="max-h-72 divide-y divide-slate-200 overflow-auto border-t border-slate-200 dark:divide-[#3a3a3a] dark:border-[#3a3a3a]">
+        {summary.files.map((file, index) => <details key={`${file.path}:${index}`} className="group/live-file">
+          <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 px-2.5 hover:bg-slate-50 dark:hover:bg-[#2d2d2d]" title={file.path}>
+            <span className="text-slate-400 transition-transform group-open/live-file:rotate-90">›</span>
+            <button type="button" className="min-w-0 flex-1 truncate text-left font-mono text-[10px] text-slate-700 hover:text-blue-600 hover:underline dark:text-[#d4d4d4] dark:hover:text-[#75beff]" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void openAgentFileChange(file); }}>{file.path}</button>
+            <span className="font-mono text-[9px] text-emerald-600 dark:text-[#3fb950]">+{file.additions}</span>
+            <span className="font-mono text-[9px] text-red-600 dark:text-[#f85149]">-{file.deletions}</span>
+          </summary>
+          <div className="max-h-48 overflow-auto border-t border-slate-200 bg-[#fafafa] py-1 font-mono text-[9px] leading-4 dark:border-[#333] dark:bg-[#151515]">
+            {file.diff ? file.diff.split(/\r?\n/).slice(0, 400).map((line, lineIndex) => {
+              const tone = diffLineTone(line);
+              const toneClass = tone === 'add' ? 'bg-emerald-50 text-emerald-900 dark:bg-[#15251b] dark:text-[#aff5b4]' : tone === 'delete' ? 'bg-red-50 text-red-900 dark:bg-[#2d1719] dark:text-[#ffdcd7]' : tone === 'hunk' ? 'text-blue-700 dark:text-[#79c0ff]' : 'text-slate-600 dark:text-[#aaa]';
+              return <div key={lineIndex} className={`min-w-max whitespace-pre px-2 ${toneClass}`}>{line || ' '}</div>;
+            }) : <div className="px-2 py-2 font-sans text-slate-500 dark:text-[#888]">{t('agent.diffUnavailable')}</div>}
+          </div>
+        </details>)}
+      </div>
+    </details>
+  </div>;
+}
+
+export function MCPPanel() {
+  const { language, t } = useI18n();
   const [provider, setProvider] = useState<AgentProvider>('codex');
   const [statuses, setStatuses] = useState<Partial<Record<AgentProvider, AgentRuntimeStatus>>>({});
   const [mcp, setMcp] = useState<McpStatus | null>(null);
   const [conversations, setConversations] = useState<Conversations>(initialConversations);
   const [input, setInput] = useState('');
+  const [imageAttachments, setImageAttachments] = useState<AgentImageAttachment[]>([]);
   const [showConnection, setShowConnection] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionResults, setMentionResults] = useState<ScriptMentionCandidate[]>([]);
@@ -528,15 +640,20 @@ export function MCPPanel() {
   const addAiContext = useAiContextStore((state) => state.addItem);
   const removeContext = useAiContextStore((state) => state.removeItem);
   const clearContexts = useAiContextStore((state) => state.clear);
-  const pendingMcpApprovals = useMcpApprovalStore((state) => state.pending.filter((item) => item.provider === provider));
+  // Approval must stay visible even when an MCP bridge cannot preserve the
+  // originating provider exactly. Hidden approvals otherwise time out and are
+  // incorrectly reported by the model as a user rejection.
+  const pendingMcpApprovals = useMcpApprovalStore((state) => state.pending);
   const resolveMcpApproval = useMcpApprovalStore((state) => state.resolve);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputComposingRef = useRef(false);
   const preferredCodexModelRef = useRef('');
   const modelLoadSequenceRef = useRef(0);
   const conversation = conversations[provider];
   const { entries, running } = conversation;
-  const displayEntries = groupTimelineEntries(entries);
+  const pendingAgentApprovals = entries.filter((entry): entry is ApprovalEntry => entry.entryType === 'approval');
+  const displayEntries = groupTimelineEntries(entries.filter((entry) => entry.entryType !== 'approval'));
   const genericConfig = genericProfiles.find((profile) => profile.id === activeGenericProfileId) || genericProfiles[0];
   const genericModelChoices = genericProfiles.flatMap((profile) => normalizeModelList(profile.models, [profile.model]).map((model) => ({
     value: `${profile.id}|${encodeURIComponent(model)}`,
@@ -745,7 +862,7 @@ export function MCPPanel() {
   }, [conversations, provider, sessionIds]);
 
   useEffect(() => window.electronAPI?.onAgentEvent((event) => {
-    if (['session', 'status', 'item', 'approval', 'done', 'error'].includes(event.type)) {
+    if (['session', 'status', 'item', 'approval', 'done', 'error'].includes(event.type) && !(event.type === 'item' && event.kind === 'reasoning')) {
       const level = event.type === 'error' || (event.type === 'item' && event.status === 'failed')
         ? 'error'
         : event.type === 'approval'
@@ -783,10 +900,29 @@ export function MCPPanel() {
           diff: createUnifiedDiff(path, change.before, change.after)
         }]
       };
-      setConversations((current) => ({
-        ...current,
-        [change.provider]: applyAgentEvent(current[change.provider], agentEvent)
-      }));
+      setConversations((current) => {
+        const target = current[change.provider];
+        let mergedExisting = false;
+        const normalizedUri = change.uri.replace(/^\/+/, '').replace(/\\/g, '/');
+        const nextEntries = target.entries.map((entry) => {
+          if (entry.entryType !== 'activity' || !entry.files?.length) return entry;
+          const nextFiles = entry.files.map((file) => {
+            const normalizedPath = file.path.replace(/\\/g, '/');
+            const sameResource = file.uri === change.uri || normalizedPath.includes(normalizedUri);
+            const sameLanguage = !change.language || !file.language || file.language === change.language;
+            if (!sameResource || !sameLanguage) return file;
+            mergedExisting = true;
+            return { ...file, origin: 'remote' as const, uri: change.uri, language: change.language || file.language };
+          });
+          return { ...entry, files: nextFiles };
+        });
+        return {
+          ...current,
+          [change.provider]: mergedExisting
+            ? { ...target, entries: nextEntries }
+            : applyAgentEvent(target, agentEvent)
+        };
+      });
     };
     window.addEventListener(AGENT_REMOTE_CHANGE_EVENT, onRemoteChange);
     return () => window.removeEventListener(AGENT_REMOTE_CHANGE_EVENT, onRemoteChange);
@@ -844,10 +980,25 @@ export function MCPPanel() {
   };
 
   const send = async () => {
-    const question = input.trim();
+    const question = input.trim() || (imageAttachments.length ? t('agent.imageOnlyPrompt') : '');
+    const pendingApproval = pendingMcpApprovals[0];
+    if (pendingApproval && question) {
+      const allow = /^(?:允许|同意|批准|确认|allow|approve|approved|yes|ok)$/i.test(question);
+      const decline = /^(?:拒绝|不允许|不同意|deny|decline|declined|no|cancel)$/i.test(question);
+      if (allow || decline) {
+        const approvalMessage: MessageEntry = {
+          entryType: 'message', id: crypto.randomUUID(), role: 'user', content: question, provider
+        };
+        updateConversation(provider, (current) => ({ ...current, entries: [...current.entries, approvalMessage] }));
+        resolveMcpApproval(pendingApproval.id, allow);
+        setInput('');
+        return;
+      }
+    }
     if (!question || !activeStatus?.available || !window.electronAPI) return;
     const isSteering = running;
     const selectedProvider = provider;
+    const turnImages = [...imageAttachments];
     const userMessage: MessageEntry = { entryType: 'message', id: crypto.randomUUID(), role: 'user', content: question, provider: selectedProvider };
     const promptHistory = selectedProvider === 'opencode' || selectedProvider === 'generic' || replayHistory
       ? entries.filter((entry): entry is MessageEntry => entry.entryType === 'message' && !entry.error).map(({ role, content }) => ({ role, content }))
@@ -865,8 +1016,9 @@ export function MCPPanel() {
     try {
       useMcpApprovalStore.getState().setActiveProvider(selectedProvider);
       if (isSteering) {
-        if (selectedProvider === 'generic') await window.electronAPI.genericAgentSteer(question);
-        else await window.electronAPI.agentSteer(selectedProvider, question);
+        if (selectedProvider === 'generic') await window.electronAPI.genericAgentSteer(question, turnImages);
+        else await window.electronAPI.agentSteer(selectedProvider, question, turnImages);
+        setImageAttachments([]);
         updateConversation(selectedProvider, (current) => ({ ...current, stage: 'adjusting', steerState: 'queued' }));
         return;
       }
@@ -906,8 +1058,9 @@ export function MCPPanel() {
         dependencyContext
       );
       if (selectedProvider === 'generic') {
-        await window.electronAPI.genericAgentStart({ ...genericConfig, toolPermissionPolicy: effectivePermissionPolicy }, prompt);
+        await window.electronAPI.genericAgentStart({ ...genericConfig, toolPermissionPolicy: effectivePermissionPolicy }, prompt, turnImages);
       } else if (selectedProvider === 'opencode') {
+        if (turnImages.length) throw new Error(t('agent.imageProviderUnsupported'));
         const output = await window.electronAPI.cliExecute(selectedProvider, prompt);
         const message: MessageEntry = { entryType: 'message', id: crypto.randomUUID(), role: 'assistant', provider: selectedProvider, content: stripAnsi(output) };
         updateConversation(selectedProvider, (current) => completeConversation(
@@ -916,8 +1069,9 @@ export function MCPPanel() {
           `${selectedProvider}:task-summary:${current.sequence}`
         ));
       } else {
-        await window.electronAPI.agentStart(selectedProvider, prompt, selectedProvider === 'codex' ? selectedModel : undefined, effectivePermissionPolicy);
+        await window.electronAPI.agentStart(selectedProvider, prompt, selectedProvider === 'codex' ? selectedModel : undefined, effectivePermissionPolicy, turnImages);
       }
+      setImageAttachments([]);
       setReplayHistory(false);
     } catch (error) {
       const message: MessageEntry = { entryType: 'message', id: crypto.randomUUID(), role: 'assistant', provider: selectedProvider, error: true, content: error instanceof Error ? error.message : String(error) };
@@ -989,12 +1143,41 @@ export function MCPPanel() {
     if (!window.electronAPI) return;
     try {
       const files = await window.electronAPI.agentSelectFiles();
-      files.forEach((file) => addAiContext({
-        id: file.id, name: file.name, uri: file.path, type: 'File', content: file.content, source: 'file'
-      }));
+      files.forEach((file) => {
+        if (file.kind === 'image') {
+          setImageAttachments((current) => current.some((item) => item.path === file.path) ? current : [...current, file]);
+          return;
+        }
+        addAiContext({ id: file.id, name: file.name, uri: file.path, type: 'File', content: file.content, source: 'file' });
+      });
     } catch (error) {
       useOutputLogStore.getState().addEntry({
         channel: 'ai-runtime', level: 'error', source: 'AI Attachment',
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  };
+
+  const attachPastedImages = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const images = [...event.clipboardData.items].filter((item) => item.kind === 'file' && item.type.startsWith('image/'));
+    if (!images.length || !window.electronAPI) return;
+    event.preventDefault();
+    try {
+      for (const item of images) {
+        const file = item.getAsFile();
+        if (!file) continue;
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = () => reject(reader.error || new Error('Unable to read screenshot.'));
+          reader.readAsDataURL(file);
+        });
+        const attachment = await window.electronAPI.agentSaveImage(dataUrl, file.name || `screenshot-${Date.now()}.png`);
+        setImageAttachments((current) => [...current, attachment]);
+      }
+    } catch (error) {
+      useOutputLogStore.getState().addEntry({
+        channel: 'ai-runtime', level: 'error', source: 'AI Screenshot',
         message: error instanceof Error ? error.message : String(error)
       });
     }
@@ -1210,18 +1393,20 @@ export function MCPPanel() {
             const duration = entry.durationMs < 1000 ? '<1s' : entry.durationMs < 60_000 ? `${Math.ceil(entry.durationMs / 1000)}s` : `${Math.floor(entry.durationMs / 60_000)}m ${Math.ceil((entry.durationMs % 60_000) / 1000)}s`;
             return <section key={entry.id} className={`mb-3 rounded-md border p-2.5 font-sans ${entry.failed ? 'border-amber-200 bg-amber-50 dark:border-[#665428] dark:bg-[#292315]' : 'border-emerald-200 bg-emerald-50 dark:border-[#315342] dark:bg-[#17251e]'}`}>
               <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-slate-800 dark:text-[#e5e5e5]"><span className={entry.failed ? 'text-amber-600 dark:text-[#d29922]' : 'text-emerald-600 dark:text-[#3fb950]'}>{entry.failed ? '!' : '✓'}</span>{t('agent.taskSummary')}</div>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] text-slate-600 dark:text-[#aaa]"><span>{t('agent.summaryChangedFiles')}: <b>{entry.changedFiles.length}</b></span><span>{t('agent.summaryMcpCalls')}: <b>{entry.mcpCalls}</b></span><span>{t('agent.summaryCommands')}: <b>{entry.commands}</b></span><span>{t('agent.summaryDuration')}: <b>{duration}</b></span>{entry.failed > 0 && <span className="col-span-2 text-red-600 dark:text-[#f85149]">{t('agent.summaryFailed')}: <b>{entry.failed}</b></span>}</div>
-              {entry.changedFiles.length > 0 && <details className="mt-2 text-[10px] text-slate-600 dark:text-[#aaa]"><summary className="cursor-pointer select-none">{t('agent.summaryFiles', { count: entry.changedFiles.length })}</summary><ul className="mt-1 space-y-0.5 pl-4 font-mono">{entry.changedFiles.map((path) => <li key={path} className="truncate" title={path}>{path}</li>)}</ul></details>}
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] text-slate-600 dark:text-[#aaa]"><span>{t('agent.summaryChangedFiles')}: <b>{entry.changedFiles.length}</b></span><span>{t('agent.summaryMcpCalls')}: <b>{entry.mcpCalls}</b></span><span>{t('agent.summaryCommands')}: <b>{entry.commands}</b></span><span>{t('agent.summaryDuration')}: <b>{duration}</b></span>{entry.failed > 0 && <span className="col-span-2 text-red-600 dark:text-[#f85149]">{t('agent.summaryFailed')}: <b>{entry.failed}</b></span>}{(entry.attemptFailures || 0) > entry.failed && <span className="col-span-2 text-amber-600 dark:text-[#d29922]">{t('agent.summaryRecovered', { count: (entry.attemptFailures || 0) - entry.failed })}</span>}</div>
+              <TaskFileReview entry={entry} />
             </section>;
           }
 
-          if (entry.entryType === 'activity') return <FileChangeCard key={entry.id} activity={entry} />;
+          if (entry.entryType === 'activity') return entry.kind === 'plan'
+            ? <PlanSummaryCard key={entry.id} activity={entry} />
+            : <FileChangeCard key={entry.id} activity={entry} />;
 
           if (entry.entryType === 'activity-group') {
             const runningCount = entry.entries.filter((item) => item.status === 'running').length;
             const failedCount = entry.entries.filter((item) => item.status === 'failed' || item.status === 'declined').length;
             const latest = entry.entries.at(-1)!;
-            return <details key={entry.id} className="group mb-2 rounded border border-slate-200 bg-slate-50 dark:border-[#333] dark:bg-[#202020]">
+            return <details key={entry.id} open={runningCount > 0 ? true : undefined} className="group mb-2 rounded border border-slate-200 bg-slate-50 dark:border-[#333] dark:bg-[#202020]">
               <summary className="flex h-8 cursor-pointer list-none items-center gap-2 px-2 text-[11px]" title={latest.title}>
                 <span className="w-4 shrink-0 text-center text-slate-400 transition-transform group-open:rotate-90">›</span>
                 <span className="shrink-0 text-blue-600 dark:text-[#4daafc]">{t('agent.activity')}</span>
@@ -1239,11 +1424,16 @@ export function MCPPanel() {
           return <div key={entry.id} className="mb-3 rounded border border-amber-300 bg-amber-50 p-2 text-[11px] dark:border-[#6e5b24] dark:bg-[#2b2517]"><div className="font-sans font-medium text-amber-900 dark:text-[#e3c66d]">{entry.title}</div>{entry.detail && <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-all text-amber-800 dark:text-[#c8b56a]">{entry.detail}</pre>}<div className="mt-2 flex gap-1.5 font-sans"><button className="rounded bg-blue-600 px-2 py-1 text-white" onClick={() => void answerApproval(entry, 'accept')}>{t('agent.allowOnce')}</button>{entry.canAcceptForSession && <button className="rounded border border-blue-400 px-2 py-1 text-blue-700 dark:text-[#7dcfff]" onClick={() => void answerApproval(entry, 'acceptForSession')}>{t('agent.allowSession')}</button>}<button className="rounded border border-slate-300 px-2 py-1 text-slate-600 dark:border-[#555] dark:text-[#bbb]" onClick={() => void answerApproval(entry, 'decline')}>{t('agent.decline')}</button></div></div>;
         })}
 
-        {pendingMcpApprovals.map((approval) => <div key={approval.id} className="mb-3 rounded border border-amber-300 bg-amber-50 p-2 text-[11px] dark:border-[#6e5b24] dark:bg-[#2b2517]"><div className="font-sans font-medium text-amber-900 dark:text-[#e3c66d]">{t('agent.mcpApproval', { tool: approval.tool })}</div><pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-all text-amber-800 dark:text-[#c8b56a]">{approval.detail}</pre><div className="mt-2 flex gap-1.5 font-sans"><button className="rounded bg-blue-600 px-2 py-1 text-white" onClick={() => resolveMcpApproval(approval.id, true)}>{t('agent.allowOnce')}</button><button className="rounded border border-slate-300 px-2 py-1 text-slate-600 dark:border-[#555] dark:text-[#bbb]" onClick={() => resolveMcpApproval(approval.id, false)}>{t('agent.decline')}</button></div></div>)}
-
         {running && <div className="rounded border border-blue-200 bg-blue-50 px-2.5 py-2 text-slate-600 dark:border-[#294b67] dark:bg-[#172432] dark:text-[#aaa]"><div className="flex items-center gap-2"><span className="agent-pulse text-blue-600 dark:text-[#4daafc]">●</span><span className="min-w-0 flex-1 truncate font-sans text-[11px]">{t(`agent.stage.${conversation.stage}`)}</span>{provider !== 'opencode' && <button className="font-sans text-[11px] text-red-600 hover:underline dark:text-[#f85149]" onClick={() => void (provider === 'generic' ? window.electronAPI?.genericAgentInterrupt() : window.electronAPI?.agentInterrupt(provider))}>{t('agent.stop')}</button>}</div>{conversation.steerState && <div className={`mt-1 pl-4 font-sans text-[10px] ${conversation.steerState === 'applied' ? 'text-emerald-600 dark:text-[#3fb950]' : 'text-blue-600 dark:text-[#4daafc]'}`}>{conversation.steerState === 'applied' ? `✓ ${t('agent.steerApplied')}` : `↗ ${t('agent.steerQueued')}`}</div>}</div>}
         <div ref={bottomRef} />
       </div>
+
+      <LiveTaskChanges conversation={conversation} />
+
+      {(pendingAgentApprovals.length > 0 || pendingMcpApprovals.length > 0) && <div className="z-20 max-h-52 shrink-0 space-y-2 overflow-auto border-t border-amber-300 bg-amber-50 px-2 py-2 shadow-[0_-6px_18px_rgba(0,0,0,0.08)] dark:border-[#6e5b24] dark:bg-[#2b2517]">
+        {pendingAgentApprovals.map((approval) => <div key={approval.id} className="rounded border border-amber-300 bg-white/60 p-2 text-[11px] dark:border-[#6e5b24] dark:bg-[#211d14]"><div className="flex items-start gap-2 font-sans"><span className="mt-0.5 text-amber-600 dark:text-[#d29922]">!</span><div className="min-w-0 flex-1"><div className="font-medium text-amber-900 dark:text-[#e3c66d]">{approval.title}</div>{approval.detail && <pre className="mt-1 max-h-20 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] text-amber-800 dark:text-[#c8b56a]">{approval.detail}</pre>}</div></div><div className="mt-2 flex justify-end gap-1.5 font-sans"><button type="button" className="rounded border border-slate-300 px-2 py-1 text-slate-600 dark:border-[#555] dark:text-[#bbb]" onClick={() => void answerApproval(approval, 'decline')}>{t('agent.decline')}</button>{approval.canAcceptForSession && <button type="button" className="rounded border border-blue-400 px-2 py-1 text-blue-700 dark:text-[#7dcfff]" onClick={() => void answerApproval(approval, 'acceptForSession')}>{t('agent.allowSession')}</button>}<button type="button" className="rounded bg-blue-600 px-2 py-1 text-white" onClick={() => void answerApproval(approval, 'accept')}>{t('agent.allowOnce')}</button></div></div>)}
+        {pendingMcpApprovals.map((approval) => <div key={approval.id} className="rounded border border-amber-300 bg-white/60 p-2 text-[11px] dark:border-[#6e5b24] dark:bg-[#211d14]"><div className="flex items-start gap-2 font-sans"><span className="mt-0.5 text-amber-600 dark:text-[#d29922]">!</span><div className="min-w-0 flex-1"><div className="font-medium text-amber-900 dark:text-[#e3c66d]">{t('agent.mcpApproval', { tool: approval.tool })}</div><pre className="mt-1 max-h-20 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] text-amber-800 dark:text-[#c8b56a]">{approval.detail}</pre></div></div><div className="mt-2 flex justify-end gap-1.5 font-sans"><button type="button" className="rounded border border-slate-300 px-2 py-1 text-slate-600 dark:border-[#555] dark:text-[#bbb]" onClick={() => resolveMcpApproval(approval.id, false)}>{t('agent.decline')}</button><button type="button" className="rounded bg-blue-600 px-2 py-1 text-white" onClick={() => resolveMcpApproval(approval.id, true)}>{t('agent.allowOnce')}</button></div></div>)}
+      </div>}
 
       <div className="relative border-t border-[#d4d4d4] bg-[#f3f3f3] p-2 dark:border-[#2b2b2b] dark:bg-[#1b1b1b]">
         {mentionQuery !== null && <div className="absolute bottom-[calc(100%-2px)] left-2 right-2 z-30 max-h-64 overflow-auto rounded-md border border-slate-300 bg-white p-1 shadow-2xl dark:border-[#454545] dark:bg-[#2b2b2b]">
@@ -1264,6 +1454,7 @@ export function MCPPanel() {
             </button>)}
         </div>}
         {contexts.length > 0 && <div className="flex flex-wrap gap-1.5 pb-2">{contexts.map((item) => <div key={item.id} className="max-w-full flex min-h-8 items-center gap-1 rounded border border-slate-300 bg-slate-200 py-0.5 pl-2 pr-0.5 text-[11px] text-slate-700 dark:border-[#3b3b3b] dark:bg-[#2a2d2e] dark:text-[#c5c5c5]" title={item.uri}><span className="text-blue-600 dark:text-[#4daafc]">{item.source === 'file' ? '📎' : '@'}</span><span className="max-w-[190px] truncate">{contextDisplayName(item)}</span><button className="icon-button h-7 w-7 text-base" title={t('common.close')} onClick={() => removeContext(item.id)}>×</button></div>)}{contexts.length > 1 && <button className="min-h-8 rounded px-2 text-xs text-slate-500 hover:bg-slate-200 hover:text-slate-900 dark:text-[#888] dark:hover:bg-[#2a2d2e] dark:hover:text-white" onClick={clearContexts}>{t('agent.clear')}</button>}</div>}
+        {imageAttachments.length > 0 && <div className="flex gap-2 overflow-x-auto pb-2">{imageAttachments.map((image) => <div key={image.id} className="relative h-16 w-20 shrink-0 overflow-hidden rounded border border-slate-300 bg-white dark:border-[#454545] dark:bg-[#202020]" title={image.name}><img src={image.dataUrl} alt={image.name} className="h-full w-full object-cover" /><button type="button" onClick={() => setImageAttachments((current) => current.filter((item) => item.id !== image.id))} className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded bg-black/70 text-sm leading-none text-white" title={t('common.close')}>×</button></div>)}</div>}
         <div className="relative rounded-md border border-slate-300 bg-white focus-within:border-blue-500 dark:border-[#3b3b3b] dark:bg-[#202020] dark:focus-within:border-[#555]">
           {showPermissionMenu && <div className="absolute bottom-10 left-2 z-40 w-[min(340px,calc(100vw-32px))] overflow-hidden rounded-lg border border-slate-300 bg-white p-1.5 font-sans shadow-2xl dark:border-[#454545] dark:bg-[#2b2b2b]">
             <div className="px-2 py-1.5 text-xs text-slate-500 dark:text-[#aaa]">{t('agent.permissionQuestion')}</div>
@@ -1273,7 +1464,8 @@ export function MCPPanel() {
               ['full-access', '!', t('agent.permission.full'), t('agent.permission.fullHint')]
             ] as const).map(([value, mark, label, hint]) => <button key={value} type="button" onClick={() => { setPermissionPolicy(value); setShowPermissionMenu(false); }} className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left hover:bg-slate-100 dark:hover:bg-[#37373d] ${value === 'full-access' ? 'text-orange-600 dark:text-[#f0883e]' : 'text-slate-800 dark:text-[#ddd]'}`}><span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border border-current text-[10px]">{mark}</span><span className="min-w-0 flex-1"><span className="block text-xs">{label}</span><span className="mt-0.5 block text-[10px] leading-4 text-slate-500 dark:text-[#999]">{hint}</span></span>{permissionPolicy === value && <span className="text-base">✓</span>}</button>)}
           </div>}
-          <textarea ref={inputRef} value={input} onChange={(event) => { setInput(event.target.value); updateMentionFromInput(event.target.value, event.target.selectionStart); }} onClick={(event) => updateMentionFromInput(event.currentTarget.value, event.currentTarget.selectionStart)} onKeyDown={(event) => {
+          <textarea ref={inputRef} value={input} lang={language === 'zh' ? 'zh-CN' : undefined} inputMode="text" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} onCompositionStart={() => { inputComposingRef.current = true; }} onCompositionEnd={() => { inputComposingRef.current = false; }} onPaste={(event) => void attachPastedImages(event)} onChange={(event) => { setInput(event.target.value); updateMentionFromInput(event.target.value, event.target.selectionStart); }} onClick={(event) => updateMentionFromInput(event.currentTarget.value, event.currentTarget.selectionStart)} onKeyDown={(event) => {
+            if (isImeCompositionKey(event.nativeEvent, inputComposingRef.current)) return;
             if (mentionQuery !== null && mentionResults.length > 0) {
               if (event.key === 'ArrowDown') { event.preventDefault(); setMentionIndex((index) => (index + 1) % mentionResults.length); return; }
               if (event.key === 'ArrowUp') { event.preventDefault(); setMentionIndex((index) => (index - 1 + mentionResults.length) % mentionResults.length); return; }
@@ -1292,7 +1484,11 @@ export function MCPPanel() {
               {provider === 'codex' && <><select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} disabled={models.length === 0} className="h-8 min-w-0 max-w-[160px] flex-1 truncate rounded-md border border-slate-300 bg-transparent px-1.5 text-xs text-slate-700 outline-none dark:border-[#454545] dark:bg-[#202020] dark:text-[#c5c5c5]" title={modelsError || models.find((model) => model.id === selectedModel)?.description || t('agent.model')} aria-label={t('agent.model')}>{models.length === 0 && <option value="">{modelsLoading ? t('common.loading') : t('agent.modelUnavailable')}</option>}{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select>{!modelsLoading && models.length === 0 && <button type="button" onClick={() => void loadCodexModels(2)} className="icon-button h-8 w-8 shrink-0 text-base" title={`${t('agent.modelRetry')}${modelsError ? `: ${modelsError}` : ''}`} aria-label={t('agent.modelRetry')}>↻</button>}</>}
               {provider === 'generic' && <select value={genericModelSelection} onChange={(event) => selectGenericProfileModel(event.target.value)} disabled={genericModelChoices.length === 0} className="h-8 min-w-0 max-w-[180px] flex-1 truncate rounded-md border border-slate-300 bg-transparent px-1.5 text-xs text-slate-700 outline-none dark:border-[#454545] dark:bg-[#202020] dark:text-[#c5c5c5]" title={`${genericConfig.name} · ${genericConfig.model || t('agent.configure')}`} aria-label={t('agent.model')}>{genericModelChoices.length === 0 && <option value={genericModelSelection}>{t('agent.configure')}</option>}{genericModelChoices.map((choice) => <option key={choice.value} value={choice.value}>{choice.model}</option>)}</select>}
             </div>
-            <button disabled={!input.trim() || !activeStatus?.available} onClick={() => void send()} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-600 text-base font-medium text-white transition-colors hover:bg-blue-500 disabled:bg-slate-300 disabled:text-slate-500 dark:bg-[#0e639c] dark:hover:bg-[#1177bb] dark:disabled:bg-[#333] dark:disabled:text-[#666]" title={running ? t('agent.steer') : t('agent.send')}>{running ? '↗' : '↑'}</button>
+            <button disabled={(!input.trim() && imageAttachments.length === 0) || !activeStatus?.available} onClick={() => void send()} className="group/send flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#007acc] text-white shadow-sm ring-1 ring-inset ring-white/10 transition-[background-color,box-shadow,transform] hover:bg-[#168bd2] hover:shadow-md active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#75beff] focus-visible:ring-offset-1 focus-visible:ring-offset-white disabled:cursor-default disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:ring-slate-300 disabled:active:scale-100 dark:bg-[#0e639c] dark:hover:bg-[#1177bb] dark:focus-visible:ring-offset-[#202020] dark:disabled:bg-[#303030] dark:disabled:text-[#686868] dark:disabled:ring-[#3a3a3a]" title={running ? t('agent.steer') : t('agent.send')} aria-label={running ? t('agent.steer') : t('agent.send')}>
+              {running
+                ? <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M7 17 17 7" /><path d="M9 7h8v8" /></svg>
+                : <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5" /><path d="m6.5 10.5 5.5-5.5 5.5 5.5" /></svg>}
+            </button>
           </div>
         </div>
       </div>

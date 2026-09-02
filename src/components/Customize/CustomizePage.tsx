@@ -318,6 +318,7 @@ export function CustomizePage() {
   const importRules = async () => {
     const file = (await window.electronAPI?.agentSelectFiles())?.[0];
     if (!file) return;
+    if (file.kind !== 'text') { setMessage(t('agent.rulesFileType')); return; }
     if (!/\.(md|txt)$/i.test(file.name)) { setMessage(t('agent.rulesFileType')); return; }
     setRules({ enabled: true, name: file.name, content: file.content, updatedAt: Date.now() });
     setMessage('');

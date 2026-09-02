@@ -90,15 +90,7 @@ export function buildEnterpriseSearchTree(items: SearchTreeItem[]): SearchTreeIt
     level.push({ ...source, label: leafLabel(source, parts), hasChildren: false, children: undefined });
   }
 
-  const sort = (nodes: SearchTreeItem[]) => {
-    nodes.sort((a, b) => {
-      if (!!a.hasChildren !== !!b.hasChildren) return a.hasChildren ? -1 : 1;
-      return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
-    });
-    nodes.forEach(node => node.children && sort(node.children));
-  };
-  sort(roots);
-  return roots;
+  return sortEnterpriseTreeItems(roots);
 }
 
 export function collectSearchFolderIds(items: SearchTreeItem[]): string[] {
@@ -106,3 +98,4 @@ export function collectSearchFolderIds(items: SearchTreeItem[]): string[] {
     ? [item.id, ...collectSearchFolderIds(item.children || [])]
     : []);
 }
+import { sortEnterpriseTreeItems } from './enterpriseTreeOrder';

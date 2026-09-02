@@ -7,6 +7,7 @@ import { assertExpectedContentVersion, checkInItemWithGate, checkoutItemWithGate
 import { formResourceVersion, normalizeFormResourcesUri, parseFormResources, setFormResourceValue } from '../../services/formResources';
 import { publishAgentRemoteChange } from '../../services/agentRemoteChange';
 import { executeFormPreviewMcpTool, isFormPreviewMcpTool } from '../../services/formPreviewService';
+import { agentDiagnostics, agentOutputLogs } from '../../services/agentObservability';
 
 type McpRequest = { id: string; tool: string; arguments: Record<string, unknown>; provider?: 'codex' | 'generic' };
 type McpToolPermissionPolicy = 'read-only' | 'ask-writes' | 'auto-safe' | 'full-access';
@@ -48,9 +49,15 @@ async function ensureMcpToolAllowed(request: McpRequest): Promise<void> {
   const saved = await window.electronAPI?.storeGet(MCP_TOOL_PERMISSION_STORE_KEY).catch(() => null);
   const policy: McpToolPermissionPolicy = saved === 'read-only' || saved === 'auto-safe' || saved === 'full-access' ? saved : 'ask-writes';
   if (policy === 'read-only') throw new Error(`MCP tool '${request.tool}' is blocked by the current read-only conversation mode.`);
+  // Codex App Server applies this same conversation policy before issuing an
+  // MCP call. Its mcpServer/elicitation/request is rendered by MCPPanel, so a
+  // second renderer-side prompt would ask the user to approve the same action
+  // twice. Generic agents still use this host-side gate.
+  if (request.provider === 'codex') return;
   if (!requiresMcpApproval(request.tool, policy)) return;
   const allowed = await requestInlineMcpApproval({
     id: request.id,
+    provider: request.provider,
     tool: request.tool,
     detail: summarizeArguments(request.arguments)
   });
@@ -72,6 +79,31 @@ function publishRemoteChange(request: McpRequest, uri: string, language: string 
 async function executeMcpTool(request: McpRequest): Promise<unknown> {
   if (isFormPreviewMcpTool(request.tool)) {
     return executeFormPreviewMcpTool(request.tool, request.arguments, request.provider);
+  }
+  if (request.tool === 'validate_ssl') {
+    const code = String(request.arguments.code || '');
+    if (!code.trim()) throw new Error('validate_ssl requires complete SSL source code.');
+    return window.electronAPI.sslLspValidate(code, {
+      dataSource: request.arguments.dataSource === true,
+      info: request.arguments.includeInfo === true,
+      hungarianTypes: request.arguments.hungarianTypes === true
+    });
+  }
+  if (request.tool === 'get_editor_diagnostics') {
+    return agentDiagnostics({
+      uri: request.arguments.uri ? String(request.arguments.uri) : undefined,
+      scope: request.arguments.scope === 'open' || request.arguments.scope === 'all' ? request.arguments.scope : 'current',
+      levels: Array.isArray(request.arguments.levels) ? request.arguments.levels.filter((value): value is 'error' | 'warning' | 'info' => value === 'error' || value === 'warning' || value === 'info') : undefined,
+      maxItems: typeof request.arguments.maxItems === 'number' ? request.arguments.maxItems : undefined
+    });
+  }
+  if (request.tool === 'get_devtools_output') {
+    const channel = request.arguments.channel;
+    return agentOutputLogs({
+      channel: channel === 'starlims-operation' || channel === 'starlims-api' || channel === 'ssl-language' || channel === 'mcp-server' || channel === 'mcp-tools' || channel === 'ai-runtime' ? channel : undefined,
+      levels: Array.isArray(request.arguments.levels) ? request.arguments.levels.filter((value): value is 'info' | 'warning' | 'error' | 'success' | 'script' => value === 'info' || value === 'warning' || value === 'error' || value === 'success' || value === 'script') : undefined,
+      maxItems: typeof request.arguments.maxItems === 'number' ? request.arguments.maxItems : undefined
+    });
   }
   const service = getEnterpriseService();
   if (!service.isConnected()) {

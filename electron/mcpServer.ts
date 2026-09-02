@@ -6,12 +6,13 @@
 import { randomUUID, webcrypto } from 'crypto';
 import type { Server as HttpServer } from 'http';
 import type { Request, Response } from 'express';
-import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
+import express from 'express';
+import { localhostHostValidation } from '@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { createStarlimsMcpServer, type StarlimsMcpAdapter } from '@tenlyc/starlims-mcp';
-import { DEVTOOLS_MCP_CAPABILITIES, DEVTOOLS_MCP_INSTRUCTIONS } from './mcpCapabilities';
+import { DEVTOOLS_MCP_CAPABILITIES, DEVTOOLS_MCP_INSTRUCTIONS, registerDevtoolsLocalMcpTools } from './mcpCapabilities';
 
 // Electron 28's main process does not always expose Web Crypto as a global.
 // The MCP SDK uses globalThis.crypto during protocol initialization.
@@ -29,6 +30,12 @@ export interface McpStatus {
 }
 
 export type RendererToolCall = (tool: string, arguments_: Record<string, unknown>) => Promise<unknown>;
+
+// HTML Forms can be substantially larger than Express' 100 KB default JSON
+// limit. Keep the limit explicit and bounded for both the MCP endpoint and the
+// renderer bridge that carries the same request into the application.
+export const MCP_JSON_BODY_LIMIT = '8mb';
+export const MCP_JSON_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
 
 type Session = { server: McpServer; transport: StreamableHTTPServerTransport };
 
@@ -59,7 +66,9 @@ export class StarlimsMcpHttpServer {
   async start(): Promise<void> {
     if (this.httpServer?.listening) return;
 
-    const app = createMcpExpressApp({ host: this.host });
+    const app = express();
+    app.use(express.json({ limit: MCP_JSON_BODY_LIMIT }));
+    if (['127.0.0.1', 'localhost', '::1'].includes(this.host)) app.use(localhostHostValidation());
     app.get('/', (_req, res) => res.send('STARLIMS DevTools MCP Server'));
     app.get('/health', (_req, res) => res.json({ ok: true, service: 'starlims-devtools-mcp' }));
     app.all('/mcp', (req, res) => void this.handleRequest(req, res));
@@ -147,6 +156,7 @@ export class StarlimsMcpHttpServer {
       instructions: DEVTOOLS_MCP_INSTRUCTIONS,
       onError: (tool, error) => this.log(`STARLIMS MCP tool '${tool}' failed.`, error)
     });
+    registerDevtoolsLocalMcpTools(server, this.callRenderer, (tool, error) => this.log(`STARLIMS MCP tool '${tool}' failed.`, error));
     return server;
   }
 

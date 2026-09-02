@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceChange, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, AgentWorkspaceSyncResult, ExternalMcpServers, GenericAgentConfig } from '../src/types/agent';
+import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentImageAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, AgentWorkspaceChange, AgentWorkspaceContext, AgentWorkspaceFile, AgentWorkspaceInfo, AgentWorkspaceSyncResult, ExternalMcpServers, GenericAgentConfig } from '../src/types/agent';
 import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
 import type { QualityTestRunResult } from '../src/types/aiPlatform';
 import type { NativeLspLocation, NativeLspPosition, NativeLspReleaseInfo, NativeLspSessionStatus, NativeLspUpstreamMetadata, NativeLspVersionInfo, NativeLspWorkspaceDocument, NativeLspWorkspaceEdit, NativeLspWorkspaceSymbol, NativeSslFormatResult, NativeSslInventory, NativeSslValidationResult } from '../src/types/sslLsp';
@@ -109,6 +109,7 @@ export interface ElectronAPI {
   agentGetStatuses: () => Promise<Partial<Record<AgentProvider, AgentRuntimeStatus>>>;
   agentGetModels: (provider: AgentProvider) => Promise<AgentModelOption[]>;
   agentSelectFiles: () => Promise<AgentFileAttachment[]>;
+  agentSaveImage: (dataUrl: string, suggestedName?: string) => Promise<AgentImageAttachment>;
   agentGetExternalMcpServers: () => Promise<ExternalMcpServers>;
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => Promise<boolean>;
   aiConfigImport: () => Promise<{ filePath: string; value: unknown } | null>;
@@ -118,8 +119,8 @@ export interface ElectronAPI {
   agentWorkspaceGetChanges: () => Promise<AgentWorkspaceChange[]>;
   agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'> & { fingerprint?: string }>) => Promise<number>;
   agentRunQualityTest: (command: string) => Promise<(QualityTestRunResult & { cancelled?: boolean })>;
-  agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => Promise<AgentStartResult>;
-  agentSteer: (provider: AgentProvider, prompt: string) => Promise<AgentStartResult>;
+  agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy, images?: AgentImageAttachment[]) => Promise<AgentStartResult>;
+  agentSteer: (provider: AgentProvider, prompt: string, images?: AgentImageAttachment[]) => Promise<AgentStartResult>;
   agentInterrupt: (provider: AgentProvider) => Promise<void>;
   agentNewSession: (provider: AgentProvider) => Promise<void>;
   agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => Promise<boolean>;
@@ -127,8 +128,8 @@ export interface ElectronAPI {
   genericAgentListModels: (config: Pick<GenericAgentConfig, 'baseUrl' | 'apiKey'>) => Promise<string[]>;
   genericAgentComplete: (config: GenericAgentConfig, prompt: string) => Promise<string>;
   genericAgentTask: (config: GenericAgentConfig, system: string, prompt: string) => Promise<string>;
-  genericAgentStart: (config: GenericAgentConfig, prompt: string) => Promise<AgentStartResult>;
-  genericAgentSteer: (prompt: string) => Promise<AgentStartResult>;
+  genericAgentStart: (config: GenericAgentConfig, prompt: string, images?: AgentImageAttachment[]) => Promise<AgentStartResult>;
+  genericAgentSteer: (prompt: string, images?: AgentImageAttachment[]) => Promise<AgentStartResult>;
   genericAgentInterrupt: () => Promise<void>;
   genericAgentNewSession: () => Promise<void>;
 }
@@ -261,6 +262,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   agentGetStatuses: () => ipcRenderer.invoke('agent:getStatuses'),
   agentGetModels: (provider: AgentProvider) => ipcRenderer.invoke('agent:getModels', provider),
   agentSelectFiles: () => ipcRenderer.invoke('agent:selectFiles'),
+  agentSaveImage: (dataUrl: string, suggestedName?: string) => ipcRenderer.invoke('agent:saveImage', dataUrl, suggestedName),
   agentGetExternalMcpServers: () => ipcRenderer.invoke('agent:getExternalMcpServers'),
   agentSetExternalMcpServers: (servers: ExternalMcpServers) => ipcRenderer.invoke('agent:setExternalMcpServers', servers),
   aiConfigImport: () => ipcRenderer.invoke('ai-config:import'),
@@ -271,8 +273,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   agentWorkspaceAcceptChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'> & { fingerprint?: string }>) => ipcRenderer.invoke('agent:workspaceAcceptChanges', files),
   agentWorkspaceDiscardChanges: (files: Array<Pick<AgentWorkspaceFile, 'uri' | 'language'> & { fingerprint?: string }>) => ipcRenderer.invoke('agent:workspaceDiscardChanges', files),
   agentRunQualityTest: (command: string) => ipcRenderer.invoke('agent:runQualityTest', command),
-  agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => ipcRenderer.invoke('agent:start', provider, prompt, model, toolPermissionPolicy),
-  agentSteer: (provider: AgentProvider, prompt: string) => ipcRenderer.invoke('agent:steer', provider, prompt),
+  agentStart: (provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy, images?: AgentImageAttachment[]) => ipcRenderer.invoke('agent:start', provider, prompt, model, toolPermissionPolicy, images),
+  agentSteer: (provider: AgentProvider, prompt: string, images?: AgentImageAttachment[]) => ipcRenderer.invoke('agent:steer', provider, prompt, images),
   agentInterrupt: (provider: AgentProvider) => ipcRenderer.invoke('agent:interrupt', provider),
   agentNewSession: (provider: AgentProvider) => ipcRenderer.invoke('agent:newSession', provider),
   agentRespondApproval: (provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => ipcRenderer.invoke('agent:respondApproval', provider, requestId, decision),
@@ -284,8 +286,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   genericAgentListModels: (config: Pick<GenericAgentConfig, 'baseUrl' | 'apiKey'>) => ipcRenderer.invoke('generic-agent:listModels', config),
   genericAgentComplete: (config: GenericAgentConfig, prompt: string) => ipcRenderer.invoke('generic-agent:complete', config, prompt),
   genericAgentTask: (config: GenericAgentConfig, system: string, prompt: string) => ipcRenderer.invoke('generic-agent:task', config, system, prompt),
-  genericAgentStart: (config: GenericAgentConfig, prompt: string) => ipcRenderer.invoke('generic-agent:start', config, prompt),
-  genericAgentSteer: (prompt: string) => ipcRenderer.invoke('generic-agent:steer', prompt),
+  genericAgentStart: (config: GenericAgentConfig, prompt: string, images?: AgentImageAttachment[]) => ipcRenderer.invoke('generic-agent:start', config, prompt, images),
+  genericAgentSteer: (prompt: string, images?: AgentImageAttachment[]) => ipcRenderer.invoke('generic-agent:steer', prompt, images),
   genericAgentInterrupt: () => ipcRenderer.invoke('generic-agent:interrupt'),
   genericAgentNewSession: () => ipcRenderer.invoke('generic-agent:newSession')
 } as ElectronAPI);

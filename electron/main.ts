@@ -8,7 +8,7 @@ import log from 'electron-log';
 import { StarlimsMcpHttpServer } from './mcpServer';
 import { SharedMcpRuntime } from './sharedMcpRuntime';
 import { SharedMcpPackageRuntime } from './sharedMcpPackageRuntime';
-import { DEVTOOLS_MCP_CAPABILITIES, SHARED_MCP_PACKAGE, SHARED_MCP_VERSION } from './mcpCapabilities';
+import { DEVTOOLS_LOCAL_MCP_TOOLS, DEVTOOLS_MCP_CAPABILITIES, SHARED_MCP_PACKAGE, SHARED_MCP_VERSION } from './mcpCapabilities';
 import { getProfileTools } from '@tenlyc/starlims-mcp';
 import { AgentRuntimeManager } from './agentRuntime';
 import { withLocalMcpNoProxy } from './localMcpEnv';
@@ -17,7 +17,7 @@ import { ExternalMcpManager } from './externalMcpManager';
 import { AgentWorkspaceManager } from './agentWorkspace';
 import { SslLspRuntime } from './sslLspRuntime';
 import { SslLspSession } from './sslLspSession';
-import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentProvider, AgentRuntimeStatus, AgentToolPermissionPolicy, AgentWorkspaceContext, AgentWorkspaceFile, ExternalMcpServers } from '../src/types/agent';
+import type { AgentApprovalDecision, AgentEvent, AgentFileAttachment, AgentImageAttachment, AgentProvider, AgentRuntimeStatus, AgentToolPermissionPolicy, AgentWorkspaceContext, AgentWorkspaceFile, ExternalMcpServers } from '../src/types/agent';
 import type { DiagnosticLogEvent } from '../src/types/diagnosticLog';
 import type { SharedMcpDetails, SharedMcpToolInfo } from '../src/types/sharedMcp';
 import { mcpReadCacheKey } from '../src/services/mcpEfficiency';
@@ -125,7 +125,8 @@ const pendingMcpCalls = new Map<string, {
 }>();
 const READ_MCP_TOOLS = new Set([
   'browse_tree', 'search_by_name', 'global_code_search', 'list_languages', 'get_item_code',
-  'get_form_resources', 'read_log', 'get_table_definition', 'list_checked_out_items', 'query_checkin_history'
+  'get_form_resources', 'read_log', 'get_table_definition', 'list_checked_out_items', 'query_checkin_history',
+  'validate_ssl', 'get_editor_diagnostics', 'get_devtools_output'
 ]);
 const MCP_READ_CACHE_TTL_MS = 15_000;
 const mcpReadCache = new Map<string, { expiresAt: number; value: unknown }>();
@@ -152,10 +153,11 @@ const callRenderer = async (tool: string, arguments_: Record<string, unknown>, p
   if (!readOnly) mcpReadCache.clear();
   const id = randomUUID();
   const result = await new Promise<unknown>((resolve, reject) => {
+    const timeoutMs = readOnly ? 60_000 : 5 * 60_000;
     const timer = setTimeout(() => {
       pendingMcpCalls.delete(id);
-      reject(new Error(`STARLIMS MCP tool '${tool}' timed out after 60 seconds.`));
-    }, 60_000);
+      reject(new Error(`STARLIMS MCP tool '${tool}' timed out waiting for ${readOnly ? 'a result' : 'user approval'}.`));
+    }, timeoutMs);
     pendingMcpCalls.set(id, { resolve, reject, timer });
     mainWindow!.webContents.send('mcp:request', { id, tool, arguments: arguments_, provider });
   });
@@ -217,6 +219,11 @@ const sharedMcpTools = (): SharedMcpToolInfo[] => [
     capability: tool.capability,
     schemaVersion: tool.schemaVersion,
     profiles: [...tool.profiles]
+  })),
+  ...DEVTOOLS_LOCAL_MCP_TOOLS.map((tool) => ({
+    id: tool.id, title: tool.title, description: tool.description,
+    origin: tool.origin, repository: tool.repository, risk: tool.risk,
+    capability: tool.capability, schemaVersion: tool.schemaVersion, profiles: [...tool.profiles]
   }))
 ];
 
@@ -1029,6 +1036,7 @@ ipcMain.handle('agent:selectFiles', async (): Promise<AgentFileAttachment[]> => 
     title: 'Attach files to Agent',
     properties: ['openFile', 'multiSelections'],
     filters: [
+      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
       { name: 'Code and text files', extensions: ['ssl', 'srvscr', 'ss', 'js', 'jsx', 'ts', 'tsx', 'json', 'xml', 'sql', 'md', 'txt', 'css', 'html', 'htm', 'yaml', 'yml', 'csv', 'log'] },
       { name: 'All files', extensions: ['*'] }
     ]
@@ -1036,17 +1044,42 @@ ipcMain.handle('agent:selectFiles', async (): Promise<AgentFileAttachment[]> => 
   if (result.canceled) return [];
   return result.filePaths.map((filePath) => {
     const size = statSync(filePath).size;
-    if (size > 2 * 1024 * 1024) throw new Error(`File is larger than 2 MB: ${filePath}`);
+    const extension = filePath.split('.').pop()?.toLowerCase() || '';
+    const imageMime = ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' } as Record<string, string>)[extension];
+    if (size > (imageMime ? 10 : 2) * 1024 * 1024) throw new Error(`File is larger than ${imageMime ? 10 : 2} MB: ${filePath}`);
     const buffer = readFileSync(filePath);
+    if (imageMime) return {
+      id: `image:${filePath}`, name: filePath.split(/[\\/]/).pop() || filePath,
+      path: filePath, size, kind: 'image' as const, mimeType: imageMime,
+      dataUrl: `data:${imageMime};base64,${buffer.toString('base64')}`
+    };
     if (buffer.includes(0)) throw new Error(`Binary files are not supported yet: ${filePath}`);
     return {
       id: `file:${filePath}`,
       name: filePath.split(/[\\/]/).pop() || filePath,
       path: filePath,
       content: buffer.toString('utf8'),
-      size
+      size,
+      kind: 'text' as const
     };
   });
+});
+
+ipcMain.handle('agent:saveImage', async (_, dataUrl: string, suggestedName?: string): Promise<AgentImageAttachment> => {
+  const match = String(dataUrl || '').match(/^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw new Error('Only PNG, JPEG, WebP, and GIF screenshots are supported.');
+  const buffer = Buffer.from(match[2], 'base64');
+  if (!buffer.length || buffer.length > 10 * 1024 * 1024) throw new Error('Screenshot must be smaller than 10 MB.');
+  const extension = match[1] === 'jpeg' ? 'jpg' : match[1];
+  const directory = join(app.getPath('temp'), 'starlims-devtools-agent-images');
+  mkdirSync(directory, { recursive: true });
+  const safeStem = String(suggestedName || 'screenshot').replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80) || 'screenshot';
+  const filePath = join(directory, `${safeStem}-${randomUUID()}.${extension}`);
+  writeFileSync(filePath, buffer);
+  return {
+    id: `image:${filePath}`, name: filePath.split(/[\\/]/).pop() || filePath,
+    path: filePath, size: buffer.length, kind: 'image', mimeType: `image/${match[1]}`, dataUrl
+  };
 });
 
 ipcMain.handle('ai-config:import', async () => {
@@ -1129,7 +1162,7 @@ ipcMain.handle('ssl-lsp:rename', async (_, uri: string, position: { line: number
   sslLspSession.rename(String(uri || ''), { line: Number(position?.line || 0), character: Number(position?.character || 0) }, String(newName || '')));
 ipcMain.handle('ssl-lsp:workspaceSymbols', async (_, query: string) => sslLspSession.workspaceSymbols(String(query || '')));
 
-ipcMain.handle('agent:start', async (_, provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy) => {
+ipcMain.handle('agent:start', async (_, provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy?: AgentToolPermissionPolicy, images?: AgentImageAttachment[]) => {
   if (provider !== 'codex') throw new Error('This provider does not support rich agent sessions yet.');
   if (!prompt.trim()) throw new Error('Prompt is required.');
   await mcpRuntime.start();
@@ -1142,7 +1175,7 @@ ipcMain.handle('agent:start', async (_, provider: AgentProvider, prompt: string,
     agentRuntime = undefined;
     activeToolPermissionPolicy = normalizedPolicy;
   }
-  return getAgentRuntime().send(provider, prompt, model, normalizedPolicy);
+  return getAgentRuntime().send(provider, prompt, model, normalizedPolicy, Array.isArray(images) ? images : []);
 });
 
 ipcMain.handle('agent:workspaceConfigure', async (_, context: AgentWorkspaceContext) => {
@@ -1231,10 +1264,10 @@ ipcMain.handle('agent:runQualityTest', async (_, command: string) => {
 });
 
 ipcMain.handle('agent:interrupt', async (_, provider: AgentProvider) => getAgentRuntime().interrupt(provider));
-ipcMain.handle('agent:steer', async (_, provider: AgentProvider, prompt: string) => {
+ipcMain.handle('agent:steer', async (_, provider: AgentProvider, prompt: string, images?: AgentImageAttachment[]) => {
   if (provider !== 'codex') throw new Error('This provider does not support Codex active-turn steering.');
   if (!String(prompt || '').trim()) throw new Error('A direction update is required.');
-  return getAgentRuntime().steer(provider, String(prompt));
+  return getAgentRuntime().steer(provider, String(prompt), Array.isArray(images) ? images : []);
 });
 ipcMain.handle('agent:newSession', async (_, provider: AgentProvider) => getAgentRuntime().newSession(provider));
 ipcMain.handle('agent:respondApproval', async (_, provider: AgentProvider, requestId: string, decision: AgentApprovalDecision) => {
@@ -1252,12 +1285,12 @@ ipcMain.handle('generic-agent:task', async (_, config, system: string, prompt: s
   if (!config?.baseUrl || !config?.apiKey || !config?.model) throw new Error('Base URL, API Key, and model are required.');
   return getGenericAgentRuntime().task(config, String(system || ''), String(prompt || ''));
 });
-ipcMain.handle('generic-agent:start', async (_, config, prompt: string) => {
+ipcMain.handle('generic-agent:start', async (_, config, prompt: string, images?: AgentImageAttachment[]) => {
   if (!config?.baseUrl || !config?.apiKey || !config?.model) throw new Error('Base URL, API Key, and model are required.');
   store.set(MCP_TOOL_PERMISSION_STORE_KEY, normalizeToolPermissionPolicy(config.toolPermissionPolicy));
-  return getGenericAgentRuntime().send(config, prompt);
+  return getGenericAgentRuntime().send(config, prompt, Array.isArray(images) ? images : []);
 });
-ipcMain.handle('generic-agent:steer', async (_, prompt: string) => getGenericAgentRuntime().steer(String(prompt || '')));
+ipcMain.handle('generic-agent:steer', async (_, prompt: string, images?: AgentImageAttachment[]) => getGenericAgentRuntime().steer(String(prompt || ''), Array.isArray(images) ? images : []));
 ipcMain.handle('generic-agent:interrupt', async () => getGenericAgentRuntime().interrupt());
 ipcMain.handle('generic-agent:newSession', async () => getGenericAgentRuntime().newSession());
 

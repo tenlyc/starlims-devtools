@@ -18,12 +18,14 @@ const close = (server: ReturnType<typeof createServer>) => new Promise<void>((re
 async function main(): Promise<void> {
   const bridgeToken = 'shared-mcp-smoke-token';
   let invokedTool = '';
+  let invokedArguments: Record<string, unknown> = {};
   const bridge = createServer(async (request, response) => {
   assert.equal(request.headers.authorization, `Bearer ${bridgeToken}`);
   const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { tool: string };
+  const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { tool: string; arguments?: Record<string, unknown> };
   invokedTool = body.tool;
+  invokedArguments = body.arguments || {};
   response.setHeader('content-type', 'application/json');
   response.end(JSON.stringify({ result: [{ code: 'CHS', name: 'Chinese' }] }));
   });
@@ -62,6 +64,11 @@ try {
   const languages = await client.callTool({ name: 'list_languages', arguments: {} });
   assert.equal(languages.isError, undefined);
   assert.equal(invokedTool, 'list_languages');
+  const largeCode = `/* shared large save */\n${'x'.repeat(256 * 1024)}`;
+  const saved = await client.callTool({ name: 'save_item', arguments: { uri: '/Applications/Test/HTMLForms/CodeBehind/LargeForm', language: 'ENG', code: largeCode } });
+  assert.equal(saved.isError, undefined);
+  assert.equal(invokedTool, 'save_item');
+  assert.equal(invokedArguments.code, largeCode);
   await client.close();
   console.log('Shared MCP runtime smoke test passed.');
 } finally {

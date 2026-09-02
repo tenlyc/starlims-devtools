@@ -50,13 +50,25 @@ export type AgentModelOption = {
   isDefault?: boolean;
 };
 
-export type AgentFileAttachment = {
+type AgentAttachmentBase = {
   id: string;
   name: string;
   path: string;
-  content: string;
   size: number;
 };
+
+export type AgentTextAttachment = AgentAttachmentBase & {
+  kind: 'text';
+  content: string;
+};
+
+export type AgentImageAttachment = AgentAttachmentBase & {
+  kind: 'image';
+  dataUrl: string;
+  mimeType: string;
+};
+
+export type AgentFileAttachment = AgentTextAttachment | AgentImageAttachment;
 
 export type AgentWorkspaceContext = {
   serverName: string;

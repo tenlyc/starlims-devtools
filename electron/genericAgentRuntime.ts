@@ -2,14 +2,15 @@ import { net } from 'electron';
 import { randomUUID } from 'crypto';
 import { getProfileTools } from '@tenlyc/starlims-mcp';
 import * as z from 'zod/v4';
-import type { AgentApprovalDecision, AgentEvent, AgentStartResult, AgentToolPermissionPolicy, GenericAgentConfig } from '../src/types/agent';
+import type { AgentApprovalDecision, AgentEvent, AgentImageAttachment, AgentStartResult, AgentToolPermissionPolicy, GenericAgentConfig } from '../src/types/agent';
 import type { RendererToolCall } from './mcpServer';
 import type { ExternalMcpManager } from './externalMcpManager';
-import { DEVTOOLS_MCP_CAPABILITIES, SHARED_MCP_PACKAGE, SHARED_MCP_VERSION } from './mcpCapabilities';
+import { DEVTOOLS_LOCAL_MCP_TOOLS, DEVTOOLS_MCP_CAPABILITIES, SHARED_MCP_PACKAGE, SHARED_MCP_VERSION } from './mcpCapabilities';
 import { MCP_EFFICIENCY_INSTRUCTIONS, mcpReadCacheKey } from '../src/services/mcpEfficiency';
 
 type Emit = (event: AgentEvent) => void;
 type ChatMessage = Record<string, unknown>;
+type QueuedSteer = { prompt: string; images: AgentImageAttachment[] };
 const DEFAULT_MAX_TOOL_ROUNDS = 16;
 const MAX_TOOL_ROUNDS_LIMIT = 64;
 
@@ -44,6 +45,10 @@ const BUILTIN_TOOLS: GenericBuiltinTool[] = DEVTOOLS_PROFILE_TOOLS.map((tool) =>
     readOnly: tool.risk === 'read'
   };
 });
+for (const tool of DEVTOOLS_LOCAL_MCP_TOOLS) {
+  const { $schema: _schema, ...parameters } = z.toJSONSchema(tool.inputSchema) as Record<string, unknown>;
+  BUILTIN_TOOLS.push({ name: tool.id, description: tool.description, parameters, readOnly: true });
+}
 BUILTIN_TOOLS.unshift({
   name: 'get_capabilities',
   description: 'Describe the active STARLIMS tools, provenance, risk levels, adapter capabilities, and backend components.',
@@ -59,10 +64,10 @@ export function genericAgentCapabilities(): Record<string, unknown> {
     profile: 'devtools',
     adapter: 'starlims-devtools-bridge',
     capabilities: DEVTOOLS_MCP_CAPABILITIES,
-    tools: DEVTOOLS_PROFILE_TOOLS.map(({ id, title, origin, provenance, risk, capability, schemaVersion, profiles }) => ({
+    tools: [...DEVTOOLS_PROFILE_TOOLS.map(({ id, title, origin, provenance, risk, capability, schemaVersion, profiles }) => ({
       id, title, origin, provenance,
       risk, capability, schemaVersion, profiles
-    })),
+    })), ...DEVTOOLS_LOCAL_MCP_TOOLS.map(({ inputSchema: _inputSchema, ...tool }) => tool)],
     backend: [{ name: 'SCM_API', source: 'MrDoe/starlimsvscode + tenlyc/starlims-mcp', commit: '92b9014244eb09a56ed589db5155c3b7914b70a2' }]
   };
 }
@@ -74,7 +79,9 @@ export function genericBuiltinToolsForPolicy(policy: AgentToolPermissionPolicy):
 export const GENERIC_AGENT_SYSTEM_PROMPT = [
   'You are an AI coding agent inside STARLIMS DevTools. Use the available STARLIMS tools for authoritative remote data and changes.',
   MCP_EFFICIENCY_INSTRUCTIONS,
+  'When the request concerns an editor error, warning, failed operation, or runtime log, call get_editor_diagnostics or get_devtools_output with focused filters; call read_log only for the remote STARLIMS user log. Do not fetch these panels for unrelated tasks.',
   'For a remote edit: resolve and read the item, check it out when needed, save the complete updated code with the same language, then read it again to verify the saved result.',
+  'Before saving Server Scripts, Data Sources, or other SSL code, call validate_ssl with the complete proposed source and fix all error diagnostics.',
   'For multilingual HTML/XFD form resources, use get_form_resources with the requested language and prefer set_form_resource for one ResourceId; use save_form_resources only for intentional whole-document edits.',
   'Never check in or undo checkout unless the user explicitly requests it. Never claim a remote change succeeded unless the corresponding tool confirms it.',
   'If a write tool is unavailable, explain that the current conversation mode is read-only instead of pretending to edit. Answer in the user\'s language.'
@@ -98,7 +105,7 @@ async function jsonRequest(url: string, apiKey: string, init: RequestInit = {}):
   return data;
 }
 
-async function streamChatRequest(url: string, apiKey: string, body: Record<string, unknown>, onText: (text: string) => void, signal: AbortSignal): Promise<any> {
+async function streamChatRequest(url: string, apiKey: string, body: Record<string, unknown>, onText: (text: string) => void, onReasoning: (text: string) => void, signal: AbortSignal): Promise<any> {
   const response = await net.fetch(url, {
     method: 'POST', signal,
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', Authorization: `Bearer ${apiKey}` },
@@ -113,6 +120,8 @@ async function streamChatRequest(url: string, apiKey: string, body: Record<strin
     const data = await response.json() as any;
     const message = data?.choices?.[0]?.message;
     if (!message) throw new Error('The provider returned no assistant message.');
+    const reasoning = message.reasoning_content ?? message.reasoning;
+    if (typeof reasoning === 'string') onReasoning(reasoning);
     if (typeof message.content === 'string') onText(message.content);
     return message;
   }
@@ -129,6 +138,11 @@ async function streamChatRequest(url: string, apiKey: string, body: Record<strin
     if (typeof delta.content === 'string') {
       message.content += delta.content;
       onText(delta.content);
+    }
+    const reasoning = delta.reasoning_content ?? delta.reasoning;
+    if (typeof reasoning === 'string') {
+      message.reasoning_content = `${message.reasoning_content || ''}${reasoning}`;
+      onReasoning(reasoning);
     }
     for (const part of delta.tool_calls || []) {
       const index = Number(part.index || 0);
@@ -158,7 +172,7 @@ export class GenericAgentRuntime {
   private controller?: AbortController;
   private sessionId?: string;
   private activeTurnId?: string;
-  private readonly queuedSteers: string[] = [];
+  private readonly queuedSteers: QueuedSteer[] = [];
   private readonly approvals = new Map<string, { name: string; resolve: (allowed: boolean) => void }>();
   private readonly sessionAllowedTools = new Set<string>();
 
@@ -226,7 +240,7 @@ export class GenericAgentRuntime {
     return content.trim();
   }
 
-  async send(config: GenericAgentConfig, prompt: string): Promise<AgentStartResult> {
+  async send(config: GenericAgentConfig, prompt: string, images: AgentImageAttachment[] = []): Promise<AgentStartResult> {
     if (this.controller) throw new Error('Generic Agent is already processing a turn.');
     this.sessionId ||= randomUUID();
     const turnId = randomUUID();
@@ -238,7 +252,7 @@ export class GenericAgentRuntime {
     const policy: AgentToolPermissionPolicy = config.toolPermissionPolicy || 'ask-writes';
     const messages: ChatMessage[] = [
       { role: 'system', content: GENERIC_AGENT_SYSTEM_PROMPT },
-      { role: 'user', content: prompt }
+      { role: 'user', content: this.userContent(prompt, images) }
     ];
     const externalTools = (await this.externalMcp.listTools()).filter((tool) => policy !== 'read-only' || tool.readOnly);
     const tools = [
@@ -255,6 +269,7 @@ export class GenericAgentRuntime {
             endpoint(config.baseUrl, 'chat/completions'), config.apiKey,
             { model: config.model, messages, tools, tool_choice: 'auto' },
             (text) => this.emit({ provider: 'generic', type: 'text-delta', sessionId: this.sessionId, turnId, itemId: `generic:${turnId}`, text }),
+            () => undefined,
             controller.signal
           );
           if (!message) throw new Error('The provider returned no assistant message.');
@@ -314,10 +329,10 @@ export class GenericAgentRuntime {
   }
 
   interrupt(): void { this.controller?.abort(); }
-  steer(prompt: string): AgentStartResult {
+  steer(prompt: string, images: AgentImageAttachment[] = []): AgentStartResult {
     const normalized = prompt.trim();
     if (!normalized || !this.controller || !this.sessionId || !this.activeTurnId) throw new Error('There is no active Generic Agent turn to steer.');
-    this.queuedSteers.push(normalized);
+    this.queuedSteers.push({ prompt: normalized, images });
     this.emit({ provider: 'generic', type: 'status', sessionId: this.sessionId, turnId: this.activeTurnId, text: 'Direction update queued for the next Agent boundary.' });
     return { sessionId: this.sessionId, turnId: this.activeTurnId };
   }
@@ -326,11 +341,20 @@ export class GenericAgentRuntime {
   private appendQueuedSteers(messages: ChatMessage[]): number {
     let appended = 0;
     while (this.queuedSteers.length > 0) {
-      const prompt = this.queuedSteers.shift();
-      if (!prompt) continue;
-      messages.push({ role: 'user', content: `User direction update for the active task:\n${prompt}` });
+      const update = this.queuedSteers.shift();
+      if (!update) continue;
+      messages.push({ role: 'user', content: this.userContent(`User direction update for the active task:\n${update.prompt}`, update.images) });
       appended += 1;
     }
     return appended;
+  }
+
+  private userContent(prompt: string, images: AgentImageAttachment[]): string | Array<Record<string, unknown>> {
+    const validImages = images.filter((image) => image.kind === 'image' && image.dataUrl?.startsWith('data:image/'));
+    if (!validImages.length) return prompt;
+    return [
+      { type: 'text', text: prompt },
+      ...validImages.map((image) => ({ type: 'image_url', image_url: { url: image.dataUrl, detail: 'auto' } }))
+    ];
   }
 }

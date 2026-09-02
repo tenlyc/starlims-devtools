@@ -13,6 +13,7 @@ const tests = [
   'ai-platform-smoke-test.ts',
   'write-gate-smoke-test.ts',
   'generic-agent-tools-smoke-test.ts',
+  'agent-observability-smoke-test.ts',
   'agent-runtime-smoke-test.ts',
   'agent-workspace-smoke-test.ts',
   'shared-mcp-component-smoke-test.ts',

@@ -1,7 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
-import type { AgentApprovalDecision, AgentEvent, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, ExternalMcpServers } from '../src/types/agent';
+import { readFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
+import type { AgentApprovalDecision, AgentEvent, AgentImageAttachment, AgentModelOption, AgentProvider, AgentRuntimeStatus, AgentStartResult, AgentToolPermissionPolicy, ExternalMcpServers } from '../src/types/agent';
 import { withLocalMcpNoProxy } from './localMcpEnv';
 import { MCP_EFFICIENCY_INSTRUCTIONS } from '../src/services/mcpEfficiency';
 
@@ -55,6 +58,58 @@ function safeMcpName(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^_+|_+$/g, '') || 'external';
 }
 
+function tomlKey(value: string): string {
+  return /^[a-zA-Z0-9_-]+$/.test(value) ? value : JSON.stringify(value);
+}
+
+export function parseCodexMcpServerNames(config: string): string[] {
+  const names = new Set<string>();
+  const section = /^\s*\[mcp_servers\.("(?:[^"\\]|\\.)*"|[a-zA-Z0-9_-]+)(?:\.|\])/gm;
+  for (const match of config.matchAll(section)) {
+    const token = match[1];
+    try { names.add(token.startsWith('"') ? JSON.parse(token) : token); } catch { /* Ignore malformed user config. */ }
+  }
+  return [...names];
+}
+
+export function codexMcpIsolationArgs(config: string, allowedNames: Iterable<string>): string[] {
+  const allowed = new Set([...allowedNames].map(safeMcpName));
+  return parseCodexMcpServerNames(config).flatMap((rawName) => {
+    const name = safeMcpName(rawName);
+    return allowed.has(name) ? [] : ['-c', `mcp_servers.${tomlKey(rawName)}.enabled=false`];
+  });
+}
+
+function readCodexUserConfig(): string {
+  const codexHome = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex');
+  try { return readFileSync(join(codexHome, 'config.toml'), 'utf8'); } catch { return ''; }
+}
+
+// The embedded agent uses an HTTPS-only alias because some corporate proxies
+// accept the WebSocket upgrade and then stall every reconnect attempt. The
+// alias retains the signed-in ChatGPT authentication without changing the
+// user's global Codex provider configuration.
+export const CODEX_HTTPS_PROVIDER_ARGS = [
+  '-c', 'model_provider="starlims_http"',
+  '-c', 'model_providers.starlims_http.name="OpenAI HTTPS for STARLIMS DevTools"',
+  '-c', 'model_providers.starlims_http.base_url="https://chatgpt.com/backend-api/codex"',
+  '-c', 'model_providers.starlims_http.wire_api="responses"',
+  '-c', 'model_providers.starlims_http.requires_openai_auth=true',
+  '-c', 'model_providers.starlims_http.supports_websockets=false'
+] as const;
+
+// Keep the embedded runtime scoped to MCP servers explicitly configured by
+// DevTools. ChatGPT Apps/Plugins otherwise inject the product-services MCP and
+// can hold every turn on a remote OAuth/network retry before STARLIMS work
+// begins. This does not alter the user's global Codex configuration.
+export const CODEX_EMBEDDED_ISOLATION_ARGS = [
+  '--disable', 'apps',
+  '--disable', 'plugins',
+  '--disable', 'remote_plugin',
+  '--disable', 'plugin_sharing',
+  '--disable', 'recommended_plugins'
+] as const;
+
 function tomlString(value: string): string { return JSON.stringify(value); }
 
 function externalCodexMcpArgs(servers: ExternalMcpServers): string[] {
@@ -84,6 +139,56 @@ function externalCodexMcpArgs(servers: ExternalMcpServers): string[] {
 function stringify(value: unknown): string {
   if (typeof value === 'string') return value;
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+}
+
+export const CODEX_APPROVAL_REQUEST_METHODS = [
+  'item/commandExecution/requestApproval',
+  'item/fileChange/requestApproval',
+  'item/permissions/requestApproval',
+  'mcpServer/elicitation/request'
+] as const;
+
+function elicitationValue(schema: unknown): unknown {
+  if (!schema || typeof schema !== 'object') return '';
+  const field = schema as JsonObject;
+  if (field.default !== undefined) return field.default;
+  if (Array.isArray(field.enum) && field.enum.length > 0) return field.enum[0];
+  if (Array.isArray(field.oneOf) && field.oneOf.length > 0) {
+    const first = field.oneOf[0];
+    if (first && typeof first === 'object' && (first as JsonObject).const !== undefined) return (first as JsonObject).const;
+  }
+  if (field.type === 'boolean') return true;
+  if (field.type === 'number' || field.type === 'integer') return typeof field.minimum === 'number' ? field.minimum : 0;
+  if (field.type === 'array') {
+    const itemValue = elicitationValue(field.items);
+    return Number(field.minItems || 0) > 0 ? [itemValue] : [];
+  }
+  return '';
+}
+
+export function codexApprovalResponse(method: string, params: JsonObject, decision: AgentApprovalDecision): JsonObject {
+  if (method === 'item/permissions/requestApproval') {
+    return {
+      permissions: decision === 'accept' || decision === 'acceptForSession' ? params.permissions : {},
+      scope: decision === 'acceptForSession' ? 'session' : 'turn'
+    };
+  }
+  if (method === 'mcpServer/elicitation/request') {
+    const accepted = decision === 'accept' || decision === 'acceptForSession';
+    const requestedSchema = params.requestedSchema;
+    const properties = requestedSchema && typeof requestedSchema === 'object'
+      ? (requestedSchema as JsonObject).properties
+      : undefined;
+    const content = accepted && properties && typeof properties === 'object'
+      ? Object.fromEntries(Object.entries(properties as JsonObject).map(([key, schema]) => [key, elicitationValue(schema)]))
+      : accepted ? {} : null;
+    return {
+      action: accepted ? 'accept' : decision === 'cancel' ? 'cancel' : 'decline',
+      content,
+      _meta: decision === 'acceptForSession' ? { persist: 'session' } : null
+    };
+  }
+  return { decision };
 }
 
 function itemStatus(value: unknown): 'running' | 'completed' | 'failed' | 'declined' {
@@ -155,7 +260,7 @@ export class CodexAppServerRuntime {
     return normalizeCodexModels(result);
   }
 
-  async send(prompt: string, model?: string, toolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes'): Promise<AgentStartResult> {
+  async send(prompt: string, model?: string, toolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes', images: AgentImageAttachment[] = []): Promise<AgentStartResult> {
     await this.ensureStarted();
     const requestedModel = model?.trim() || undefined;
     if (this.threadId && (this.threadModel !== requestedModel || this.threadPermissionPolicy !== toolPermissionPolicy)) {
@@ -167,7 +272,7 @@ export class CodexAppServerRuntime {
         approvalPolicy: toolPermissionPolicy === 'full-access' ? 'never' : toolPermissionPolicy === 'auto-safe' ? 'on-request' : 'untrusted',
         sandbox: toolPermissionPolicy === 'read-only' ? 'read-only' : toolPermissionPolicy === 'full-access' ? 'danger-full-access' : 'workspace-write',
         serviceName: 'starlims-devtools',
-        developerInstructions: `You are the coding agent inside STARLIMS DevTools. Use the required starlims MCP server for remote STARLIMS data and changes. ${MCP_EFFICIENCY_INSTRUCTIONS} Never claim a remote operation succeeded unless the MCP tool confirms it.`,
+        developerInstructions: `You are the coding agent inside STARLIMS DevTools. Use the required starlims MCP server for remote STARLIMS data and changes. ${MCP_EFFICIENCY_INSTRUCTIONS} When the request concerns an editor error, warning, failed operation, or runtime log, call starlims.get_editor_diagnostics or starlims.get_devtools_output with focused filters; call starlims.read_log only when the remote STARLIMS user log is needed. Do not fetch these panels for unrelated tasks. Before saving Server Scripts, Data Sources, or other SSL code, call starlims.validate_ssl with the complete proposed source and fix all error diagnostics. Do not search PATH for an ssl-lsp executable; the MCP tool is the bundled language server integration. Workspace file edits are previews, not a completed STARLIMS save: when the user asked you to implement a remote change, call the matching save MCP tool and verify by reading it back. Never claim a remote operation succeeded unless the MCP tool and write-after-read verification confirm it.`,
         ...(requestedModel ? { model: requestedModel } : {})
       });
       this.threadId = result.thread.id;
@@ -177,7 +282,10 @@ export class CodexAppServerRuntime {
     }
     const result = await this.request('turn/start', {
       threadId: this.threadId,
-      input: [{ type: 'text', text: prompt }]
+      input: [
+        { type: 'text', text: prompt },
+        ...images.filter((image) => image.kind === 'image' && image.path).map((image) => ({ type: 'localImage', path: image.path }))
+      ]
     });
     this.activeTurnId = result.turn.id;
     return { sessionId: this.threadId, turnId: this.activeTurnId };
@@ -188,12 +296,15 @@ export class CodexAppServerRuntime {
     await this.request('turn/interrupt', { threadId: this.threadId, turnId: this.activeTurnId });
   }
 
-  async steer(prompt: string): Promise<AgentStartResult> {
+  async steer(prompt: string, images: AgentImageAttachment[] = []): Promise<AgentStartResult> {
     if (!this.threadId || !this.activeTurnId) throw new Error('There is no active Codex turn to steer.');
     const result = await this.request('turn/steer', {
       threadId: this.threadId,
       expectedTurnId: this.activeTurnId,
-      input: [{ type: 'text', text: prompt }]
+      input: [
+        { type: 'text', text: prompt },
+        ...images.filter((image) => image.kind === 'image' && image.path).map((image) => ({ type: 'localImage', path: image.path }))
+      ]
     });
     return { sessionId: this.threadId, turnId: String(result.turnId || this.activeTurnId) };
   }
@@ -210,15 +321,7 @@ export class CodexAppServerRuntime {
     const approval = this.approvals.get(requestId);
     if (!approval || !this.child) throw new Error('Approval request is no longer active.');
     this.approvals.delete(requestId);
-    let result: JsonObject;
-    if (approval.method === 'item/permissions/requestApproval') {
-      result = {
-        permissions: decision === 'accept' || decision === 'acceptForSession' ? approval.params.permissions : {},
-        scope: decision === 'acceptForSession' ? 'session' : 'turn'
-      };
-    } else {
-      result = { decision };
-    }
+    const result = codexApprovalResponse(approval.method, approval.params, decision);
     this.write({ id: approval.rpcId, result });
   }
 
@@ -242,11 +345,18 @@ export class CodexAppServerRuntime {
   private async start(): Promise<void> {
     this.stopping = false;
     const command = this.command();
+    const externalServers = this.externalMcpServers();
+    const enabledExternalNames = Object.entries(externalServers)
+      .filter(([, server]) => server.enabled !== false)
+      .map(([name]) => safeMcpName(name));
     const args = [
       'app-server',
+      ...CODEX_EMBEDDED_ISOLATION_ARGS,
+      ...CODEX_HTTPS_PROVIDER_ARGS,
+      ...codexMcpIsolationArgs(readCodexUserConfig(), ['starlims', ...enabledExternalNames]),
       '-c', `mcp_servers.starlims.url=${this.mcpUrl()}`,
       '-c', 'mcp_servers.starlims.required=true',
-      ...externalCodexMcpArgs(this.externalMcpServers())
+      ...externalCodexMcpArgs(externalServers)
     ];
     const child = spawn(command, args, {
       shell: command.toLowerCase().endsWith('.cmd'),
@@ -319,25 +429,26 @@ export class CodexAppServerRuntime {
 
   private handleServerRequest(message: JsonObject): void {
     const method = String(message.method);
-    const supported = [
-      'item/commandExecution/requestApproval',
-      'item/fileChange/requestApproval',
-      'item/permissions/requestApproval'
-    ];
-    if (!supported.includes(method)) {
+    if (!(CODEX_APPROVAL_REQUEST_METHODS as readonly string[]).includes(method)) {
       this.write({ id: message.id, error: { code: -32601, message: `Unsupported client request: ${method}` } });
       return;
     }
     const requestId = `codex:${String(message.id)}:${randomUUID()}`;
     const params = message.params || {};
-    const kind = method.includes('commandExecution') ? 'command' : method.includes('fileChange') ? 'file' : 'permissions';
-    const detail = params.command || params.reason || params.cwd || stringify(params.permissions || {});
+    const elicitation = method === 'mcpServer/elicitation/request';
+    const elicitationMeta = elicitation && params._meta && typeof params._meta === 'object' ? params._meta as JsonObject : {};
+    const persistModes = Array.isArray(elicitationMeta.persist) ? elicitationMeta.persist : [elicitationMeta.persist];
+    const canPersistForSession = elicitationMeta.codex_approval_kind === 'mcp_tool_call' && persistModes.includes('session');
+    const kind = method.includes('commandExecution') ? 'command' : method.includes('fileChange') ? 'file' : elicitation ? 'mcp' : 'permissions';
+    const detail = elicitation
+      ? [params.serverName ? `MCP: ${params.serverName}` : '', params.message || '', elicitationMeta.tool_params ? stringify(elicitationMeta.tool_params) : ''].filter(Boolean).join('\n')
+      : params.command || params.reason || params.cwd || stringify(params.permissions || {});
     this.approvals.set(requestId, { rpcId: message.id, method, params });
     this.emit({
       provider: 'codex', type: 'approval', requestId, kind,
       sessionId: params.threadId, turnId: params.turnId, itemId: params.itemId,
-      title: params.reason || (kind === 'command' ? 'Allow command execution?' : kind === 'file' ? 'Allow file changes?' : 'Grant additional permissions?'),
-      detail, canAcceptForSession: true
+      title: params.reason || (elicitation ? params.message || `Allow ${params.serverName || 'MCP'} action?` : kind === 'command' ? 'Allow command execution?' : kind === 'file' ? 'Allow file changes?' : 'Grant additional permissions?'),
+      detail, canAcceptForSession: elicitation ? canPersistForSession : true
     });
   }
 
@@ -403,8 +514,11 @@ export class CodexAppServerRuntime {
         title: `File changes (${Array.isArray(item.changes) ? item.changes.length : 0})`,
         files: normalizeFileChanges(item.changes)
       });
-    } else if (item.type === 'reasoning' || item.type === 'plan') {
-      this.emit({ ...base, type: 'item', itemId: item.id, kind: item.type, status, title: item.type === 'plan' ? 'Plan' : 'Reasoning', detail: item.text || stringify(item.summary || []) });
+    } else if (item.type === 'plan') {
+      const summary = Array.isArray(item.summary)
+        ? item.summary.map((part) => typeof part === 'string' ? part : typeof part?.text === 'string' ? part.text : stringify(part)).filter(Boolean).join('\n')
+        : stringify(item.summary || '');
+      this.emit({ ...base, type: 'item', itemId: item.id, kind: 'plan', status, title: 'Plan', detail: typeof item.text === 'string' ? item.text : summary });
     }
   }
 }
@@ -426,13 +540,13 @@ export class AgentRuntimeManager {
     return Promise.resolve([]);
   }
 
-  send(provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes'): Promise<AgentStartResult> {
-    if (provider === 'codex') return this.codex.send(prompt, model, toolPermissionPolicy);
+  send(provider: AgentProvider, prompt: string, model?: string, toolPermissionPolicy: AgentToolPermissionPolicy = 'ask-writes', images: AgentImageAttachment[] = []): Promise<AgentStartResult> {
+    if (provider === 'codex') return this.codex.send(prompt, model, toolPermissionPolicy, images);
     throw new Error('This provider remains in CLI compatibility mode.');
   }
 
-  steer(provider: AgentProvider, prompt: string): Promise<AgentStartResult> {
-    if (provider === 'codex') return this.codex.steer(prompt);
+  steer(provider: AgentProvider, prompt: string, images: AgentImageAttachment[] = []): Promise<AgentStartResult> {
+    if (provider === 'codex') return this.codex.steer(prompt, images);
     throw new Error('This provider does not support active-turn steering.');
   }
 

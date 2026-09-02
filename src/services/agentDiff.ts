@@ -105,38 +105,111 @@ export function diffLineTone(line: string): 'header' | 'hunk' | 'add' | 'delete'
   return 'context';
 }
 
+type LineOperation = { type: 'equal' | 'add' | 'delete'; line: string };
+
+function patienceLineDiff(oldLines: string[], newLines: string[]): LineOperation[] {
+  const operations: LineOperation[] = [];
+  const visit = (oldStart: number, oldEnd: number, newStart: number, newEnd: number): void => {
+    while (oldStart < oldEnd && newStart < newEnd && oldLines[oldStart] === newLines[newStart]) {
+      operations.push({ type: 'equal', line: oldLines[oldStart] });
+      oldStart++;
+      newStart++;
+    }
+    let suffix = 0;
+    while (oldStart + suffix < oldEnd && newStart + suffix < newEnd && oldLines[oldEnd - 1 - suffix] === newLines[newEnd - 1 - suffix]) suffix++;
+    const oldBodyEnd = oldEnd - suffix;
+    const newBodyEnd = newEnd - suffix;
+
+    if (oldStart === oldBodyEnd) {
+      for (let index = newStart; index < newBodyEnd; index++) operations.push({ type: 'add', line: newLines[index] });
+    } else if (newStart === newBodyEnd) {
+      for (let index = oldStart; index < oldBodyEnd; index++) operations.push({ type: 'delete', line: oldLines[index] });
+    } else {
+      const oldOccurrences = new Map<string, { count: number; index: number }>();
+      const newOccurrences = new Map<string, { count: number; index: number }>();
+      for (let index = oldStart; index < oldBodyEnd; index++) {
+        const current = oldOccurrences.get(oldLines[index]);
+        oldOccurrences.set(oldLines[index], { count: (current?.count || 0) + 1, index });
+      }
+      for (let index = newStart; index < newBodyEnd; index++) {
+        const current = newOccurrences.get(newLines[index]);
+        newOccurrences.set(newLines[index], { count: (current?.count || 0) + 1, index });
+      }
+      const candidates = [...oldOccurrences.entries()].flatMap(([line, old]) => {
+        const next = newOccurrences.get(line);
+        return old.count === 1 && next?.count === 1 ? [{ oldIndex: old.index, newIndex: next.index }] : [];
+      }).sort((left, right) => left.oldIndex - right.oldIndex);
+
+      const tails: number[] = [];
+      const previous = new Int32Array(candidates.length).fill(-1);
+      for (let index = 0; index < candidates.length; index++) {
+        let low = 0;
+        let high = tails.length;
+        while (low < high) {
+          const middle = (low + high) >> 1;
+          if (candidates[tails[middle]].newIndex < candidates[index].newIndex) low = middle + 1;
+          else high = middle;
+        }
+        if (low > 0) previous[index] = tails[low - 1];
+        tails[low] = index;
+      }
+      const anchors: typeof candidates = [];
+      for (let index = tails.at(-1) ?? -1; index >= 0; index = previous[index]) anchors.push(candidates[index]);
+      anchors.reverse();
+
+      if (!anchors.length) {
+        for (let index = oldStart; index < oldBodyEnd; index++) operations.push({ type: 'delete', line: oldLines[index] });
+        for (let index = newStart; index < newBodyEnd; index++) operations.push({ type: 'add', line: newLines[index] });
+      } else {
+        let previousOld = oldStart;
+        let previousNew = newStart;
+        for (const anchor of anchors) {
+          visit(previousOld, anchor.oldIndex, previousNew, anchor.newIndex);
+          operations.push({ type: 'equal', line: oldLines[anchor.oldIndex] });
+          previousOld = anchor.oldIndex + 1;
+          previousNew = anchor.newIndex + 1;
+        }
+        visit(previousOld, oldBodyEnd, previousNew, newBodyEnd);
+      }
+    }
+    for (let index = suffix; index > 0; index--) operations.push({ type: 'equal', line: oldLines[oldEnd - index] });
+  };
+  visit(0, oldLines.length, 0, newLines.length);
+  return operations;
+}
+
 export function createUnifiedDiff(path: string, before: string, after: string): string {
   if (before === after) return '';
   const diffPath = path.replace(/^\/+/, '') || 'untitled';
-  const oldLines = before.split(/\r?\n/);
-  const newLines = after.split(/\r?\n/);
-  let prefix = 0;
-  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
-  let suffix = 0;
-  while (
-    suffix < oldLines.length - prefix
-    && suffix < newLines.length - prefix
-    && oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
-  ) suffix++;
-  const contextStart = Math.max(0, prefix - 3);
-  const oldEnd = Math.min(oldLines.length, oldLines.length - suffix + 3);
-  const newEnd = Math.min(newLines.length, newLines.length - suffix + 3);
-  const oldChunk = oldLines.slice(contextStart, oldEnd);
-  const newChunk = newLines.slice(contextStart, newEnd);
-  const sharedPrefix = prefix - contextStart;
-  const oldChangedEnd = oldLines.length - suffix - contextStart;
-  const newChangedEnd = newLines.length - suffix - contextStart;
-  const body = [
-    ...oldChunk.slice(0, sharedPrefix).map((line) => ` ${line}`),
-    ...oldChunk.slice(sharedPrefix, oldChangedEnd).map((line) => `-${line}`),
-    ...newChunk.slice(sharedPrefix, newChangedEnd).map((line) => `+${line}`),
-    ...newChunk.slice(newChangedEnd).map((line) => ` ${line}`)
-  ];
-  return [
-    `diff --git a/${diffPath} b/${diffPath}`,
-    `--- a/${diffPath}`,
-    `+++ b/${diffPath}`,
-    `@@ -${contextStart + 1},${oldChunk.length} +${contextStart + 1},${newChunk.length} @@`,
-    ...body
-  ].join('\n');
+  const operations = patienceLineDiff(before.split(/\r?\n/), after.split(/\r?\n/));
+  const changed = operations.flatMap((operation, index) => operation.type === 'equal' ? [] : [index]);
+  if (!changed.length) return '';
+  const groups: Array<{ first: number; last: number }> = [];
+  for (const index of changed) {
+    const previous = groups.at(-1);
+    if (previous && index - previous.last <= 6) previous.last = index;
+    else groups.push({ first: index, last: index });
+  }
+  const oldPositions: number[] = [];
+  const newPositions: number[] = [];
+  let oldLine = 1;
+  let newLine = 1;
+  for (let index = 0; index < operations.length; index++) {
+    oldPositions[index] = oldLine;
+    newPositions[index] = newLine;
+    if (operations[index].type !== 'add') oldLine++;
+    if (operations[index].type !== 'delete') newLine++;
+  }
+  const hunks = groups.flatMap(({ first, last }) => {
+    const start = Math.max(0, first - 3);
+    const end = Math.min(operations.length, last + 4);
+    const slice = operations.slice(start, end);
+    const oldCount = slice.filter((operation) => operation.type !== 'add').length;
+    const newCount = slice.filter((operation) => operation.type !== 'delete').length;
+    return [
+      `@@ -${oldPositions[start]},${oldCount} +${newPositions[start]},${newCount} @@`,
+      ...slice.map((operation) => `${operation.type === 'add' ? '+' : operation.type === 'delete' ? '-' : ' '}${operation.line}`)
+    ];
+  });
+  return [`diff --git a/${diffPath} b/${diffPath}`, `--- a/${diffPath}`, `+++ b/${diffPath}`, ...hunks].join('\n');
 }

@@ -10,6 +10,7 @@ import { checkInItemWithGate, checkoutItemWithGate, executeDataSourceWithGate, e
 import { primaryShortcut } from '../../services/platformShortcuts';
 import { useOutputLogStore } from '../../services/outputLogStore';
 import { TreeItemIcon } from './TreeItemIcon';
+import { sortEnterpriseTreeItems } from '../../services/enterpriseTreeOrder';
 
 export interface TreeItem {
   id: string;
@@ -864,7 +865,7 @@ export function EnterpriseTree() {
       console.log('Children response:', items.length, 'items');
 
       // Convert EnterpriseItem to TreeItem
-      return items.map((enterpriseItem: any) => ({
+      return sortEnterpriseTreeItems(items.map((enterpriseItem: any) => ({
         id: enterpriseItem.uri || enterpriseItem.id,
         label: enterpriseItem.name,
         type: enterpriseItem.type || 'DEFAULT',
@@ -881,7 +882,7 @@ export function EnterpriseTree() {
           guid: child.guid
         })) : undefined,
         guid: enterpriseItem.guid
-      }));
+      })));
     } catch (err) {
       console.error('Failed to load children:', err);
       return [];
@@ -1021,7 +1022,7 @@ export function EnterpriseTree() {
             hasChildren: item.isFolder ?? item.hasChildren ?? false
           }));
 
-          setRootItems(treeItems);
+          setRootItems(sortEnterpriseTreeItems(treeItems));
           console.log('Loaded root items:', treeItems.length);
         } catch (err) {
           console.error('Failed to load root items:', err);
