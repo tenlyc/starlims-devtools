@@ -57,11 +57,12 @@ STARLIMS DevTools 把企业树、Monaco 编辑器、SSL 语言服务、源码管
 
 | 能力 | 说明 |
 | --- | --- |
-| Codex Agent | 通过 Codex App Server 保持会话，展示流式回复、Reasoning、MCP、命令、文件变更和审批事件。 |
-| 通用 Agent | 保存多个 OpenAI-compatible 平台，每个平台拥有独立 Base URL、API Key、模型列表和默认模型。 |
+| Codex Agent | 通过 Codex App Server 保持会话；紧凑时间线实时展示读取、搜索、命令、MCP 和文件变更。内置运行时直接使用 HTTPS，并隔离未由 DevTools 配置的 Apps/Plugins MCP，避免无关网络重试。 |
+| 通用 Agent | 保存多个 OpenAI-compatible 平台，每个平台拥有独立 Base URL、API Key、模型列表和默认模型，并与 Codex 共用执行时间线、变更审查和授权体验。 |
 | 会话模式 | Agent、Plan、Debug、Multitask、Ask；Plan/Ask 在运行时强制只读。 |
 | 上下文引用 | 使用 `@` 引用当前、已打开、已签出或搜索到的脚本；依赖事实按 token 预算注入，避免拼接整个工作区。 |
 | Agent 工作区 | 按服务器与用户隔离的本地 Git 工作区，可自定义根目录；远端基线与 AI 修改分开保存并提供逐文件 Diff。 |
+| 截图与问题反馈 | 可粘贴或选择截图传给支持视觉的 Agent；Agent 可按需读取 Problems、Output、STARLIMS Log，并调用内置 `starlims-lsp` 检查完整 SSL 源码。 |
 | 本地 MCP | DevTools 当前固定使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp) v0.5.1，并自动启动其独立子进程，地址为 `http://127.0.0.1:3102/mcp`；协议进程通过一次性本地令牌桥接当前登录会话和应用内审批，异常时自动回退到内置兼容服务。 |
 | 外部 MCP | 在 AI 能力中心配置 HTTP、SSE 或 stdio 服务；敏感请求头和环境变量独立存入本机密钥存储。 |
 | 多 Agent 工作流 | 规划、实现、审查、测试角色支持任务依赖与安全并行；结果由用户确认后交给主 Agent 执行。 |
@@ -85,7 +86,7 @@ Codex、通用 Agent 与外部 AI 客户端可复用同一 STARLIMS MCP。桌面
 ### 规则、权限与质量门禁
 
 - 团队、项目、个人规则按层合并；用户导入或粘贴的 `agent.md` 独立保存，并保持最高用户规则优先级。
-- 权限支持“每次询问”“自动批准安全操作”“完全访问”；写入确认直接显示在对话时间线中。
+- 权限支持“每次询问”“自动批准安全操作”“完全访问”；需要确认的命令、文件和 MCP 操作固定显示在输入框上方，不依赖系统弹窗。
 - 保存、检入、撤销签出和执行统一经过授权、签出状态、语言、远端冲突、SHA-256 内容指纹与审计检查。
 - SSL 写回前执行诊断；可配置测试用例、Diff 审查、删除策略和测试结果门禁。内容变化后旧审批与旧测试结果自动失效。
 - AI 扩展使用版本化 JSON 清单贡献 MCP、工具元数据、语言映射与工作流模板；清单禁止携带 API Key、Token 或密码。示例见 [`docs/ai-extension.example.json`](docs/ai-extension.example.json)。
@@ -132,7 +133,7 @@ npm run dev
 ### 检查与打包
 
 ```bash
-# 准备校验过的 LSP、运行 ESLint、28 组 smoke tests 和 Renderer/Electron 构建
+# 准备校验过的 LSP、运行 ESLint、30 组 smoke tests 和 Renderer/Electron 构建
 npm run check
 
 # 生成当前平台安装包

@@ -54,11 +54,12 @@ STARLIMS DevTools brings the enterprise tree, Monaco editor, SSL language servic
 
 | Capability | Description |
 | --- | --- |
-| Codex Agent | Keeps sessions through Codex App Server and renders streamed responses, reasoning, MCP calls, commands, file changes, and approval events. |
-| Generic Agent | Stores multiple OpenAI-compatible providers, each with its own Base URL, API key, model catalog, and default model. |
+| Codex Agent | Keeps sessions through Codex App Server. A compact timeline shows reads, searches, commands, MCP calls, and file changes live. The embedded runtime uses HTTPS directly and isolates Apps/Plugins MCPs not configured by DevTools to avoid unrelated network retries. |
+| Generic Agent | Stores multiple OpenAI-compatible providers, each with its own Base URL, API key, model catalog, and default model, while sharing the Codex activity, review, and approval experience. |
 | Modes | Agent, Plan, Debug, Multitask, and Ask. Plan and Ask are enforced as read-only at runtime. |
 | Context references | `@` references current, open, checked-out, or searched scripts; facts are injected under a token budget instead of concatenating the workspace. |
 | Agent workspace | A configurable local Git workspace isolated by server and user, with separate remote baselines, AI edits, and per-file diffs. |
+| Screenshots and diagnostics | Paste or select screenshots for vision-capable agents. Agents can inspect Problems, Output, and STARLIMS Log on demand and validate complete SSL source with the bundled `starlims-lsp`. |
 | Built-in MCP | Pins [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp) v0.5.1 and starts its independent process at `http://127.0.0.1:3102/mcp`; a one-time loopback bridge connects it to the signed-in session and approvals, with a built-in compatibility fallback. |
 | External MCP | Supports HTTP, SSE, and stdio servers. Sensitive headers and environment variables are stored in the OS credential store. |
 | Multi-agent workflows | Planner, implementer, reviewer, and tester roles support dependencies and safe parallelism; the user approves results before the main Agent applies them. |
@@ -78,7 +79,7 @@ HTML/XFD Form Resources use `get_form_resources`, `set_form_resource`, and `save
 ### Rules, permissions, and quality gates
 
 - Team, project, and personal rules merge by layer. Imported or pasted `agent.md` content remains a separate, highest-priority user rule.
-- Approval modes are Ask every time, Auto-approve safe operations, and Full access. Write approval appears in the conversation timeline.
+- Approval modes are Ask every time, Auto-approve safe operations, and Full access. Commands, file changes, and MCP actions that need confirmation appear above the composer instead of in a system dialog.
 - Save, check-in, undo checkout, and execution all pass authorization, checkout ownership, language, remote-conflict, SHA-256 fingerprint, and audit checks.
 - SSL diagnostics, configurable tests, diff review, deletion policy, and test-result gates run before write-back. Content changes invalidate previous approvals and test results.
 - AI extensions use versioned JSON manifests for MCP entries, tool metadata, language mappings, and workflow templates. Manifests cannot contain API keys, tokens, or passwords.
@@ -116,7 +117,7 @@ npm run dev
 Verification and packaging:
 
 ```bash
-# Prepare the verified LSP, lint, run 29 smoke-test groups, and build Renderer/Electron
+# Prepare the verified LSP, lint, run 30 smoke-test groups, and build Renderer/Electron
 npm run check
 
 # Build the installer for the current platform
