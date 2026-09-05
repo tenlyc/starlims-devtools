@@ -15,228 +15,100 @@
   <sub>AI-native cross-platform development workbench for STARLIMS</sub>
 </p>
 
-STARLIMS DevTools 把企业树、Monaco 编辑器、SSL 语言服务、源码管理、Agent 工作区和 MCP 工具整合在一个桌面应用中，让 AI 能在明确的权限与质量门禁下理解、修改、验证并写回 STARLIMS 脚本。
+STARLIMS DevTools 是一个桌面开发工具，把脚本编辑、源码管理、表单预览和 AI 助手放在同一个工作台中。你可以手动开发，也可以让 AI 通过 MCP 查找、修改和验证 STARLIMS 项目。
 
-> [!WARNING]
-> 本项目是非官方社区工具，与 STARLIMS Corporation 无隶属或支持关系。请先在测试环境验证，并依据组织的变更流程使用写入、运行、检入和撤销签出功能。
+[下载 Beta 6](https://github.com/tenlyc/starlims-devtools/releases/tag/v1.7.0-beta.6) · [版本说明](docs/releases/v1.7.0-beta.6.md) · [使用与开发文档](docs/README.md) · [反馈问题](https://github.com/tenlyc/starlims-devtools/issues)
 
 ![STARLIMS DevTools 工作台](docs/images/workbench-overview.png)
 
-![AI 能力中心](docs/images/ai-capability-center.png)
+*界面示例使用虚构服务器、账号和脚本。*
 
-> 截图全部由虚构服务器、账号、脚本和对话生成，不包含真实地址、凭据、业务代码或日志。
+## 能做什么？
 
-## 为什么使用它
-
-- **完整 STARLIMS 工作流**：浏览、搜索、签出、编辑、执行、对比、保存、检入、撤销签出，以及 SDP 导入导出。
-- **更专业的编辑体验**：多标签 Monaco 编辑器、Problems/Output/STARLIMS Log、跨脚本导航、SQL 智能提示和平台原生快捷键。
-- **真正可操作的 AI**：Codex 与通用 OpenAI-compatible Agent 可使用当前登录会话、Agent 工作区和 STARLIMS MCP，不只是在对话中生成代码片段。
-- **可治理的自动化**：模式级只读约束、应用内审批、统一写入门禁、远端冲突检测、内容指纹、SSL 诊断、测试和回读校验。
-- **可持续的上游集成**：锁定并校验 `starlims-lsp` 发布版本；选择性审计 `starlimsvscode`，避免整仓合并覆盖本项目能力。
-
-## 核心能力
-
-### STARLIMS 开发
-
-| 能力 | 说明 |
+| 功能 | 日常用途 |
 | --- | --- |
-| 企业树与签出树 | 浏览 Applications、Server Scripts、Client Scripts、Data Sources、Tables 和 Server Logs；签出项固定标题栏、按类型显示图标，并标注用户与表单语言。 |
-| 多语言 HTML Form | XML、Code Behind、Guide、Resources 的读取、签出、保存、检入和 MCP 调用均保留 `CHS`/`ENG` 等语言参数。 |
-| 编辑与运行 | 编辑 SSL、SQL、JavaScript、XML、HTML 等内容；运行 Server Script 和 Data Source，并在结果视图查看表格或原始输出。 |
-| 源码管理 | 导入/导出 SDP，比较远端版本，管理签出/检入与撤销签出。 |
-| 日志与问题 | 集中显示语言诊断、运行输出和 STARLIMS 日志，支持级别、用户与文本过滤。 |
+| 项目浏览与搜索 | 浏览企业树，按名称查找项目，搜索脚本内容，查看已签出项。 |
+| 脚本编辑 | 编辑 SSL、SQL、JavaScript、XML 等内容，使用补全、格式化、诊断和跨脚本导航。 |
+| 源码管理 | 签出、保存、比较、签入、撤销签出，以及 SDP 导入和导出。 |
+| 运行与排错 | 执行 Server Script 和 Data Source，查看结果、问题面板和 STARLIMS 日志。 |
+| HTML 表单 | 编辑 XML、Code Behind 和多语言资源，打开 Preview / Debug，检查控件与截图。 |
+| AI 辅助开发 | 引用项目上下文，让 AI 编写代码、维护表定义和资源、配置菜单，再审查变更。 |
 
-### SSL 与 SQL 语言能力
+## 下载与开始使用
 
-- 随应用提供并持久运行 [`starlims-lsp`](https://github.com/mahoskye/starlims-lsp) v0.21.0，支持诊断、格式化、工作区符号、定义/引用、跨文件重命名、CodeLens、内联提示与快速修复。
-- 原生 LSP 不可用时自动降级到内置 TypeScript 语言核心；降级不会阻止继续编辑。
-- 保留 STARLIMS Designer 的 `#include "Module.Script"` 无分号语法，并支持内嵌 SQL 格式化。
-- Data Source 根据服务端脚本语言选择 SSL 或 SQL；SQL 提供关键字、表名和字段补全。
+当前测试版为 **1.7.0 Beta 6**，提供 macOS Apple Silicon 和 Windows x64 安装包。
 
-### AI、Agent 与 MCP
+1. 从 [Release 页面](https://github.com/tenlyc/starlims-devtools/releases/tag/v1.7.0-beta.6) 下载对应安装包和 `SCM_API.sdp`。
+2. 在 STARLIMS 环境中部署配套 `SCM_API.sdp`。已有兼容版本可以复用；服务端需允许访问所需的 `SCM_API.*` HTTP 接口。
+3. 打开 DevTools，添加服务器地址和账号，登录后从企业树打开项目。
+4. 需要 AI 时，进入“AI 能力中心”，配置本机 Codex，或填写兼容 OpenAI API 的服务地址、API Key 和模型。
 
-| 能力 | 说明 |
-| --- | --- |
-| Codex Agent | 通过 Codex App Server 保持会话；紧凑时间线实时展示读取、搜索、命令、MCP 和文件变更。内置运行时直接使用 HTTPS，并隔离未由 DevTools 配置的 Apps/Plugins MCP，避免无关网络重试。 |
-| 通用 Agent | 保存多个 OpenAI-compatible 平台，每个平台拥有独立 Base URL、API Key、模型列表和默认模型，并与 Codex 共用执行时间线、变更审查和授权体验。 |
-| 会话模式 | Agent、Plan、Debug、Multitask、Ask；Plan/Ask 在运行时强制只读。 |
-| 上下文引用 | 使用 `@` 引用当前、已打开、已签出或搜索到的脚本；依赖事实按 token 预算注入，避免拼接整个工作区。 |
-| Agent 工作区 | 按服务器与用户隔离的本地 Git 工作区，可自定义根目录；远端基线与 AI 修改分开保存并提供逐文件 Diff。 |
-| 截图与问题反馈 | 可粘贴或选择截图传给支持视觉的 Agent；Agent 可按需读取 Problems、Output、STARLIMS Log，并调用内置 `starlims-lsp` 检查完整 SSL 源码。 |
-| 本地 MCP | DevTools 当前固定使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp) v0.5.2 固定发布标签，并自动启动其独立子进程，地址为 `http://127.0.0.1:3102/mcp`；协议进程通过一次性本地令牌桥接当前登录会话和应用内审批，异常时自动回退到内置兼容服务。 |
-| 外部 MCP | 在 AI 能力中心配置 HTTP、SSE 或 stdio 服务；敏感请求头和环境变量独立存入本机密钥存储。 |
-| 多 Agent 工作流 | 规划、实现、审查、测试角色支持任务依赖与安全并行；结果由用户确认后交给主 Agent 执行。 |
+使用安装包无需自行编译；Node.js 与源码构建步骤见下方开发说明。AI 服务需要相应账号或 API 配置。
 
-Codex、通用 Agent 与外部 AI 客户端可复用同一 STARLIMS MCP。桌面应用不捆绑第三方模型运行时或 Claude Agent SDK；Claude Code、Cursor、ChatGPT Desktop 等如需使用，应作为独立客户端连接 MCP。
+测试包尚未签名。Windows 已通过 CI 构建，真实 Windows STARLIMS 环境尚未完成实机验收；建议先在测试环境使用。
 
-连接后可调用 `get_capabilities` 查看当前工具来源、风险、Schema 版本、Profile 和后端组件。工具归属只分为 `starlimsvscode` 与 `starlims-mcp`，DevTools 只作为宿主 Profile/Adapter。STARLIMS 侧统一使用一个 `SCM_API.*` 命名空间和一个 `SCM_API.sdp`；该服务包由 starlims-mcp 的 `scm/server` 统一构建，DevTools 校验并同步同一发布文件，避免用户维护多套 SDP。完整边界见 [`docs/MCP_ARCHITECTURE.md`](docs/MCP_ARCHITECTURE.md)。
+## 如何使用 AI？
 
-### STARLIMS 后端包
+在对话中使用 `@` 引用脚本，也可以附上截图，让 AI 结合当前项目处理任务。例如：
 
-构建项目时执行 `npm run build:scm-api`，从固定的 starlims-mcp 包校验、同步唯一的 `SCM_API.sdp`，不再独立生成。它包含：
+> 检查当前脚本，说明问题并提出修改建议，先不要保存。
 
-- `MrDoe/starlimsvscode` 的 `SCM_API` 基础包内容；
-- `tenlyc/starlims-mcp` 归属、当前由 DevTools Adapter 使用的 `McpGetSCMUsers`、`McpGetCheckInHistory`、`McpExportPackage` 与 `McpImportPackage`；
-- Form Designer、相关客户端脚本、资源、图片与 `CONTROL_PROPERTIES` 表定义等上游包依赖内容。
+> 参考现有材料类型页面创建一个测试页面，完成后验证中文显示。添加菜单前，先向我确认分组、名称、参数和角色。
 
-不再要求安装 `STARLIMS-DevTools-API.sdp`、`STARLIMS_MCP_API.sdp` 或历史功能补丁。来源归属保留在 MCP 能力元数据和文档中，但部署产物只有一个。
+DevTools 支持 Codex 和兼容 OpenAI API 的通用 Agent，提供会话记录、变更对比和操作审批。`Ask` / `Plan` 模式限制为只读；写入或执行时按任务需要选择授权方式。
 
-多语言 HTML/XFD Form Resources 使用专用的 `get_form_resources`、`set_form_resource` 和 `save_form_resources` 工具。语言参数为必填项，`ResourceId` 区分大小写；单个文案修改优先使用 `set_form_resource`。批量保存既接受 STARLIMS 服务器的 `ResourcesDataset/ResourcesTable` 格式，也接受设计器中常用的 `<Resources><Resource><Id>…</Id><Value>…</Value></Resource></Resources>` 粘贴格式；后者会转换并合并到服务器文档，保留已有 GUID、`GUIDE` 等仅存在于服务器的资源，并在写后回读校验。HTML Form 保存还会验证并修复 Form XML 中的 Resources 加载配置，从企业树获取真实 Form GUID，保留已有层级回退配置。详见 [Resources 保存与加载](docs/FORM_RESOURCES.md)。源码管理模式下，保存成功表示工作副本已更新；已经打开的 HTML Form Designer 标签需要关闭并重新打开才能刷新缓存的 Resources 表格，运行时资源则在 Check In 时同步。
+保存成功只表示源码已更新。页面是否正常，还需要验证实际运行界面；表单签入会涉及同一表单的 XML、Code Behind、Resources 等内容。
 
-### 规则、权限与质量门禁
+[查看 AI 能力中心界面示例](docs/images/ai-capability-center.png)
 
-- 团队、项目、个人规则按层合并；用户导入或粘贴的 `agent.md` 独立保存，并保持最高用户规则优先级。
-- 权限支持“每次询问”“自动批准安全操作”“完全访问”；需要确认的命令、文件和 MCP 操作固定显示在输入框上方，不依赖系统弹窗。
-- 保存、检入、撤销签出和执行统一经过授权、签出状态、语言、远端冲突、SHA-256 内容指纹与审计检查。
-- SSL 写回前执行诊断；可配置测试用例、Diff 审查、删除策略和测试结果门禁。内容变化后旧审批与旧测试结果自动失效。
-- AI 扩展使用版本化 JSON 清单贡献 MCP、工具元数据、语言映射与工作流模板；清单禁止携带 API Key、Token 或密码。示例见 [`docs/ai-extension.example.json`](docs/ai-extension.example.json)。
+## DevTools 和 starlims-mcp 的关系
 
-## 工作方式
+**starlims-mcp 统一维护 MCP 接口与 SCM_API 服务包，DevTools 集成它们并提供桌面操作和登录会话。**
 
-```mermaid
-flowchart LR
-  UI[React + Monaco 工作台] --> MAIN[Electron 主进程]
-  MAIN --> API[STARLIMS SCM_API]
-  MAIN --> LSP[starlims-lsp]
-  MAIN --> WS[隔离的 Git Agent 工作区]
-  AGENT[Codex / 通用 Agent] --> MCP[独立 starlims-mcp 子进程]
-  MCP -->|令牌化回环桥接| MAIN
-  EXT[外部 MCP / AI 客户端] --> MCP
-  WS --> GATE[Diff + 指纹 + 诊断 + 测试门禁]
-  GATE --> API
+Beta 6 固定使用 [starlims-mcp v0.5.2](https://github.com/tenlyc/starlims-mcp/releases/tag/v0.5.2)，通过 DevTools 提供 **37 个 MCP 工具**，涵盖代码、表定义、资源、菜单与预览。通常不需要再单独安装 MCP 服务。
+
+其他支持 HTTP MCP 的 AI 应用也可以连接：
+
+```text
+http://127.0.0.1:3102/mcp
 ```
 
-## 快速开始
+连接时保持 DevTools 运行并登录 STARLIMS。可让 AI 调用 `get_capabilities` 查询当前可用工具。
 
-### 环境要求
+想不打开 DevTools、单独运行 MCP，可查看 [starlims-mcp 使用说明](https://github.com/tenlyc/starlims-mcp#readme)。独立运行目前仅提供部分能力。
 
-- Node.js 22.12 或更高版本
-- Git
-- 可访问的 STARLIMS 环境
-- STARLIMS `web.config` 允许所需 SCM API：
+## 从源码开发
 
-```xml
-<add key="HTTPServices" value="SCM_API.*"/>
-```
-
-不同 STARLIMS 版本的 `SCM_API` 可能存在差异。建议先在隔离环境安装并验证与当前服务器版本匹配的 SDP 后端脚本。
-
-### 本地开发
+仅在修改或自行构建 DevTools 时需要 Node.js 22.12 或更新版本和 Git。
 
 ```bash
 git clone https://github.com/tenlyc/starlims-devtools.git
 cd starlims-devtools
-npm install
+npm ci
 npm run dev
 ```
 
-### 检查与打包
-
 ```bash
-# 准备校验过的 LSP、运行 ESLint、33 组 smoke tests 和 Renderer/Electron 构建
-npm run check
-
-# 生成当前平台安装包
-npm run build
-
-# 应用启动并登录后，验证真实 MCP 握手与只读 STARLIMS 调用
-npm run test:mcp-live
+npm run check               # 代码检查、构建和回归测试
+npm run release:beta:check   # 测试版发布检查
+npm run build               # 生成当前平台安装包，输出到 release/
 ```
 
-`test:mcp-live` 会连接本机 `127.0.0.1:3102/mcp`，检查 `get_capabilities`、Profile、Adapter、工具来源和后端组件，并实际调用 `browse_tree`、`list_checked_out_items`、`query_checkin_history`。测试只执行读取操作，输出仅保留项目数量，不打印名称、代码、服务器地址或账号。
+MCP 接口和后端源码请在 [starlims-mcp](https://github.com/tenlyc/starlims-mcp) 中维护。DevTools 的 `src/scm_api` 是从共享包同步的兼容镜像。架构与维护细节见 [文档目录](docs/README.md)。
 
-构建产物位于 `release/`，不会提交到 Git。macOS 构建同时生成 DMG、ZIP 和唯一的 `SCM_API.sdp`。发布前还建议运行：
+## 文档与反馈
 
-```bash
-npm audit --registry=https://registry.npmjs.org
-```
+- [当前版本说明](docs/releases/v1.7.0-beta.6.md)与[历史变更](CHANGELOG.md)
+- [多语言资源与中文页面](docs/FORM_RESOURCES.md)
+- [菜单配置接口](docs/MENU_MCP_RESEARCH.md)
+- [AI 开发材料类型页面的实测记录](docs/MATERIAL_TYPES_AGENT_ACCEPTANCE.md)
+- [MCP 集中管理与验收](docs/MCP_CENTRALIZATION_ACCEPTANCE.md)
+- [贡献指南](CONTRIBUTING.md)与[打包发布](PACKAGING.md)
 
-## 首次配置
+提交 [Issue](https://github.com/tenlyc/starlims-devtools/issues) 时，请注明版本、复现步骤和错误信息，并移除凭据及业务敏感内容。
 
-1. 在登录页新增 STARLIMS 服务器，填写名称、基础 URL 和账号；密码仅存入系统密钥存储。
-2. 登录后通过企业树确认浏览、读取、签出和保存是否与当前 STARLIMS 版本兼容。
-3. 在“AI 能力中心 → 工作区”选择 Agent 工作区根目录并同步当前用户签出项。
-4. 使用 Codex，或在“模型”中新增一个或多个 OpenAI-compatible 平台与模型。
-5. 按需导入个人 `agent.md`、团队/项目规则，配置外部 MCP 和写入审批策略。
-6. 在测试环境完成 Diff、诊断、执行和检入验证后，再连接生产环境。
+## 来源与许可
 
-## 常用快捷键
+本项目为非官方社区工具，与 STARLIMS Corporation 无隶属或支持关系，采用 [MIT License](LICENSE)。
 
-| 操作 | macOS | Windows / Linux |
-| --- | --- | --- |
-| 保存当前脚本 | `⌘S` | `Ctrl+S` |
-| 全局代码搜索 | `⌘⇧F` | `Ctrl+Shift+F` |
-| 格式化文档 | `⇧⌥F` | `Shift+Alt+F` |
-| 注释/取消注释 | `⌘/` | `Ctrl+/` |
-| 选择所有匹配 | `⌘F2` | `Ctrl+F2` |
-| 跳转到行 | `⌘G` | `Ctrl+G` |
-| 跳转到符号 | `⌘⇧O` | `Ctrl+Shift+O` |
-| 运行当前 Server Script / Data Source | `F5` | `F5` |
-| 跳转到 STARLIMS 项目 | `F11` | `F11` |
-
-编辑器右键菜单会按当前界面语言显示，并自动使用对应平台的快捷键符号。
-
-## 安全与隐私
-
-- STARLIMS 密码、通用 Agent API Key 和外部 MCP secrets 使用 Electron 本机密钥存储，不写入普通配置或导出文件。
-- 本地 MCP 与内部工具桥接都只监听 `127.0.0.1`；桥接令牌仅存在于子进程环境和内存，不写入配置。不要把端口转发到不受信任网络。
-- Plan/Ask 强制只读；未知外部 MCP 工具不默认视为安全读操作。
-- 完全访问会允许写入、运行或删除等高风险操作，只应在受控工作区和测试环境短时开启。
-- 提交 Issue、日志与截图前，请移除服务器地址、用户名、脚本内容、内部路径、对话、Token 和 API Key。
-- 仓库中的示例、测试与文档截图统一使用 `example.test`、`DEMO_USER` 等虚构数据。
-
-## 上游维护
-
-上游版本统一记录在 [`upstreams/upstreams.lock.json`](upstreams/upstreams.lock.json)，详细策略见 [`UPSTREAM_SYNC.md`](UPSTREAM_SYNC.md)。自动化只检查公开元数据并创建更新提示，不会自动执行或合并上游代码。
-
-```bash
-# 检查 starlims-lsp 发布与 starlimsvscode 参考提交
-npm run upstream:check
-
-# 生成 starlimsvscode 选择性移植报告
-npm run upstream:audit:starlimsvscode -- --output upstreams/reports/starlimsvscode.md
-
-# 审查后推进参考提交
-npm run upstream:accept:starlimsvscode -- <40位commit> --confirm-reviewed
-
-# 下载、校验和测试指定 starlims-lsp Release
-npm run upstream:update:lsp -- v0.22.0
-```
-
-- [`mahoskye/starlims-lsp`](https://github.com/mahoskye/starlims-lsp)：作为受版本锁与 SHA-256 校验的语言服务组件；“上游组件”可检查官方 Release、手动安装通过兼容测试的当前平台版本，并回退到任一本地校验版本。
-- [`MrDoe/starlimsvscode`](https://github.com/MrDoe/starlimsvscode)：作为 STARLIMS SCM 契约、语言规则和兼容测试的参考来源，按能力选择性移植，不作为运行时依赖。
-- [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp)：作为固定基线的共享 MCP 契约与运行时依赖，并归档可离线验证的 MCP/SCM 实际源码；AI 能力中心可检查其官方 Release，只有带 SHA-256 的独立 Server 包才允许安装，失败会退回随程序提供的版本。产品继续负责宿主 Adapter、权限和传输。
-
-## 项目结构
-
-```text
-electron/                 Electron 主进程、Agent/MCP/LSP/工作区运行时
-src/components/           React 工作台、编辑器、侧边栏、AI 与 SCM 界面
-src/services/             STARLIMS API、语言能力、权限、写入门禁与索引
-src/scm_api/              从 starlims-mcp 同步的后端兼容镜像（勿直接修改）
-resources/starlims-lsp/   构建时准备的已校验语言服务资源
-scripts/                  smoke tests、打包准备与上游维护工具
-upstreams/                上游版本锁、能力映射和兼容记录
-components/               自有共享组件版本锁（与第三方 upstream 分开）
-docs/                     扩展示例与脱敏产品截图
-```
-
-## 技术栈
-
-Electron 44 · React 18 · TypeScript 5.9 · Vite 8 · Monaco Editor · Tailwind CSS · Zustand · Model Context Protocol
-
-## 贡献与版本
-
-欢迎通过 [Issues](https://github.com/tenlyc/starlims-devtools/issues) 报告兼容问题或提出改进，也欢迎提交 Pull Request。请为新功能补充 smoke test，并确保 `npm run check` 通过。
-
-中英文文档入口：[docs/README.md](docs/README.md)。
-
-准备 Beta 时运行 `npm run release:beta:check`；真实 STARLIMS 写入验收、macOS 签名公证和 Windows 实机门禁见 [发布验收说明](docs/RELEASE_READINESS.md)。
-
-- 完整变更记录：[CHANGELOG.md](CHANGELOG.md)
-- 上游同步策略：[UPSTREAM_SYNC.md](UPSTREAM_SYNC.md)
-- MCP 来源与扩展边界：[docs/MCP_ARCHITECTURE.md](docs/MCP_ARCHITECTURE.md)
-- Beta 与正式版发布门禁：[docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md)
-- 开源许可：[MIT](LICENSE)
-
-项目主页：https://github.com/tenlyc/starlims-devtools
+语言服务使用 [starlims-lsp](https://github.com/mahoskye/starlims-lsp)，MCP 使用 [starlims-mcp](https://github.com/tenlyc/starlims-mcp)，部分 STARLIMS 兼容实现参考 [starlimsvscode](https://github.com/MrDoe/starlimsvscode)。

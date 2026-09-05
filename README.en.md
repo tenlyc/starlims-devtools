@@ -12,182 +12,100 @@
 
 <p align="center">AI-native cross-platform development workbench for STARLIMS</p>
 
-STARLIMS DevTools brings the enterprise tree, Monaco editor, SSL language services, source control, isolated Agent workspaces, and MCP tools into one desktop application. AI agents can understand, modify, validate, and write back STARLIMS scripts under explicit permissions and quality gates.
+STARLIMS DevTools brings script editing, source control, form previews and AI assistance into one desktop workspace. Develop manually or ask an AI agent to find, modify and verify STARLIMS projects through MCP.
 
-> [!WARNING]
-> This is an unofficial community project and is not affiliated with or supported by STARLIMS Corporation. Validate it in a test environment and follow your organization's change-management process before using write, execute, check-in, or undo-checkout operations.
+[Download Beta 6](https://github.com/tenlyc/starlims-devtools/releases/tag/v1.7.0-beta.6) · [Release notes](docs/releases/v1.7.0-beta.6.md) · [Documentation](docs/README.md) · [Report an issue](https://github.com/tenlyc/starlims-devtools/issues)
 
 ![STARLIMS DevTools workbench](docs/images/workbench-overview.png)
 
-![AI Capability Center](docs/images/ai-capability-center.png)
+*The example interface uses fictional servers, accounts and scripts.*
 
-> All screenshots use fictional servers, accounts, scripts, and conversations. They contain no real addresses, credentials, business code, or logs.
+## What can it do?
 
-## Why STARLIMS DevTools
-
-- **End-to-end STARLIMS workflow:** browse, search, check out, edit, execute, compare, save, check in, undo checkout, and import/export SDP packages.
-- **Editor-grade experience:** multi-tab Monaco editor, Problems/Output/STARLIMS Log panels, cross-script navigation, SQL completion, and platform-native shortcuts.
-- **Agents that can act:** Codex and OpenAI-compatible agents can use the signed-in session, Agent workspace, and STARLIMS MCP instead of merely producing snippets.
-- **Governed automation:** read-only modes, in-conversation approval, unified write gates, remote-conflict detection, content fingerprints, SSL diagnostics, tests, and read-after-write verification.
-- **Maintainable upstream integration:** pinned and verified `starlims-lsp` releases plus selective audits of `starlimsvscode`, without whole-repository merges.
-
-## Main capabilities
-
-### STARLIMS development
-
-| Capability | Description |
+| Feature | Everyday use |
 | --- | --- |
-| Enterprise and checkout trees | Browse Applications, Server Scripts, Client Scripts, Data Sources, Tables, and Server Logs. Checked-out items show type icons, owner, and form language under a fixed toolbar. |
-| Multilingual HTML Forms | XML, Code Behind, Guide, and Resources retain explicit languages such as `CHS` and `ENG` throughout read, checkout, save, check-in, and MCP operations. |
-| Editing and execution | Edit SSL, SQL, JavaScript, XML, and HTML; run Server Scripts and Data Sources; inspect tabular or raw results. |
-| Source control | Import/export SDP, compare remote content, and manage checkout, check-in, and undo checkout. |
-| Logs and diagnostics | Filter language diagnostics, execution output, and STARLIMS logs by severity, user, and text. |
+| Browse and search | Explore the enterprise tree, find items by name, search code and view checkouts. |
+| Edit scripts | Work with SSL, SQL, JavaScript and XML using completion, formatting, diagnostics and navigation. |
+| Source control | Check out, save, compare, check in, undo checkout, and import/export SDP packages. |
+| Run and troubleshoot | Execute Server Scripts and Data Sources; inspect results, diagnostics and STARLIMS logs. |
+| HTML Forms | Edit XML, Code Behind and multilingual resources; open Preview / Debug, inspect controls and capture screenshots. |
+| AI assistance | Reference project context, ask AI to edit code, tables, resources and menus, then review changes. |
 
-### SSL and SQL intelligence
+## Download and get started
 
-- Ships with the persistent [`starlims-lsp`](https://github.com/mahoskye/starlims-lsp) v0.21.0 runtime for diagnostics, formatting, workspace symbols, definitions/references, cross-file rename, CodeLens, inlay hints, and quick fixes.
-- Falls back automatically to the built-in TypeScript language core when the native LSP is unavailable.
-- Preserves STARLIMS Designer syntax such as `#include "Module.Script"` without a trailing semicolon and formats embedded SQL.
-- Selects SSL or SQL behavior for Data Sources from the server-side script language; SQL completion includes keywords, tables, and columns.
+The current test release is **1.7.0 Beta 6**, with macOS Apple Silicon and Windows x64 installers.
 
-### AI, Agents, and MCP
+1. Download the appropriate installer and `SCM_API.sdp` from the [release page](https://github.com/tenlyc/starlims-devtools/releases/tag/v1.7.0-beta.6).
+2. Deploy the matching SDP to STARLIMS, or reuse a compatible installation. The server must allow the required `SCM_API.*` HTTP endpoints.
+3. Open DevTools, configure the server URL and account, sign in and open a project from the enterprise tree.
+4. For AI assistance, open AI Capability Center and configure local Codex or an OpenAI-compatible service URL, API key and model.
 
-| Capability | Description |
-| --- | --- |
-| Codex Agent | Keeps sessions through Codex App Server. A compact timeline shows reads, searches, commands, MCP calls, and file changes live. The embedded runtime uses HTTPS directly and isolates Apps/Plugins MCPs not configured by DevTools to avoid unrelated network retries. |
-| Generic Agent | Stores multiple OpenAI-compatible providers, each with its own Base URL, API key, model catalog, and default model, while sharing the Codex activity, review, and approval experience. |
-| Modes | Agent, Plan, Debug, Multitask, and Ask. Plan and Ask are enforced as read-only at runtime. |
-| Context references | `@` references current, open, checked-out, or searched scripts; facts are injected under a token budget instead of concatenating the workspace. |
-| Agent workspace | A configurable local Git workspace isolated by server and user, with separate remote baselines, AI edits, and per-file diffs. |
-| Screenshots and diagnostics | Paste or select screenshots for vision-capable agents. Agents can inspect Problems, Output, and STARLIMS Log on demand and validate complete SSL source with the bundled `starlims-lsp`. |
-| Built-in MCP | Pins [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp) v0.5.1 and starts its independent process at `http://127.0.0.1:3102/mcp`; a one-time loopback bridge connects it to the signed-in session and approvals, with a built-in compatibility fallback. |
-| External MCP | Supports HTTP, SSE, and stdio servers. Sensitive headers and environment variables are stored in the OS credential store. |
-| Multi-agent workflows | Planner, implementer, reviewer, and tester roles support dependencies and safe parallelism; the user approves results before the main Agent applies them. |
+Installers do not require a source build. AI services require their own account or API configuration.
 
-Call `get_capabilities` after connecting to discover the tools actually registered by the active host, their origin, risk, schema version, Profile, and backend components. Tool origin is either `starlimsvscode` or `starlims-mcp`; DevTools is the host Profile/Adapter. See [MCP architecture and provenance](docs/MCP_ARCHITECTURE.en.md).
+Beta installers are unsigned. Windows CI builds passed, but real Windows STARLIMS host acceptance remains unverified. Start in a test environment.
 
-### One STARLIMS backend package
+## Work with AI
 
-`npm run build:scm-api` produces the only deployment package, `SCM_API.sdp`. It combines:
+Use `@` to reference scripts, or attach screenshots. For example:
 
-- the base `SCM_API` content from `MrDoe/starlimsvscode`;
-- DevTools adapter extensions owned by `tenlyc/starlims-mcp`: `McpGetSCMUsers`, `McpGetCheckInHistory`, `McpExportPackage`, and `McpImportPackage`;
-- the Form Designer and required client scripts, resources, images, and `CONTROL_PROPERTIES` table definition.
+> Review this script and suggest fixes. Do not save changes yet.
 
-HTML/XFD Form Resources use `get_form_resources`, `set_form_resource`, and `save_form_resources`. Language is required and `ResourceId` matching is case-sensitive; prefer `set_form_resource` for a single value. Bulk saves accept either the STARLIMS server `ResourcesDataset/ResourcesTable` format or the designer-paste `<Resources><Resource><Id>…</Id><Value>…</Value></Resource></Resources>` format. Designer input is converted and merged, preserving existing GUIDs and server-only entries such as `GUIDE`, followed by read-back verification. In source-control mode, a successful save updates the working copy. Close and reopen an already-open HTML Form Designer tab to refresh its cached Resources grid; runtime resources are synchronized at Check In.
+> Create a test page based on the existing material-type page and verify its Chinese UI. Before adding a menu, ask me for the group, name, parameters and roles.
 
-### Rules, permissions, and quality gates
+DevTools supports Codex and OpenAI-compatible agents, with conversation history, diffs and operation approvals. `Ask` / `Plan` modes are read-only; choose authorization appropriate to the task before writes or execution.
 
-- Team, project, and personal rules merge by layer. Imported or pasted `agent.md` content remains a separate, highest-priority user rule.
-- Approval modes are Ask every time, Auto-approve safe operations, and Full access. Commands, file changes, and MCP actions that need confirmation appear above the composer instead of in a system dialog.
-- Save, check-in, undo checkout, and execution all pass authorization, checkout ownership, language, remote-conflict, SHA-256 fingerprint, and audit checks.
-- SSL diagnostics, configurable tests, diff review, deletion policy, and test-result gates run before write-back. Content changes invalidate previous approvals and test results.
-- AI extensions use versioned JSON manifests for MCP entries, tool metadata, language mappings, and workflow templates. Manifests cannot contain API keys, tokens, or passwords.
+A successful save updates source code; verify the actual runtime page separately. Checking in a form affects its XML, Code Behind, Resources and related form content together.
 
-## Architecture
+[AI Capability Center example](docs/images/ai-capability-center.png)
 
-```mermaid
-flowchart LR
-  UI[React + Monaco workbench] --> MAIN[Electron main process]
-  MAIN --> API[STARLIMS SCM_API]
-  MAIN --> LSP[starlims-lsp]
-  MAIN --> WS[Isolated Git Agent workspace]
-  AGENT[Codex / Generic Agent] --> MCP[Independent starlims-mcp process]
-  MCP -->|Tokenized loopback bridge| MAIN
-  EXT[External MCP / AI clients] --> MCP
-  WS --> GATE[Diff + fingerprint + diagnostics + test gates]
-  GATE --> API
+## How DevTools uses starlims-mcp
+
+**starlims-mcp maintains the MCP interfaces and SCM_API package. DevTools integrates them with its desktop tools and signed-in session.**
+
+Beta 6 pins [starlims-mcp v0.5.2](https://github.com/tenlyc/starlims-mcp/releases/tag/v0.5.2), providing **37 MCP tools** through DevTools for code, tables, resources, menus and previews. A separate MCP installation is normally unnecessary.
+
+Other HTTP MCP clients can connect to:
+
+```text
+http://127.0.0.1:3102/mcp
 ```
 
-## Quick start
+Keep DevTools running and signed in. Ask the AI to call `get_capabilities` to list tools available on the current connection.
 
-Requirements: Node.js 22.12+, Git, a reachable STARLIMS environment, and the required SCM API enabled in `web.config`:
+To run MCP without DevTools, see the [standalone guide](https://github.com/tenlyc/starlims-mcp#readme). Standalone mode currently implements a subset of the desktop capabilities.
 
-```xml
-<add key="HTTPServices" value="SCM_API.*"/>
-```
+## Develop from source
+
+Node.js 22.12 or later and Git are needed only to modify or build DevTools yourself.
 
 ```bash
 git clone https://github.com/tenlyc/starlims-devtools.git
 cd starlims-devtools
-npm install
+npm ci
 npm run dev
 ```
 
-Verification and packaging:
-
 ```bash
-# Prepare the verified LSP, lint, run 30 smoke-test groups, and build Renderer/Electron
-npm run check
-
-# Build the installer for the current platform
-npm run build
-
-# After launching and signing in, verify MCP negotiation and read-only live calls
-npm run test:mcp-live
+npm run check               # Code checks, build and regression tests
+npm run release:beta:check   # Beta release checks
+npm run build               # Current-platform installers in release/
 ```
 
-Artifacts are written to `release/` and are not committed. The macOS build produces DMG, ZIP, and the unified `SCM_API.sdp`.
+Maintain MCP contracts and server sources in [starlims-mcp](https://github.com/tenlyc/starlims-mcp). DevTools `src/scm_api` is a compatibility mirror synchronized from that package. See the [documentation index](docs/README.md) for architecture and maintenance details.
 
-## First-time setup
+## Documentation and feedback
 
-1. Add a STARLIMS server on the sign-in page. Passwords are stored only in the OS credential store.
-2. Confirm browsing, reading, checkout, and save compatibility against your STARLIMS version.
-3. Choose an Agent workspace root in **AI Capability Center → Workspace** and synchronize checked-out items.
-4. Use Codex or add one or more OpenAI-compatible providers and models.
-5. Import personal `agent.md`, team/project rules, external MCP servers, and an approval policy as needed.
-6. Validate diffs, diagnostics, execution, and check-in in a test environment before connecting to production.
+- [Current release notes](docs/releases/v1.7.0-beta.6.md) and [changelog](CHANGELOG.md)
+- [Multilingual form resources](docs/FORM_RESOURCES.md)
+- [Menu integration](docs/MENU_MCP_RESEARCH.md)
+- [AI material-type page acceptance](docs/MATERIAL_TYPES_AGENT_ACCEPTANCE.md)
+- [Shared MCP integration acceptance](docs/MCP_CENTRALIZATION_ACCEPTANCE.md)
+- [Contributing](CONTRIBUTING.md) and [packaging](PACKAGING.md)
 
-## Keyboard shortcuts
+When filing an [issue](https://github.com/tenlyc/starlims-devtools/issues), include the version, reproduction steps and errors. Remove credentials and sensitive business content.
 
-| Action | macOS | Windows / Linux |
-| --- | --- | --- |
-| Save current script | `⌘S` | `Ctrl+S` |
-| Global code search | `⌘⇧F` | `Ctrl+Shift+F` |
-| Format document | `⇧⌥F` | `Shift+Alt+F` |
-| Toggle comment | `⌘/` | `Ctrl+/` |
-| Select all matches | `⌘F2` | `Ctrl+F2` |
-| Go to line | `⌘G` | `Ctrl+G` |
-| Go to symbol | `⌘⇧O` | `Ctrl+Shift+O` |
-| Run current Server Script / Data Source | `F5` | `F5` |
-| Go to STARLIMS item | `F11` | `F11` |
+## Credits and license
 
-## Security and privacy
+This is an unofficial community tool, not affiliated with or supported by STARLIMS Corporation. It is licensed under [MIT](LICENSE).
 
-- STARLIMS passwords, Agent API keys, and external MCP secrets use the Electron/OS credential store and are excluded from ordinary settings and exports.
-- Local MCP and internal bridges bind only to `127.0.0.1`; bridge tokens exist only in process memory and environment.
-- Plan and Ask are read-only. Unknown external MCP tools are not treated as safe reads by default.
-- Full access permits high-risk writes, execution, and deletion; use it only briefly in controlled workspaces and test systems.
-- Remove server addresses, user names, scripts, internal paths, conversations, tokens, and API keys before sharing issues, logs, or screenshots.
-
-## Upstream maintenance
-
-Versions are pinned in [`upstreams/upstreams.lock.json`](upstreams/upstreams.lock.json). Automation discovers public changes but never executes or merges upstream code automatically. See the [upstream synchronization policy](UPSTREAM_SYNC.md).
-
-- [`mahoskye/starlims-lsp`](https://github.com/mahoskye/starlims-lsp): verified, replaceable language-service component with manual update and rollback.
-- [`MrDoe/starlimsvscode`](https://github.com/MrDoe/starlimsvscode): reference source for SCM contracts, language rules, and compatibility tests; not a runtime dependency.
-- [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp): pinned shared MCP contracts/runtime and auditable offline MCP/SCM source snapshots. DevTools remains responsible for host adapters, approval, and transport.
-
-## Project layout
-
-```text
-electron/                 Electron and Agent/MCP/LSP/workspace runtimes
-src/components/           React workbench, editor, sidebar, AI and SCM UI
-src/services/             STARLIMS APIs, language features, permissions and gates
-src/scm_api/              Backend scripts deployed to STARLIMS
-resources/starlims-lsp/   Verified language-service resources prepared at build time
-scripts/                  Smoke tests, packaging preparation and upstream tooling
-upstreams/                Version locks, capability maps and compatibility records
-components/               First-party shared-component locks
-docs/                     Extension examples, architecture and sanitized screenshots
-```
-
-## Contributing and releases
-
-Issues and pull requests are welcome. Add smoke tests for new behavior and make sure `npm run check` passes. See [Contributing](CONTRIBUTING.md), [Packaging](PACKAGING.md), [Beta/stable gates](docs/RELEASE_READINESS.md), and the [changelog](CHANGELOG.md).
-
-Bilingual documentation index: [docs/README.md](docs/README.md).
-
-License: [MIT](LICENSE) · Project: https://github.com/tenlyc/starlims-devtools
-
-HTML Resources saves also verify and repair the standard Form XML loading binding using the enterprise GUID and explicit language, while preserving layered fallback configuration. See [Resources save and loading](docs/FORM_RESOURCES.md).
+Language services use [starlims-lsp](https://github.com/mahoskye/starlims-lsp); MCP uses [starlims-mcp](https://github.com/tenlyc/starlims-mcp). Some STARLIMS compatibility behavior references [starlimsvscode](https://github.com/MrDoe/starlimsvscode).
