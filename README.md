@@ -81,7 +81,7 @@ Codex、通用 Agent 与外部 AI 客户端可复用同一 STARLIMS MCP。桌面
 
 不再要求安装 `STARLIMS-DevTools-API.sdp`、`STARLIMS_MCP_API.sdp` 或历史功能补丁。来源归属保留在 MCP 能力元数据和文档中，但部署产物只有一个。
 
-多语言 HTML/XFD Form Resources 使用专用的 `get_form_resources`、`set_form_resource` 和 `save_form_resources` 工具。语言参数为必填项；单个文案修改优先使用 `set_form_resource`，避免 AI 重写或覆盖其他语言、其他 ResourceId。
+多语言 HTML/XFD Form Resources 使用专用的 `get_form_resources`、`set_form_resource` 和 `save_form_resources` 工具。语言参数为必填项，`ResourceId` 区分大小写；单个文案修改优先使用 `set_form_resource`。批量保存既接受 STARLIMS 服务器的 `ResourcesDataset/ResourcesTable` 格式，也接受设计器中常用的 `<Resources><Resource><Id>…</Id><Value>…</Value></Resource></Resources>` 粘贴格式；后者会转换并合并到服务器文档，保留已有 GUID、`GUIDE` 等仅存在于服务器的资源，并在写后回读校验。HTML Form 保存还会验证并修复 Form XML 中的 Resources 加载配置，从企业树获取真实 Form GUID，保留已有层级回退配置。详见 [Resources 保存与加载](docs/FORM_RESOURCES.md)。源码管理模式下，保存成功表示工作副本已更新；已经打开的 HTML Form Designer 标签需要关闭并重新打开才能刷新缓存的 Resources 表格，运行时资源则在 Check In 时同步。
 
 ### 规则、权限与质量门禁
 
@@ -133,7 +133,7 @@ npm run dev
 ### 检查与打包
 
 ```bash
-# 准备校验过的 LSP、运行 ESLint、30 组 smoke tests 和 Renderer/Electron 构建
+# 准备校验过的 LSP、运行 ESLint、33 组 smoke tests 和 Renderer/Electron 构建
 npm run check
 
 # 生成当前平台安装包

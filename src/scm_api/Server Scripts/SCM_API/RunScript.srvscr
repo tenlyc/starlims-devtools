@@ -7,7 +7,9 @@ Date......... : 2022-04-02
 oResult := CreateUDObject();
 oResponse := CreateUDObject({
 	{"success", .T.},
-	{"data", NIL}
+	{"data", NIL},
+    {"totalRows", NIL},
+    {"rowsTruncated", .F.}
 });
 
 :TRY;
@@ -24,9 +26,10 @@ oResponse := CreateUDObject({
 	:RETURN oResponse;
 :ENDTRY;
 
-:DECLARE sURI, aParams, String, sOutputType, sEntryPoint;
+:DECLARE sURI, aParams, String, sOutputType, sEntryPoint, nMaxRows;
 String := "";
 sEntryPoint := "";
+nMaxRows := 10000;
 
 :IF !Empty(oPayload) .AND. oPayload:IsProperty("URI");
 	:DECLARE oUtils;
@@ -60,12 +63,31 @@ sEntryPoint := "";
 sOutputType := "ARRAY";
 	:IF !Empty(oPayload) .AND. oPayload:IsProperty("OutputType");
 	sOutputType := Upper(oPayload:OutputType);
-	:IF AScanExact({"SQL", "ARRAY", "XML", "JSON"}, sOutputType) <= 0;
+	:IF AScanExact({"ARRAY", "XML", "JSON"}, sOutputType) <= 0;
 		Response:StatusCode := 400;
     oResponse:success := .F.;
-		oResponse:data := "Invalid output type. Must be one of: SQL, ARRAY, XML, JSON.";
+		oResponse:data := "Invalid output type. Must be one of: ARRAY, XML, JSON.";
 		:RETURN oResponse;
 	:ENDIF;
+:ENDIF;
+
+:IF oPayload:IsProperty("MaxRows");
+    nMaxRows := oPayload:MaxRows;
+    :IF LimsTypeEx(nMaxRows) != "NUMERIC";
+        oResponse:success := .F.;
+        oResponse:data := "MaxRows must be a positive integer.";
+        :RETURN oResponse;
+    :ENDIF;
+    :IF nMaxRows < 1 .OR. nMaxRows > 10000 .OR. nMaxRows != Round(nMaxRows, 0);
+        oResponse:success := .F.;
+        oResponse:data := "MaxRows must be an integer between 1 and 10000.";
+        :RETURN oResponse;
+    :ENDIF;
+:ENDIF;
+:IF !Empty(sEntryPoint) .AND. (oEnterpriseItem:Type == "DS" .OR. oEnterpriseItem:Type == "APPDS");
+    oResponse:success := .F.;
+    oResponse:data := "Data sources do not support EntryPoint.";
+    :RETURN oResponse;
 :ENDIF;
 
 :DECLARE sScript;
@@ -88,14 +110,18 @@ sOutputType := "ARRAY";
 		:CASE oEnterpriseItem:Type == "DS";
 			sScript := oEnterpriseItem:CategoryName + "." + oEnterpriseItem:Name;
 			:DECLARE oRunDSResult;
-			oRunDSResult := DoProc("RunDataSource", {sScript});
+			oRunDSResult := DoProc("RunDataSource", {sScript, sOutputType, aParams, nMaxRows});
 			oResponse:success := oRunDSResult:success;
+            oResponse:totalRows := oRunDSResult:totalRows;
+            oResponse:rowsTruncated := oRunDSResult:rowsTruncated;
 			oResult := oRunDSResult:data;
 		:EXITCASE;
 		:CASE oEnterpriseItem:Type == "APPDS";
 			sScript := oEnterpriseItem:AppName + "." + oEnterpriseItem:Name;
-			oRunDSResult := DoProc("RunDataSource", {sScript});
+			oRunDSResult := DoProc("RunDataSource", {sScript, sOutputType, aParams, nMaxRows});
 			oResponse:success := oRunDSResult:success;
+            oResponse:totalRows := oRunDSResult:totalRows;
+            oResponse:rowsTruncated := oRunDSResult:rowsTruncated;
 			oResult := oRunDSResult:data;
 		:EXITCASE;
 		:OTHERWISE;
@@ -104,6 +130,23 @@ sOutputType := "ARRAY";
 			:RETURN oResponse;
 		:EXITCASE;
 	:ENDCASE;
+    :IF oEnterpriseItem:Type == "SS" .OR. oEnterpriseItem:Type == "APPSS";
+        :IF sOutputType == "JSON";
+            oResult := ToJson(oResult);
+        :ENDIF;
+        :IF sOutputType == "XML";
+            :IF LimsTypeEx(oResult) != "STRING";
+                oResponse:success := .F.;
+                oResponse:data := "Script executed, but its result is not XML text. Do not automatically retry execution.";
+                :RETURN oResponse;
+            :ENDIF;
+            :IF !("<" $ oResult);
+                oResponse:success := .F.;
+                oResponse:data := "Script executed, but its result is not XML text. Do not automatically retry execution.";
+                :RETURN oResponse;
+            :ENDIF;
+        :ENDIF;
+    :ENDIF;
 :CATCH;
 	UsrMes("ERROR:" + sScript, GetLastSSLError():FullDescription);
 	Response:StatusCode := 500;
@@ -119,32 +162,44 @@ Response:StatusCode := 200;
 :RETURN oResponse;
 
 :PROCEDURE RunDataSource;
-:PARAMETERS sDataSourceName, sOutputType;
+:PARAMETERS sDataSourceName, sOutputType, aParams, nMaxRows;
 :DEFAULT sDataSourceName, "";
 :DEFAULT sOutputType, "ARRAY";
+:DEFAULT aParams, {};
+:DEFAULT nMaxRows, 10000;
 	
 	sOutputType := Upper(sOutputType);
 	
 	:DECLARE sXML, oRunReturn, oResult, oDataSet;
 	oRunReturn := CreateUDObject({
 		{"success", .T.},
-		{"data", NIL}
+		{"data", NIL},
+        {"totalRows", 0},
+        {"rowsTruncated", .F.}
 	});
 	
-	sXML := RunDS(sDataSourceName,, "XML"); 
+	sXML := RunDS(sDataSourceName, aParams, "XML");
 	
-	:IF !("<?xml" $ sXML);
+	:IF !AllTrim(sXML):StartsWith("<");
 		/* most likely an error occurred;
 		oRunReturn:success := .F.;
+        oRunReturn:data := sXML;
+        :RETURN oRunReturn;
 	:ENDIF;
 	
+    oDataSet := DoProc("Enterprise_Server.DataSetSupport.DSFromString", {sXML});
+    oRunReturn:totalRows := oDataSet:Tables[0]:Rows:Count;
+    oRunReturn:rowsTruncated := oRunReturn:totalRows > nMaxRows;
+    :WHILE oDataSet:Tables[0]:Rows:Count > nMaxRows;
+        oDataSet:Tables[0]:Rows:RemoveAt(oDataSet:Tables[0]:Rows:Count - 1);
+    :ENDWHILE;
+
 	:BEGINCASE;
 		:CASE sOutputType == "XML";
-			oResult := sXML;	
+			oResult := oDataSet:GetXml();
 		:EXITCASE;
 		:CASE sOutputType == "ARRAY";
 			:DECLARE aHeader, i;
-			oDataSet := DoProc("Enterprise_Server.DataSetSupport.DSFromString", {sXML});
 			aHeader := ArrayNew(oDataSet:Tables[0]:Columns:Count);
 			:FOR i:=0 :TO oDataSet:Tables[0]:Columns:Count-1;
 				aHeader[i+1] := oDataSet:Tables[0]:Columns[i]:ColumnName;
@@ -152,7 +207,6 @@ Response:StatusCode := 200;
 			oResult := ArrayCalc({aHeader}, "MERGE", DoProc("Enterprise_Server.DataSetSupport.DSToArray", {oDataSet}));
 		:EXITCASE;
 		:CASE sOutputType == "JSON";
-			oDataSet := DoProc("Enterprise_Server.DataSetSupport.DSFromString", {sXML});
 			oResult := ToJson(oDataSet);
 		:EXITCASE;
 	:ENDCASE;

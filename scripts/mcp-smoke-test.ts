@@ -37,6 +37,7 @@ try {
   await client.connect(transport);
 
   const tools = await client.listTools();
+  for (const name of ['get_menu_configuration','plan_menu_item','apply_menu_item']) assert.ok(tools.tools.some(tool=>tool.name===name));
   assert.ok(tools.tools.some((tool) => tool.name === 'get_item_code'));
   assert.ok(tools.tools.some((tool) => tool.name === 'save_item'));
   assert.ok(tools.tools.some((tool) => tool.name === 'get_form_resources'));
@@ -47,6 +48,11 @@ try {
   assert.ok(tools.tools.some((tool) => tool.name === 'validate_ssl'));
   assert.ok(tools.tools.some((tool) => tool.name === 'get_editor_diagnostics'));
   assert.ok(tools.tools.some((tool) => tool.name === 'get_devtools_output'));
+  assert.ok(tools.tools.some((tool) => tool.name === 'create_item'));
+  assert.ok(tools.tools.some((tool) => tool.name === 'create_table'));
+  assert.ok(tools.tools.some((tool) => tool.name === 'edit_table'));
+  assert.ok(tools.tools.some((tool) => tool.name === 'checkout_table'));
+  assert.ok(tools.tools.some((tool) => tool.name === 'checkin_table'));
 
   const capabilities = await client.callTool({ name: 'get_capabilities', arguments: {} });
   const capabilityDocument = capabilities.structuredContent as {
@@ -63,10 +69,24 @@ try {
   assert.ok(capabilityDocument.backend?.some((component) => component.name === 'SCM_API' && component.source?.includes('MrDoe/starlimsvscode') && component.source?.includes('tenlyc/starlims-mcp')));
   assert.equal(capabilityDocument.backend?.filter((component) => component.name === 'SCM_API').length, 1);
 
+  assert.ok(capabilityDocument.tools?.some(tool => tool.id === 'capture_form_screenshot'));
+  assert.ok(tools.tools.some(tool => tool.name === 'open_form_preview'));
+  assert.equal(capabilityDocument.tools?.length, tools.tools.length - 1);
+
   const result = await client.callTool({ name: 'browse_tree', arguments: { uri: '/Applications', maxItems: 10 } });
   assert.equal(result.isError, undefined);
   assert.equal(calls[0]?.tool, 'browse_tree');
   assert.deepEqual(calls[0]?.arguments_, { uri: '/Applications', maxItems: 10 });
+
+  const created = await client.callTool({
+    name: 'create_item',
+    arguments: { itemName: 'AI_Test', itemType: 'APP', language: 'ENG', categoryName: 'TestApp', appName: 'AI_Test' }
+  });
+  assert.equal(created.isError, undefined);
+  assert.equal(calls.at(-1)?.tool, 'create_item');
+  assert.deepEqual(calls.at(-1)?.arguments_, {
+    itemName: 'AI_Test', itemType: 'APP', language: 'ENG', categoryName: 'TestApp', appName: 'AI_Test'
+  });
 
   const validation = await client.callTool({
     name: 'validate_ssl', arguments: { code: ':RETURN 1;', dataSource: false }

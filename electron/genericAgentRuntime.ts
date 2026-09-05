@@ -1,3 +1,5 @@
+import { isGenericCacheableRead } from '../src/services/genericToolContext';
+import { VISUAL_GENERIC_TOOLS, VISUAL_MCP_TOOL_INFO } from './visualMcpTools';
 import { net } from 'electron';
 import { randomUUID } from 'crypto';
 import { getProfileTools } from '@tenlyc/starlims-mcp';
@@ -47,8 +49,9 @@ const BUILTIN_TOOLS: GenericBuiltinTool[] = DEVTOOLS_PROFILE_TOOLS.map((tool) =>
 });
 for (const tool of DEVTOOLS_LOCAL_MCP_TOOLS) {
   const { $schema: _schema, ...parameters } = z.toJSONSchema(tool.inputSchema) as Record<string, unknown>;
-  BUILTIN_TOOLS.push({ name: tool.id, description: tool.description, parameters, readOnly: true });
+  BUILTIN_TOOLS.push({ name: tool.id, description: tool.description, parameters, readOnly: tool.risk === 'read' });
 }
+BUILTIN_TOOLS.push(...VISUAL_GENERIC_TOOLS);
 BUILTIN_TOOLS.unshift({
   name: 'get_capabilities',
   description: 'Describe the active STARLIMS tools, provenance, risk levels, adapter capabilities, and backend components.',
@@ -67,7 +70,7 @@ export function genericAgentCapabilities(): Record<string, unknown> {
     tools: [...DEVTOOLS_PROFILE_TOOLS.map(({ id, title, origin, provenance, risk, capability, schemaVersion, profiles }) => ({
       id, title, origin, provenance,
       risk, capability, schemaVersion, profiles
-    })), ...DEVTOOLS_LOCAL_MCP_TOOLS.map(({ inputSchema: _inputSchema, ...tool }) => tool)],
+    })), ...DEVTOOLS_LOCAL_MCP_TOOLS.map(({ inputSchema: _inputSchema, ...tool }) => tool), ...VISUAL_MCP_TOOL_INFO],
     backend: [{ name: 'SCM_API', source: 'MrDoe/starlimsvscode + tenlyc/starlims-mcp', commit: '92b9014244eb09a56ed589db5155c3b7914b70a2' }]
   };
 }
@@ -82,7 +85,7 @@ export const GENERIC_AGENT_SYSTEM_PROMPT = [
   'When the request concerns an editor error, warning, failed operation, or runtime log, call get_editor_diagnostics or get_devtools_output with focused filters; call read_log only for the remote STARLIMS user log. Do not fetch these panels for unrelated tasks.',
   'For a remote edit: resolve and read the item, check it out when needed, save the complete updated code with the same language, then read it again to verify the saved result.',
   'Before saving Server Scripts, Data Sources, or other SSL code, call validate_ssl with the complete proposed source and fix all error diagnostics.',
-  'For multilingual HTML/XFD form resources, use get_form_resources with the requested language and prefer set_form_resource for one ResourceId; use save_form_resources only for intentional whole-document edits.',
+  'For multilingual HTML/XFD form resources, use get_form_resources with the requested language and prefer set_form_resource for one ResourceId. ResourceId matching is case-sensitive, so copy every ID exactly from the form. save_form_resources accepts either the server ResourcesDataset XML for an explicit full replacement or designer-paste <Resources><Resource><Id>...</Id><Value>...</Value></Resource></Resources> XML for a non-destructive merge that preserves existing GUIDs and server-only entries such as GUIDE. HTML resource saves also verify and repair the standard Form XML Resources loading binding using the enterprise GUID and explicit language. A successful resource save verifies only the source-control working copy; tell the user to close and reopen an already-open HTML Form Designer tab to reload its cached Resources grid, and do not claim runtime localization is active until check-in plus read-back or visual verification.',
   'Never check in or undo checkout unless the user explicitly requests it. Never claim a remote change succeeded unless the corresponding tool confirms it.',
   'If a write tool is unavailable, explain that the current conversation mode is read-only instead of pretending to edit. Answer in the user\'s language.'
 ].join(' ');
@@ -281,6 +284,7 @@ export class GenericAgentRuntime {
             return;
           }
           for (const call of calls) {
+            controller.signal.throwIfAborted();
             const name = String(call?.function?.name || 'unknown_tool');
             const itemId = String(call.id || randomUUID());
             let args: Record<string, unknown> = {};
@@ -291,7 +295,10 @@ export class GenericAgentRuntime {
               const builtinTool = BUILTIN_TOOLS.find((tool) => tool.name === name);
               const externalReadOnly = this.externalMcp.hasTool(name) && this.externalMcp.isToolReadOnly(name);
               const cacheKey = mcpReadCacheKey(name, args);
-              if ((builtinTool?.readOnly || externalReadOnly) && readResultCache.has(cacheKey)) {
+              const cacheable = !['get_menu_configuration','plan_menu_item'].includes(name) && (builtinTool?.readOnly || externalReadOnly) && !VISUAL_GENERIC_TOOLS.some(tool => tool.name === name);
+              // A write or execution may alter any queried dependency, even when it fails midway.
+              if (!builtinTool?.readOnly && !externalReadOnly) readResultCache.clear();
+              if (cacheable && readResultCache.has(cacheKey)) {
                 output = readResultCache.get(cacheKey);
                 this.emit({ provider: 'generic', type: 'status', sessionId: this.sessionId, turnId, text: `Reused ${name} result for identical arguments.` });
               } else if (this.externalMcp.hasTool(name)) {
@@ -305,7 +312,7 @@ export class GenericAgentRuntime {
               } else {
                 output = await this.callRenderer(name, args);
               }
-              if (builtinTool?.readOnly || externalReadOnly) readResultCache.set(cacheKey, output);
+              if (cacheable && isGenericCacheableRead(true, name, output)) readResultCache.set(cacheKey, output);
               this.emit({ provider: 'generic', type: 'item', sessionId: this.sessionId, turnId, itemId, kind: 'mcp', status: 'completed', title: `starlims.${name}`, output: JSON.stringify(output, null, 2) });
             } catch (error) {
               output = { error: error instanceof Error ? error.message : String(error) };

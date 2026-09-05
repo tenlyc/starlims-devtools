@@ -15,7 +15,7 @@ export const VISUAL_MCP_CAPABILITIES = [
 const repository = 'https://github.com/tenlyc/starlims-mcp';
 
 const definitions = [
-  { id: 'open_form_preview', title: 'Open form preview', description: 'Open a STARLIMS HTML Form inside the DevTools integrated visual preview.', capability: 'forms.preview.open', schema: z.object({ uri: z.string(), guid: z.string().optional(), language: z.string().optional(), mode: z.enum(['run', 'debug', 'design']).optional() }) },
+  { id: 'open_form_preview', title: 'Open form preview', description: 'Request navigation to a STARLIMS HTML Form runtime. Opening executes form load handlers. opened is not a runtime success assertion; inspect status, content and errors after loading.', capability: 'forms.preview.open', schema: z.object({ uri: z.string(), guid: z.string().optional(), language: z.string().optional(), mode: z.enum(['run', 'debug']).optional() }) },
   { id: 'refresh_form_preview', title: 'Refresh form preview', description: 'Refresh the active integrated STARLIMS HTML Form preview.', capability: 'forms.preview.control', schema: z.object({}) },
   { id: 'set_preview_viewport', title: 'Set preview viewport', description: 'Set the active form preview to responsive, desktop, tablet, or mobile width.', capability: 'forms.preview.control', schema: z.object({ viewport: z.enum(['responsive', 'desktop', 'tablet', 'mobile']) }) },
   { id: 'capture_form_screenshot', title: 'Capture form screenshot', description: 'Capture the active form preview and return a local PNG path for visual review.', capability: 'forms.preview.capture', schema: z.object({}) },
@@ -30,7 +30,8 @@ export const VISUAL_MCP_TOOL_INFO: SharedMcpToolInfo[] = definitions.map((tool) 
   description: tool.description,
   origin: 'starlims-mcp',
   repository,
-  risk: 'read',
+  provenance: { repository, owner: 'tenlyc/starlims-mcp' },
+  risk: ['open_form_preview', 'refresh_form_preview'].includes(tool.id) ? 'execute' : 'read',
   capability: tool.capability,
   schemaVersion: '1.0',
   profiles: ['unified', 'devtools']
@@ -38,7 +39,7 @@ export const VISUAL_MCP_TOOL_INFO: SharedMcpToolInfo[] = definitions.map((tool) 
 
 export const VISUAL_GENERIC_TOOLS = definitions.map((tool) => {
   const { $schema: _schema, ...parameters } = z.toJSONSchema(tool.schema) as Record<string, unknown>;
-  return { name: tool.id, description: tool.description, parameters, readOnly: true };
+  return { name: tool.id, description: tool.description, parameters, readOnly: !['open_form_preview', 'refresh_form_preview'].includes(tool.id) };
 });
 
 const sharedPackageIncludesVisualTools = (): boolean => {
@@ -53,7 +54,7 @@ export function registerLocalVisualMcpTools(server: McpServer, invoke: RendererT
       title: tool.title,
       description: tool.description,
       inputSchema: tool.schema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+      annotations: { readOnlyHint: !['open_form_preview', 'refresh_form_preview'].includes(tool.id), destructiveHint: false, idempotentHint: !['open_form_preview', 'refresh_form_preview'].includes(tool.id), openWorldHint: false }
     }, async (rawArguments: unknown) => {
       try {
         const value = await invoke(tool.id, (rawArguments || {}) as Record<string, unknown>);

@@ -1,6 +1,6 @@
 {
   "name": "starlims-devtools",
-  "version": "1.7.0-beta.4",
+  "version": "1.7.0-beta.5",
   "description": "Cross-platform STARLIMS Development Tools with MCP integration | 跨平台 STARLIMS 开发工具",
   "main": "dist-electron/main.js",
   "author": "STARLIMS DevTools Team",
@@ -19,10 +19,12 @@
     "build:scm-api": "node scripts/build-scm-api-package.mjs",
     "build:vite": "tsc && vite build",
     "test:mcp": "tsx scripts/mcp-smoke-test.ts",
+    "test:table-readback": "tsx scripts/table-readback-smoke-test.ts",
     "test:mcp-live": "node scripts/live-mcp-smoke-test.mjs",
     "test:shared-mcp": "tsx scripts/shared-mcp-runtime-smoke-test.ts",
     "test:shared-mcp-fallback": "tsx scripts/shared-mcp-fallback-smoke-test.ts",
     "test:shared-mcp-package": "tsx scripts/shared-mcp-package-runtime-smoke-test.ts",
+    "test:form-resources-live": "node scripts/live-form-resources-binding-acceptance.mjs",
     "test:form-resources": "tsx scripts/form-resources-mcp-smoke-test.ts",
     "test:form-preview": "tsx scripts/form-preview-smoke-test.ts",
     "test:ssl": "tsx scripts/ssl-lsp-smoke-test.ts",
@@ -52,7 +54,8 @@
     "lint": "eslint src --ext ts,tsx",
     "lint:baseline": "node scripts/check-eslint-baseline.mjs",
     "test:mcp-live-write": "node scripts/live-mcp-write-acceptance.mjs",
-    "release:beta:check": "node scripts/beta-release-check.mjs"
+    "release:beta:check": "node scripts/beta-release-check.mjs",
+    "test:menu-mcp": "tsx scripts/menu-mcp-smoke-test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

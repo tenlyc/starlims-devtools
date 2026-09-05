@@ -26,6 +26,10 @@ async function main(): Promise<void> {
     const rename = await session.rename(alphaUri, { line: 0, character: 12 }, 'Alpha2');
     assert.equal(rename?.changes?.[alphaUri]?.[0]?.newText, 'Alpha2');
     assert.equal(rename?.changes?.[betaUri]?.[0]?.newText, 'Alpha2');
+    await Promise.all([session.restart(), session.restart()]);
+    assert.equal(session.status(true).running, true);
+    assert.equal(session.status(true).documents, 2);
+    assert.ok((await session.workspaceSymbols('Alpha')).some((symbol) => symbol.name === 'Alpha' && symbol.location.uri === alphaUri));
   } finally {
     await session.stop();
   }

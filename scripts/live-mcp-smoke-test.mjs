@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const endpoint = process.env.STARLIMS_DEVTOOLS_MCP_URL || 'http://127.0.0.1:3102/mcp';
 const client = new Client({ name: 'starlims-devtools-live-smoke-test', version: '1.0.0' });
+const packageVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 try {
   await client.connect(new StreamableHTTPClientTransport(new URL(endpoint)));
   const tools = await client.listTools();
-  assert.equal(tools.tools.length, 22);
-  for (const name of ['get_capabilities', 'browse_tree', 'list_checked_out_items', 'get_form_resources', 'save_form_resources', 'validate_ssl', 'get_editor_diagnostics', 'get_devtools_output']) {
+  for (const name of ['get_capabilities', 'browse_tree', 'list_checked_out_items', 'get_form_resources', 'save_form_resources', 'validate_ssl', 'get_editor_diagnostics', 'get_devtools_output', 'create_item', 'create_table', 'edit_table', 'checkout_table', 'checkin_table']) {
     assert.ok(tools.tools.some((tool) => tool.name === name), `Missing live MCP tool: ${name}`);
   }
 
@@ -18,7 +19,7 @@ try {
   const document = capabilities.structuredContent;
   assert.equal(document.profile, 'devtools');
   assert.equal(document.adapter, 'starlims-devtools-bridge');
-  assert.equal(document.version, '1.6.2');
+  assert.equal(document.version, packageVersion);
   assert.ok(document.tools.every((tool) => tool.origin === 'starlimsvscode' || tool.origin === 'starlims-mcp'));
   assert.ok(document.tools.every((tool) => Array.isArray(tool.profiles) && tool.profiles.length > 0));
   assert.equal(document.backend.filter((component) => component.name === 'SCM_API').length, 1);

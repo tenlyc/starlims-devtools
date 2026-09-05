@@ -53,6 +53,7 @@ export class SslLspSession {
   private nextId = 1;
   private pending = new Map<number | string, PendingRequest>();
   private starting?: Promise<void>;
+  private restarting?: Promise<void>;
   private workspaceRoot?: string;
   private lastError?: string;
   private documents = new Map<string, SslWorkspaceDocumentInput>();
@@ -103,6 +104,12 @@ export class SslLspSession {
   }
 
   async restart(): Promise<void> {
+    if (this.restarting) return this.restarting;
+    this.restarting = this.restartOnce();
+    try { await this.restarting; } finally { this.restarting = undefined; }
+  }
+
+  private async restartOnce(): Promise<void> {
     const documents = [...this.documents.values()];
     await this.stop();
     await this.ensureStarted();
@@ -180,9 +187,9 @@ export class SslLspSession {
     this.starting = undefined;
     this.stdout = Buffer.alloc(0);
     this.versions.clear();
+    this.rejectPending(new Error('starlims-lsp session stopped.'));
     if (!child || child.killed) return;
     child.kill();
-    this.rejectPending(new Error('starlims-lsp session stopped.'));
   }
 
   private resolveDocumentUri(sourceUri: string): string {
@@ -252,12 +259,27 @@ export class SslLspSession {
     this.lastError = undefined;
     const child = spawn(this.executable(), ['--stdio'], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     this.child = child;
-    child.stdout.on('data', (chunk: Buffer) => { this.stdout = Buffer.concat([this.stdout, chunk]); this.parseMessages(); });
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (this.child !== child) return;
+      this.stdout = Buffer.concat([this.stdout, chunk]);
+      this.parseMessages();
+    });
     child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => { if (chunk.trim()) this.lastError = chunk.trim().slice(-2000); });
-    child.once('error', (error) => { this.lastError = error.message; this.child = undefined; this.rejectPending(error); });
+    child.stderr.on('data', (chunk: string) => {
+      if (this.child === child && chunk.trim()) this.lastError = chunk.trim().slice(-2000);
+    });
+    child.once('error', (error) => {
+      if (this.child !== child) return;
+      this.lastError = error.message;
+      this.child = undefined;
+      this.rejectPending(error);
+    });
     child.once('close', (code) => {
-      if (this.child === child) this.child = undefined;
+      // A restart starts the replacement before the old process necessarily
+      // emits close. Never let that stale event reject the replacement's
+      // initialize request or clear its pending requests.
+      if (this.child !== child) return;
+      this.child = undefined;
       if (code !== 0 && code !== null) this.lastError = `starlims-lsp exited with code ${code}.`;
       this.rejectPending(new Error(this.lastError || 'starlims-lsp session closed.'));
     });

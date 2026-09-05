@@ -22,6 +22,8 @@ export type FormPreviewConsoleEntry = {
 };
 
 export type FormPreviewElementSnapshot = {
+  found?: boolean;
+  error?: string;
   selector: string;
   tagName: string;
   id: string;
@@ -41,6 +43,7 @@ export type FormPreviewScreenshot = {
 
 export type FormPreviewController = {
   config: FormPreviewConfig;
+  status: () => { surface: 'runtime' | 'layout'; loading: boolean; url: string };
   reload: () => void;
   setViewport: (viewport: FormPreviewViewport) => void;
   capture: () => Promise<FormPreviewScreenshot>;

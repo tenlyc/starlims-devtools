@@ -1,5 +1,5 @@
 /******************************************************************************
-Description.. :	Check out item
+Description.. :	Check in item and propagate native provider errors
 Author....... :	DC
 Date......... : 2023-06-02
 *******************************************************************************/;
@@ -56,45 +56,58 @@ sType := oEnterpriseItem:Type;
 		:CASE sType == "SS";
 			sItemName := sCategory + "." + sItemName;
 			sItemID := oUtils:GetItemGUID(sItemName, sType);
-			DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "ServerScript", NIL, sReason, NIL, .F.});
+			oResult := DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "ServerScript", NIL, sReason, NIL, .F.});
 		:EXITCASE;
 		:CASE sType == "APPSS";
 			sItemName := sAppName + "." + sItemName;
 			sItemID := oUtils:GetItemGUID(sItemName, sType);
-			DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "AppServerScript", NIL, sReason, NIL, .F.});
+			oResult := DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "AppServerScript", NIL, sReason, NIL, .F.});
 		:EXITCASE;
 		:CASE sType == "CS";
 			sItemName := sCategory + "." + sItemName;
 			sItemID := oUtils:GetItemGUID(sItemName, sType);
-			DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "ClientScript", NIL, sReason, NIL, .F.});
+			oResult := DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "ClientScript", NIL, sReason, NIL, .F.});
 		:EXITCASE;
 		:CASE sType == "APPCS";
 			sItemName := sAppName + "." + sItemName;
 			sItemID := oUtils:GetItemGUID(sItemName, sType);
-			DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "AppClientScript", NIL, sReason, NIL, .F.});
+			oResult := DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "AppClientScript", NIL, sReason, NIL, .F.});
 		:EXITCASE;
 		:CASE sType == "DS";
 			sItemName := sCategory + "." + sItemName;
 			sItemID := oUtils:GetItemGUID(sItemName, sType);
-			DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "DataSourceScript", NIL, sReason, NIL, .F.});
+			oResult := DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "DataSourceScript", NIL, sReason, NIL, .F.});
 		:EXITCASE;
 		:CASE sType == "APPDS";
 			sItemName := sAppNAme + "." + sItemName;
 			sItemID := oUtils:GetItemGUID(sItemName, sType);
-			DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "AppDataSourceScript", NIL, sReason, NIL, .F.});
+			oResult := DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "AppDataSourceScript", NIL, sReason, NIL, .F.});
 		:EXITCASE;
 		:CASE sType == "HTMLFORMXML" .OR. sType == "HTMLFORMCODE" .OR.
-			sType == "XFDFORMXML" .OR. sType == "XFDFORMCODE" .OR. sType == "HTMLFORMGUIDE";
+			sType == "XFDFORMXML" .OR. sType == "XFDFORMCODE" .OR. sType == "HTMLFORMGUIDE" .OR.
+            sType == "HTMLFORMRESOURCES" .OR. sType == "XFDFORMRESOURCES";
 			sItemName := sAppName + "." + sItemName;
 			sItemID := oUtils:GetItemGUID(sItemName, sType);
-			DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "Form", sUserLang, sReason, NIL, .F.});
+			oResult := DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "Form", MYUSERNAME, sReason, NIL, .F.});
 		:EXITCASE;
 		:CASE sType == "TABLE";
 			sItemName := sCategory + "." + sItemName;
 			sItemID := oUtils:GetItemGUID(sItemName, sType);
-			DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "Table", NIL, sReason, NIL, .F.});
+			oResult := DoProc("Enterprise_Data_Providers.CheckInProvider.CheckInItem", {sItemID, "Table", NIL, sReason, NIL, .F.});
 		:EXITCASE;
-	:ENDCASE; 
+        :OTHERWISE;
+            Response:StatusCode := 400;
+            oResponse:success := .F.;
+            oResponse:data := "Unsupported check-in item type: " + sType;
+            :RETURN oResponse;
+        :EXITCASE;
+	:ENDCASE;
+    :IF LimsTypeEx(oResult) == "STRING" .AND. Upper(oResult):StartsWith("ERROR");
+        Response:StatusCode := 400;
+        oResponse:success := .F.;
+        oResponse:data := oResult;
+        :RETURN oResponse;
+    :ENDIF;
 :CATCH;
 	:DECLARE Error;
 	Error := GetLastSSLError();

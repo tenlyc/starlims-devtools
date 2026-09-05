@@ -37,23 +37,40 @@ export interface EnterpriseItem {
 
 export interface CheckOutResult {
   success: boolean;
+  alreadyCheckedOut?: boolean;
+  checkoutLanguage?: string;
   localPath?: string;
   message?: string;
 }
 
 export interface CheckInResult {
   success: boolean;
+  checkedIn?: boolean;
+  verified?: boolean;
+  verification?: 'checkout_released';
+  targetUri?: string;
+  guid?: string;
   message?: string;
+}
+
+export interface ExecutionOptions {
+  entryPoint?: string;
+  outputType?: 'ARRAY' | 'JSON' | 'XML';
+  maxRows?: number;
 }
 
 export interface ScriptResult {
   success: boolean;
-  output?: string;
+  output?: unknown;
+  totalRows?: number;
+  rowsTruncated?: boolean;
   error?: string;
   executionTime?: number;
 }
 
 export interface DataSourceResult {
+  totalRows?: number;
+  rowsTruncated?: boolean;
   success: boolean;
   output?: unknown;
   error?: string;
@@ -75,6 +92,12 @@ export interface QueryResult {
   rowCount: number;
   error?: string;
   executionTime?: number;
+}
+
+export interface TableMutationResult {
+  success: boolean;
+  data?: unknown;
+  error?: string;
 }
 
 export interface SearchResult {
@@ -185,8 +208,8 @@ export interface IEnterpriseService {
   }): Promise<EnterpriseItem[]>;
 
   // Script execution
-  runScript(uri: string, parameters?: unknown[]): Promise<ScriptResult>;
-  runDataSource(uri: string): Promise<DataSourceResult>;
+  runScript(uri: string, parameters?: unknown[], options?: ExecutionOptions): Promise<ScriptResult>;
+  runDataSource(uri: string, parameters?: unknown[], options?: ExecutionOptions): Promise<DataSourceResult>;
 
   // SQL Query execution
   executeQuery(sql: string): Promise<QueryResult>;
@@ -198,7 +221,7 @@ export interface IEnterpriseService {
   designHTMLForm(uri: string): Promise<boolean>;
 
   // CRUD operations
-  addItem(parentUri: string, itemName: string, itemType: string): Promise<boolean>;
+  addItem(parentUri: string, itemName: string, itemType: string, language?: string): Promise<boolean>;
   deleteItem(uri: string): Promise<boolean>;
   renameItem(uri: string, newName: string): Promise<boolean>;
   moveItem(uri: string, destinationUri: string): Promise<boolean>;
@@ -209,6 +232,9 @@ export interface IEnterpriseService {
 
   // Table operations
   getTableDefinition(uri: string): Promise<any>;
+  getTableDefinitionXml(uri: string): Promise<string>;
+  createTable(tableName: string, dsn: string): Promise<TableMutationResult>;
+  saveTableDefinition(uri: string, tableXml: string): Promise<TableMutationResult>;
   generateTableSelect(uri: string): Promise<string>;
   generateTableInsert(uri: string): Promise<string>;
   generateTableUpdate(uri: string): Promise<string>;

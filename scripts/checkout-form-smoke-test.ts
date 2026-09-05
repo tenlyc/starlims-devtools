@@ -18,11 +18,16 @@ const xml = `
 </DataSet>`;
 
 const service = new EnterpriseService();
+let checkedIn = false;
 const languageRequests: Array<{ endpoint: string; body?: string }> = [];
 (service as unknown as {
   apiRequest: (endpoint: string, options?: { body?: string }) => Promise<unknown>;
 }).apiRequest = async (endpoint, options) => {
   languageRequests.push({ endpoint, body: options?.body });
+  if (endpoint.startsWith('Search?')) return { success: true, data: { items: [{ name: 'Form', uri: '/Applications/App/Form', guid: 'form-guid' }] } };
+  if (endpoint === 'GetCheckedOutItems') return { success: true, data: checkedIn ? [] : [{ guid: 'form-guid' }] };
+  if (endpoint.startsWith('CheckIn?')) { checkedIn = true; return { success: true, data: 'OK' }; }
+
   return endpoint === 'SaveCode' ? { success: true } : { success: true, localPath: '/tmp/item' };
 };
 
@@ -32,7 +37,7 @@ const languageVerification = service.checkOut('/Applications/App/Form', 'CHS')
   .then(() => {
     assert.match(languageRequests[0].endpoint, /UserLang=CHS/);
     assert.equal(JSON.parse(languageRequests[1].body || '{}').UserLang, 'CHS');
-    assert.match(languageRequests[2].endpoint, /UserLang=CHS/);
+    assert.match(languageRequests.find((request) => request.endpoint.startsWith('CheckIn?'))!.endpoint, /UserLang=CHS/);
   });
 
 const items = (service as unknown as {
@@ -97,3 +102,6 @@ void languageVerification.catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
+
+const missingLanguageItems = (service as unknown as { parseCheckedOutItemsXml: (source: string) => Array<{ language?: string }> }).parseCheckedOutItemsXml(xml.replace('<LANGID>ENG</LANGID>', ''));
+assert.ok(missingLanguageItems.every((item) => item.language === undefined), 'Missing native LANGID must not be replaced with session ENG.');

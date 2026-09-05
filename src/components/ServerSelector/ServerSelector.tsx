@@ -503,7 +503,7 @@ export function ServerSelector({ onConnect }: ServerSelectorProps) {
             className="px-2 py-0.5 text-xs font-medium rounded border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
             title={t('common.language')}
           >
-            {language === 'zh' ? 'EN' : '中文'}
+            {language === 'zh' ? 'English' : '中文'}
           </button>
         </div>
       </div>

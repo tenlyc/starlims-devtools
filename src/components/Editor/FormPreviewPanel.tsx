@@ -22,6 +22,7 @@ type PreviewWebView = HTMLElement & {
   executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
   capturePage: () => Promise<{ toDataURL: () => string; getSize: () => { width: number; height: number } }>;
   getWebContentsId: () => number;
+  getURL: () => string;
   openDevTools: () => void;
 };
 
@@ -40,21 +41,34 @@ const canonicalFormUri = (uri: string): string => uri
 const inspectionScript = (selector?: string, controlId?: string): string => `(() => {
   const requestedSelector = ${JSON.stringify(selector || '')};
   const requestedControlId = ${JSON.stringify(controlId || '')};
-  const element = requestedControlId
-    ? (document.getElementById(requestedControlId) || document.querySelector('[data-control-id="' + CSS.escape(requestedControlId) + '"]'))
-    : document.querySelector(requestedSelector || 'body');
-  if (!element) throw new Error('No element matched the requested selector or control ID.');
+  let element;
+  let lookupError = '';
+  try {
+    element = requestedControlId
+      ? (document.getElementById(requestedControlId) || Array.from(document.querySelectorAll('[data-control-id],[automation-id]')).find((item) => item.getAttribute('data-control-id') === requestedControlId || item.getAttribute('automation-id') === requestedControlId))
+      : document.querySelector(requestedSelector || 'body');
+    if (!element && requestedControlId && window.Ext?.ComponentQuery) {
+      const component = window.Ext.ComponentQuery.query('*').find((item) => [item.id, item.itemId, item.reference, item.name].includes(requestedControlId));
+      element = component?.getEl?.()?.dom;
+    }
+  } catch (error) { lookupError = String(error.message || error); }
+  if (!element) return {
+    found: false, error: lookupError || 'No element matched. The preview may still be showing its login shell; inspect body or capture a screenshot before claiming form acceptance.',
+    selector: requestedSelector || requestedControlId, tagName: '', id: '', className: '', text: '', html: '',
+    rect: {x:0,y:0,width:0,height:0}, attributes: {}, styles: {}
+  };
   const rect = element.getBoundingClientRect();
   const styles = getComputedStyle(element);
   const attributes = {};
   for (const attribute of element.attributes || []) attributes[attribute.name] = attribute.value;
   const uniqueSelector = element.id ? '#' + CSS.escape(element.id) : requestedSelector || element.tagName.toLowerCase();
   return {
+    found: true,
     selector: uniqueSelector,
     tagName: element.tagName,
     id: element.id || '',
     className: typeof element.className === 'string' ? element.className : '',
-    text: (element.textContent || '').trim().slice(0, 2000),
+    text: (element.innerText || element.textContent || '').trim().slice(0, 2000),
     html: element.outerHTML.slice(0, 20000),
     rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
     attributes,
@@ -73,7 +87,7 @@ const runtimeLoginScript = (user: string, password: string): string => `(() => n
   const startedAt = Date.now();
   const normalize = (value) => String(value == null ? '' : value).trim().toLowerCase();
   const isVisible = (component) => {
-    try { return !component.isHidden?.() && !component.isDisabled?.(); } catch { return true; }
+    try { return component.isVisible?.(true) !== false && !component.isHidden?.(); } catch { return true; }
   };
   const finish = (status, detail) => resolve({ status, detail: detail || '' });
   const tryLogin = () => {
@@ -94,13 +108,48 @@ const runtimeLoginScript = (user: string, password: string): string => `(() => n
         const buttons = ExtRuntime.ComponentQuery.query('button').filter(isVisible);
         const describe = (component) => normalize([
           component.reference, component.itemId, component.name, component.fieldLabel,
-          component.emptyText, component.inputType, component.getXType?.()
+          component.emptyText, component.inputType, component.getXType?.(), component.getEl?.()?.getAttribute?.('automation-id')
         ].join(' '));
+        // The user chooses the first available site and the Lims_Admin role during preview login.
+        const combos = ExtRuntime.ComponentQuery.query('combobox').filter(isVisible);
+        const site = combos.find((field) => /site|站点/.test(describe(field)));
+        const role = combos.find((field) => /role|角色/.test(describe(field)));
+        const confirm = buttons.find((button) => /^(ok|confirm|确定)$/i.test(String(button.getText?.() || button.text || '').trim()));
+        const loginShell = document.querySelector('[automation-id="LoginViewsContainerView"]');
+        if (site && role && confirm && loginShell && loginShell.getBoundingClientRect().height > 0) {
+          const selectOption = (combo, preferredRole) => {
+            const store = combo.getStore?.();
+            if (!store || store.isLoading?.()) return 'waiting';
+            const records = store.getRange?.() || [store.getAt?.(0)];
+            const record = records.find((item) => item && item.get(combo.valueField || 'id') != null && item.get(combo.valueField || 'id') !== '' && item.get('disabled') !== true
+              && (!preferredRole || [item.get(combo.valueField || 'id'), item.get(combo.displayField || 'text')].some((value) => normalize(value) === normalize(preferredRole))));
+            if (!record) return 'waiting';
+            const value = record.get(combo.valueField || 'id');
+            if (value === undefined || value === null || value === '') return 'waiting';
+            if (combo.getValue?.() === value) return 'ready';
+            combo.setValue(value);
+            combo.fireEvent?.('select', combo, record);
+            return 'changed';
+          };
+          // Selecting a site reloads the role store; choose the role on a later tick.
+          const siteState = selectOption(site);
+          const roleState = siteState === 'ready' ? selectOption(role, 'Lims_Admin') : 'waiting';
+          if (siteState === 'ready' && roleState === 'ready' && !confirm.isDisabled?.()) {
+            if (typeof confirm.fireHandler === 'function') confirm.fireHandler();
+            else confirm.getEl?.()?.dom?.click?.();
+            finish('site-role-submitted');
+            return;
+          }
+          if (Date.now() - startedAt >= 12000) { finish('selection-unavailable'); return; }
+          setTimeout(tryLogin, 250);
+          return;
+        }
         const passwordFields = fields.filter((field) => /pass|密码/.test(describe(field)));
         const userField = fields.find((field) => /user|用户名|账号|login/.test(describe(field)) && !/pass|密码/.test(describe(field)));
         const loginButton = buttons.find((button) => /^(login|log in|sign in|登录|登入|确定|连接)$/i.test(String(button.getText?.() || button.text || '').trim()))
           || buttons.find((button) => /login|sign in|登录|登入/.test(normalize(button.getText?.() || button.text)));
-        if (passwordFields.length && loginButton) {
+        if (passwordFields.length && loginButton && !window.__devtoolsPreviewCredentialsSubmitted) {
+          window.__devtoolsPreviewCredentialsSubmitted = true;
           if (userField?.setValue) userField.setValue(username);
           passwordFields.forEach((field) => field.setValue?.(password));
           // STARLIMS declares the ExtJS handler by name (onLoginClick), so a
@@ -133,8 +182,9 @@ const runtimeLoginScript = (user: string, password: string): string => `(() => n
     const inputs = Array.from(document.querySelectorAll('input'));
     const passwordInput = inputs.find((input) => input.type === 'password' || /pass|密码/i.test([input.name, input.id, input.placeholder, input.getAttribute('aria-label')].join(' ')));
     const userInput = inputs.find((input) => /user|用户名|账号|login/i.test([input.name, input.id, input.placeholder, input.getAttribute('aria-label')].join(' ')) && input !== passwordInput);
-    const button = Array.from(document.querySelectorAll('button,input[type="submit"],input[type="button"]')).find((element) => /login|log in|sign in|登录|登入|确定/i.test(String(element.textContent || element.value || '')));
-    if (passwordInput && button) {
+    const button = Array.from(document.querySelectorAll('button,a[role="button"],input[type="submit"],input[type="button"]')).find((element) => /login|log in|sign in|登录|登入|确定/i.test(String(element.textContent || element.value || '')));
+    if (passwordInput && button && !window.__devtoolsPreviewCredentialsSubmitted) {
+      window.__devtoolsPreviewCredentialsSubmitted = true;
       const setValue = (input, value) => {
         const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
         descriptor?.set?.call(input, value);
@@ -149,7 +199,9 @@ const runtimeLoginScript = (user: string, password: string): string => `(() => n
     }
 
     if (Date.now() - startedAt >= 12000) {
-      const looksLikeLogin = /login|log in|sign in|登录|用户名|密码/i.test(bodyText);
+      const loginView = document.querySelector('[automation-id="loginView"]');
+      const looksLikeLogin = inputs.some((input) => input.type === 'password' && input.getBoundingClientRect().height > 0)
+        || Boolean(loginView && loginView.getBoundingClientRect().height > 0);
       finish(looksLikeLogin ? 'login-not-recognized' : 'not-login');
       return;
     }
@@ -191,6 +243,10 @@ export function FormPreviewPanel({ content }: { content: string }) {
       return;
     }
     pendingConfigRef.current = null;
+    consoleRef.current = [];
+    loadErrorsRef.current = [];
+    runtimeLoginAttemptedRef.current = false;
+    setSurface(nextConfig.mode === 'design' ? 'layout' : 'runtime');
     setLoading(true);
     try {
       await webview.loadURL(nextConfig.url);
@@ -249,19 +305,19 @@ export function FormPreviewPanel({ content }: { content: string }) {
 
   const inspect = useCallback(async (requestedSelector?: string, controlId?: string) => {
     const webview = webviewRef.current;
-    if (!webview) throw new Error('The form preview is not ready.');
+    if (!webview || surface !== 'runtime') throw new Error('Runtime preview unavailable; local layout cannot certify runtime behavior.');
     const result = await webview.executeJavaScript(inspectionScript(requestedSelector, controlId), true) as FormPreviewElementSnapshot;
     setInspection(result);
     return result;
-  }, []);
+  }, [surface]);
 
   const capture = useCallback(async () => {
     const webview = webviewRef.current;
-    if (!webview) throw new Error('The form preview is not ready.');
+    if (!webview || surface !== 'runtime') throw new Error('Runtime preview unavailable; local layout cannot certify runtime behavior.');
     const image = await webview.capturePage();
     const size = image.getSize();
     return { dataUrl: image.toDataURL(), width: size.width, height: size.height };
-  }, []);
+  }, [surface]);
 
   const saveScreenshot = useCallback(async () => {
     if (!config) return;
@@ -294,12 +350,18 @@ export function FormPreviewPanel({ content }: { content: string }) {
       if (result?.status === 'submit-ready' && Number.isFinite(result.x) && Number.isFinite(result.y)) {
         const x = Number(result.x);
         const y = Number(result.y);
-        runtimeLoginAttemptedRef.current = true;
+        runtimeLoginAttemptedRef.current = false;
         await window.electronAPI.formPreviewClick(webview.getWebContentsId(), x, y);
         setLoading(false);
         return true;
       }
-      if (result?.status === 'unauthorized' || result?.status === 'login-not-recognized') {
+      if (result?.status === 'site-role-submitted') {
+        runtimeLoginAttemptedRef.current = true;
+      } else if (result?.status === 'selection-unavailable') {
+        runtimeLoginAttemptedRef.current = true;
+        loadErrorsRef.current = [...loadErrorsRef.current, 'Could not select the first available site and Lims_Admin role. Check that Lims_Admin is assigned to this account for the selected site.'].slice(-50);
+        setErrorRevision((value) => value + 1);
+      } else if (result?.status === 'unauthorized' || result?.status === 'login-not-recognized') {
         runtimeLoginAttemptedRef.current = true;
         loadErrorsRef.current = [...loadErrorsRef.current, result.status === 'unauthorized'
           ? 'STARLIMS Runtime rejected the preview session.'
@@ -381,7 +443,7 @@ export function FormPreviewPanel({ content }: { content: string }) {
     // Some STARLIMS Runtime builds render their ExtJS login shell after the
     // navigation events have completed. These retries make that late-rendered
     // form deterministic without submitting more than once.
-    const retryTimers = [1500, 5000, 10000].map((delay) => window.setTimeout(() => {
+    const retryTimers = [1500, 5000, 10000, 20000, 30000].map((delay) => window.setTimeout(() => {
       void attemptRuntimeLogin(webview);
     }, delay));
     void loadPreview(config);
@@ -401,6 +463,7 @@ export function FormPreviewPanel({ content }: { content: string }) {
     if (!config) return;
     return registerFormPreviewController({
       config,
+      status: () => ({ surface, loading, url: webviewRef.current?.getURL() || config.url }),
       reload: () => void loadPreview(config),
       setViewport,
       capture,
@@ -408,7 +471,7 @@ export function FormPreviewPanel({ content }: { content: string }) {
       consoleEntries: () => [...consoleRef.current],
       loadErrors: () => [...loadErrorsRef.current]
     });
-  }, [capture, config, inspect, loadPreview]);
+  }, [capture, config, inspect, loadPreview, surface, loading]);
 
   useEffect(() => {
     const refresh = (event: Event) => {
@@ -444,7 +507,7 @@ export function FormPreviewPanel({ content }: { content: string }) {
     <div className="flex h-full min-h-0 flex-col bg-slate-100 dark:bg-[#181818]">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-slate-300 bg-white px-2 dark:border-[#343434] dark:bg-[#202020]">
         <select className="h-7 rounded border border-slate-300 bg-transparent px-2 text-xs dark:border-[#4a4a4a]" value={config.mode} onChange={(event) => void changePreview(event.target.value as FormPreviewMode, config.language)}>
-          <option value="run">{t('preview.run')}</option><option value="debug">{t('preview.debug')}</option><option value="design">{t('preview.design')}</option>
+          <option value="run">{t('preview.run')}</option><option value="debug">{t('preview.debug')}</option>
         </select>
         <select className="h-7 rounded border border-slate-300 bg-transparent px-2 text-xs dark:border-[#4a4a4a]" value={config.language} onChange={(event) => void changePreview(config.mode, event.target.value)}>
           {Array.from(new Set([config.language, ...languages])).map((language) => <option key={language} value={language}>{language}</option>)}

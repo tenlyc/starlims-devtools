@@ -1,8 +1,11 @@
+import type { ExecutionOptions } from './iEnterpriseService';
 import { SSLParser } from '../lsp/ssl/parser';
 import type { CheckInResult, CheckOutResult, DataSourceResult, QueryResult, ScriptResult } from './iEnterpriseService';
 import { getEnterpriseService } from './enterpriseService';
 import { loadAiLayers, mergeAiLayers } from './aiPlatform';
 import { useOutputLogStore } from './outputLogStore';
+import { tableDefinitionId, tableDefinitionVersion, waitForTableReadBack } from './tableDefinitionReadBack';
+import { checkinTargetUri } from './checkinVerification';
 
 export type WriteGateSource = 'editor' | 'workspace' | 'agent' | 'extension';
 
@@ -101,10 +104,63 @@ export async function saveItemWithGate(input: SaveGateInput): Promise<{ saved: b
 
 export async function checkoutItemWithGate(context: MutationContext): Promise<CheckOutResult> {
   assertAuthorized(context);
+  const service = getEnterpriseService();
+  if ((context.source === 'agent' || context.source === 'extension') && /\/(HTMLForms|XFDForms)\//i.test(context.uri)) {
+    const target = checkinTargetUri(context.uri).toLowerCase();
+    const family = (await service.getCheckedOutItems(false, true)).filter((item) => checkinTargetUri(item.uri || item.id).toLowerCase() === target);
+    if (family.length) {
+      const owner = service.getCurrentServer()?.user?.toLowerCase();
+      if (!owner || family.some((item) => item.checkedOutBy && item.checkedOutBy.toLowerCase() !== owner)) throw new Error('Form family is already checked out by another user.');
+      const languages = [...new Set(family.map((item) => item.language).filter(Boolean))];
+      if (context.language && (languages.length !== 1 || languages[0] !== context.language)) {
+        throw new Error(`Form family is already checked out in ${languages.join(', ') || 'an unverified language'}. Preserve existing changes and resolve that checkout before switching to ${context.language}; no checkout was performed.`);
+      }
+      audit(context, 'success', 'existing form family checkout preserved');
+      return { success: true, alreadyCheckedOut: true, checkoutLanguage: languages[0] || undefined };
+    }
+  }
   audit(context, 'info', 'checkout started');
-  const result = await getEnterpriseService().checkOut(context.uri, context.language);
+  const result = await service.checkOut(context.uri, context.language);
   audit(context, result.success ? 'success' : 'error', result.success ? 'checkout completed' : result.message || 'checkout failed');
   return result;
+}
+
+export async function saveTableWithGate(input: MutationContext & {
+  action: 'save'; tableXml: string; expectedVersion: string;
+}): Promise<{ saved: boolean; fingerprint: string; definition: string; version: string; result: unknown }> {
+  assertAuthorized(input);
+  if (!input.expectedVersion) throw new Error('Read the table definition first and pass its expectedVersion before editing.');
+  tableDefinitionVersion(input.tableXml); // Reject malformed XML before any write.
+  const service = getEnterpriseService();
+  const before = await service.getTableDefinitionXml(input.uri);
+  const tableId = tableDefinitionId(before).toLowerCase();
+  const requestedId = tableDefinitionId(input.tableXml).toLowerCase();
+  if (requestedId !== tableId) throw new Error('The submitted TableDTO must retain the target table Id.');
+  await assertExpectedContentVersion(input.expectedVersion, tableDefinitionVersion(before));
+  const server = service.getCurrentServer();
+  const fingerprint = await contentVersionFingerprint({ ...input, server: server?.url || server?.name,
+    user: server?.user, before, after: input.tableXml });
+  audit(input, 'info', 'table preflight started', fingerprint);
+  const policy = mergeAiLayers(await loadAiLayers()).quality;
+  if ((input.source === 'agent' || input.source === 'extension') && policy.requirePassedTests) {
+    audit(input, 'error', 'direct AI table save blocked because passed tests are required', fingerprint);
+    throw new Error('当前质量策略要求测试通过，直接 AI 表结构保存已被阻止。');
+  }
+  const checkedOut = await service.getCheckedOutItems();
+  if (!checkedOut.some((item) => (item.uri || item.id) === input.uri
+    || (tableId && [item.id, item.uri, item.guid].some((id) => id?.toLowerCase() === tableId)))) {
+    throw new Error('Check out the table before saving its definition.');
+  }
+  // Re-read after asynchronous preflight to catch intervening edits.
+  await assertExpectedContentVersion(input.expectedVersion, tableDefinitionVersion(await service.getTableDefinitionXml(input.uri)));
+  const result = await service.saveTableDefinition(input.uri, input.tableXml);
+  if (!result.success) {
+    audit(input, 'error', result.error || 'table save failed', fingerprint);
+    throw new Error(result.error || 'Table definition save failed.');
+  }
+  const definition = await waitForTableReadBack(() => service.getTableDefinitionXml(input.uri), input.tableXml, before);
+  audit(input, 'success', 'table saved and verified', fingerprint);
+  return { saved: true, fingerprint, definition, version: await contentVersion(tableDefinitionVersion(definition)), result: result.data };
 }
 
 export async function checkInItemWithGate(context: MutationContext & { reason?: string }): Promise<CheckInResult> {
@@ -131,18 +187,18 @@ export async function undoCheckoutWithGate(context: MutationContext): Promise<bo
   return success;
 }
 
-export async function executeServerScriptWithGate(context: MutationContext & { parameters?: unknown[] }): Promise<ScriptResult> {
+export async function executeServerScriptWithGate(context: MutationContext & ExecutionOptions & { parameters?: unknown[] }): Promise<ScriptResult> {
   assertAuthorized(context);
   audit(context, 'info', 'server script execution started');
-  const result = await getEnterpriseService().runScript(context.uri, context.parameters || []);
+  const result = await getEnterpriseService().runScript(context.uri, context.parameters || [], context);
   audit(context, result.success ? 'success' : 'error', result.success ? 'server script execution completed' : result.error || 'execution failed');
   return result;
 }
 
-export async function executeDataSourceWithGate(context: MutationContext): Promise<DataSourceResult> {
+export async function executeDataSourceWithGate(context: MutationContext & ExecutionOptions & { parameters?: unknown[] }): Promise<DataSourceResult> {
   assertAuthorized(context);
   audit(context, 'info', 'data source execution started');
-  const result = await getEnterpriseService().runDataSource(context.uri);
+  const result = await getEnterpriseService().runDataSource(context.uri, context.parameters || [], context);
   audit(context, result.success ? 'success' : 'error', result.success ? 'data source execution completed' : result.error || 'execution failed');
   return result;
 }

@@ -74,7 +74,7 @@ Call `get_capabilities` after connecting to discover the tools actually register
 - DevTools adapter extensions owned by `tenlyc/starlims-mcp`: `McpGetSCMUsers`, `McpGetCheckInHistory`, `McpExportPackage`, and `McpImportPackage`;
 - the Form Designer and required client scripts, resources, images, and `CONTROL_PROPERTIES` table definition.
 
-HTML/XFD Form Resources use `get_form_resources`, `set_form_resource`, and `save_form_resources`. Language is required; prefer `set_form_resource` for a single value so agents do not overwrite other IDs or languages.
+HTML/XFD Form Resources use `get_form_resources`, `set_form_resource`, and `save_form_resources`. Language is required and `ResourceId` matching is case-sensitive; prefer `set_form_resource` for a single value. Bulk saves accept either the STARLIMS server `ResourcesDataset/ResourcesTable` format or the designer-paste `<Resources><Resource><Id>…</Id><Value>…</Value></Resource></Resources>` format. Designer input is converted and merged, preserving existing GUIDs and server-only entries such as `GUIDE`, followed by read-back verification. In source-control mode, a successful save updates the working copy. Close and reopen an already-open HTML Form Designer tab to refresh its cached Resources grid; runtime resources are synchronized at Check In.
 
 ### Rules, permissions, and quality gates
 
@@ -189,3 +189,5 @@ Issues and pull requests are welcome. Add smoke tests for new behavior and make 
 Bilingual documentation index: [docs/README.md](docs/README.md).
 
 License: [MIT](LICENSE) · Project: https://github.com/tenlyc/starlims-devtools
+
+HTML Resources saves also verify and repair the standard Form XML loading binding using the enterprise GUID and explicit language, while preserving layered fallback configuration. See [Resources save and loading](docs/FORM_RESOURCES.md).

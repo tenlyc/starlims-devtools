@@ -1,3 +1,4 @@
+import { genericToolContext } from '../../services/genericToolContext';
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -1058,7 +1059,7 @@ export function MCPPanel() {
         dependencyContext
       );
       if (selectedProvider === 'generic') {
-        await window.electronAPI.genericAgentStart({ ...genericConfig, toolPermissionPolicy: effectivePermissionPolicy }, prompt, turnImages);
+        await window.electronAPI.genericAgentStart({ ...genericConfig, toolPermissionPolicy: effectivePermissionPolicy }, [prompt, genericToolContext(entries)].filter(Boolean).join('\n\n'), turnImages);
       } else if (selectedProvider === 'opencode') {
         if (turnImages.length) throw new Error(t('agent.imageProviderUnsupported'));
         const output = await window.electronAPI.cliExecute(selectedProvider, prompt);

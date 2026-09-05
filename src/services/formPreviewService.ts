@@ -20,7 +20,9 @@ export function openFormPreviewEditor(config: FormPreviewConfig): void {
     name: `${config.formName} Preview`,
     type: FORM_PREVIEW_TYPE,
     language: config.language,
-    content: JSON.stringify(config)
+    // React batches close/open of the same tab. A new identity must remount
+    // its controller even when the requested URL and options are unchanged.
+    content: JSON.stringify({ ...config, previewInstanceId: crypto.randomUUID() })
   });
 }
 
@@ -92,7 +94,8 @@ function requireActivePreview(): FormPreviewController {
 export async function executeFormPreviewMcpTool(tool: string, args: Record<string, unknown>, provider?: 'codex' | 'generic'): Promise<unknown> {
   if (tool === 'open_form_preview') {
     const uri = String(args.uri || '').trim();
-    if (!uri) throw new Error('open_form_preview requires a STARLIMS HTML Form URI.');
+    if (!/\/HTMLForms\/(?:XML|CodeBehind|Guide|Resources)\//i.test(uri)) throw new Error('open_form_preview requires a STARLIMS HTML Form URI.');
+    if (args.mode && !['run', 'debug'].includes(String(args.mode))) throw new Error('MCP preview supports run or debug mode only.');
     const config = await getEnterpriseService().getHTMLFormPreviewConfig(
       uri,
       args.guid ? String(args.guid) : undefined,
@@ -100,35 +103,38 @@ export async function executeFormPreviewMcpTool(tool: string, args: Record<strin
       args.language ? String(args.language) : undefined
     );
     if (!config) throw new Error('Could not resolve the HTML Form GUID or active STARLIMS session.');
+    activeController = null;
     openFormPreviewEditor(config);
-    return { opened: true, formName: config.formName, mode: config.mode, language: config.language, uri: config.sourceUri };
+    return { opened: true, runtimeVerified: false, loading: true, formName: config.formName, mode: config.mode, language: config.language, uri: config.sourceUri };
   }
 
   const preview = requireActivePreview();
+  const status = preview.status();
   switch (tool) {
     case 'refresh_form_preview':
       preview.reload();
-      return { refreshed: true, uri: preview.config.sourceUri };
+      return { status: { ...status, loading: true }, refreshed: true, uri: preview.config.sourceUri };
     case 'set_preview_viewport': {
       const viewport = normalizePreviewViewport(args.viewport);
       preview.setViewport(viewport);
-      return { viewport };
+      return { viewport, status };
     }
     case 'inspect_form_element':
-      return preview.inspect(args.selector ? String(args.selector) : undefined, args.controlId ? String(args.controlId) : undefined);
+      return { ...await preview.inspect(args.selector ? String(args.selector) : undefined, args.controlId ? String(args.controlId) : undefined), status };
     case 'get_preview_console_errors': {
       const entries = preview.consoleEntries().filter((entry) => entry.level >= 2);
-      return { entries, totalItems: entries.length };
+      return { status, entries, totalItems: entries.length };
     }
     case 'get_preview_load_errors': {
       const errors = preview.loadErrors();
-      return { errors, totalItems: errors.length };
+      return { status, errors, totalItems: errors.length };
     }
     case 'capture_form_screenshot': {
       const screenshot = await preview.capture();
       const filePath = await window.electronAPI.formPreviewSaveScreenshot(screenshot.dataUrl, preview.config.formName);
       return {
         filePath,
+        status,
         width: screenshot.width,
         height: screenshot.height,
         uri: preview.config.sourceUri,

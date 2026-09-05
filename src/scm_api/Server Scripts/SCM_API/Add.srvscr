@@ -182,7 +182,15 @@ oUtils := CreateUDObject("SCM_API.Utils", {});
 		:EXITCASE;
 
 		:CASE sItemType == "APPDS";
-			sScriptLang := "SQL";
+			sScriptLang := Upper(sScriptLang);
+            :IF sScriptLang == "SSL";
+                sScriptLang := "STARLIMS";
+            :ENDIF;
+            :IF AScanExact({"SQL", "STARLIMS"}, sScriptLang) <= 0;
+                oResponse:success := .F.;
+                oResponse:data := "Data source Language must be SQL, STARLIMS or SSL.";
+                :RETURN oResponse;
+            :ENDIF;
 			DoProc("Enterprise_Data_Providers.AppDataSourceProvider.Add", {sAppID, sItemName, "", sScriptLang});
 		:EXITCASE;
 
@@ -205,7 +213,15 @@ oUtils := CreateUDObject("SCM_API.Utils", {});
 		:EXITCASE;
 
 		:CASE sItemType == "DS";
-			sScriptLang := "SQL";
+			sScriptLang := Upper(sScriptLang);
+            :IF sScriptLang == "SSL";
+                sScriptLang := "STARLIMS";
+            :ENDIF;
+            :IF AScanExact({"SQL", "STARLIMS"}, sScriptLang) <= 0;
+                oResponse:success := .F.;
+                oResponse:data := "Data source Language must be SQL, STARLIMS or SSL.";
+                :RETURN oResponse;
+            :ENDIF;
 			DoProc("Enterprise_Data_Providers.DataSourceProvider.Add", {sCategoryID, sItemName, "", sScriptLang});
 		:EXITCASE;
 

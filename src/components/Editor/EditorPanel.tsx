@@ -22,10 +22,9 @@ import { FormPreviewPanel } from './FormPreviewPanel';
 import { FORM_PREVIEW_TYPE, openFormPreviewEditor } from '../../services/formPreviewService';
 import type { FormPreviewMode } from '../../types/formPreview';
 
-// The integrated Form preview remains available to automated tests and future
-// development, but its editor actions stay hidden until Runtime/Designer
-// compatibility is reliable across supported STARLIMS versions.
-const ENABLE_FORM_PREVIEW_UI = false;
+// Runtime preview and debug are verified; the full Designer remains experimental.
+const ENABLE_FORM_PREVIEW_UI = true;
+const ENABLE_FORM_DESIGN_UI = false;
 
 interface EditorContextMenu {
   x: number;
@@ -1249,7 +1248,7 @@ export function EditorPanel() {
           if (result.output) {
             addEntry({
               level: 'info',
-              message: result.output,
+              message: typeof result.output === 'string' ? result.output : JSON.stringify(result.output),
               source: 'Editor'
             });
           }
@@ -1455,7 +1454,7 @@ export function EditorPanel() {
             </button>
           )}
           {/* Design Form button - for HTML Forms */}
-          {ENABLE_FORM_PREVIEW_UI && activeFile && (
+          {ENABLE_FORM_DESIGN_UI && activeFile && (
             (activeFile.type === 'HTMLFORMXML' || activeFile.type === 'HTMLFORMCODE')
           ) && (
             <button
@@ -1558,7 +1557,7 @@ export function EditorPanel() {
 
       {/* Editor content */}
       <div className="flex-1 overflow-hidden" onContextMenu={handleContextMenu}>
-        {activeFile?.type === 'CUSTOMIZE' ? <CustomizePage /> : activeFile?.type === FORM_PREVIEW_TYPE ? <FormPreviewPanel content={activeFile.content} /> : activeFile ? (
+        {activeFile?.type === 'CUSTOMIZE' ? <CustomizePage /> : activeFile?.type === FORM_PREVIEW_TYPE ? <FormPreviewPanel key={activeFile.content} content={activeFile.content} /> : activeFile ? (
           <MonacoEditor
             key={`${currentActiveUri || 'empty'}-${settingsKey}`}
             path={activeFile.uri}
@@ -1786,13 +1785,13 @@ export function EditorPanel() {
                 <span>🐛</span>
                 <span>{t('editor.debugForm')}</span>
               </button>
-              <button
+              {ENABLE_FORM_DESIGN_UI && <button
                 className="w-full px-3 py-2 text-left text-sm text-purple-600 dark:text-purple-400 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
                 onClick={() => { handleDesignForm(); setContextMenu(null); }}
               >
                 <span>🎨</span>
                 <span>{t('editor.designForm')}</span>
-              </button>
+              </button>}
               <div className="border-t border-slate-200 dark:border-slate-600 my-1" />
             </>
           )}

@@ -1,13 +1,21 @@
+import { MenuMcpService } from '../../services/menuMcpService';
+import { menuSchemas } from '../../services/menuMcpSchema';
+import { executionArguments, boundedExecutionResult } from '../../services/mcpExecution';
 import { useEffect } from 'react';
 import { getEnterpriseService } from '../../services/enterpriseService';
 import { useOutputLogStore } from '../../services/outputLogStore';
 import { isStateChangingMcpTool, requiresMcpApproval } from '../../services/agentPermissions';
 import { requestInlineMcpApproval, useMcpApprovalStore } from '../../services/mcpApprovalStore';
 import { assertExpectedContentVersion, checkInItemWithGate, checkoutItemWithGate, contentVersion, executeDataSourceWithGate, executeServerScriptWithGate, saveItemWithGate, undoCheckoutWithGate } from '../../services/writeGateService';
-import { formResourceVersion, normalizeFormResourcesUri, parseFormResources, setFormResourceValue } from '../../services/formResources';
+import { formResourceVersion, normalizeFormResourcesUri, parseFormResources, setFormResourceValue, toProgrammaticFormResources } from '../../services/formResources';
 import { publishAgentRemoteChange } from '../../services/agentRemoteChange';
 import { executeFormPreviewMcpTool, isFormPreviewMcpTool } from '../../services/formPreviewService';
 import { agentDiagnostics, agentOutputLogs } from '../../services/agentObservability';
+import { tableDefinitionVersion } from '../../services/tableDefinitionReadBack';
+import { saveTableWithGate } from '../../services/writeGateService';
+import { prepareHtmlFormResourceBinding, saveHtmlFormResourceBinding, inspectHtmlFormResources } from '../../services/formResourceBindingService';
+
+let menuService: MenuMcpService | undefined;
 
 type McpRequest = { id: string; tool: string; arguments: Record<string, unknown>; provider?: 'codex' | 'generic' };
 type McpToolPermissionPolicy = 'read-only' | 'ask-writes' | 'auto-safe' | 'full-access';
@@ -110,6 +118,10 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
     throw new Error('STARLIMS is not connected. Open STARLIMS DevTools and connect to a server first.');
   }
 
+  if (Object.prototype.hasOwnProperty.call(menuSchemas, request.tool)) {
+    menuService ??= new MenuMcpService(service);
+    return menuService.execute(request.tool, request.arguments);
+  }
   const args = request.arguments;
   const uri = () => String(args.uri || '');
 
@@ -145,6 +157,9 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
         language,
         version: await formResourceVersion(parsed.xml),
         resources: parsed.resources,
+        format: parsed.format,
+        formDiagnostics: await inspectHtmlFormResources(resourceUri, language),
+        runtimeVerified: false,
         totalItems: parsed.resources.length,
         ...(args.includeXml === true ? { resourceXml: output.value, totalCharacters: output.totalCharacters, truncated: output.truncated } : {})
       };
@@ -155,8 +170,12 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
     }
     case 'read_log':
       return { log: await service.getServerLog() };
-    case 'get_table_definition':
-      return { uri: uri(), definition: await service.getTableDefinition(uri()) };
+    case 'get_table_definition': {
+      const definition = await service.getTableDefinitionXml(uri());
+      const output = truncate(definition, args.maxCharacters);
+      return { uri: uri(), definition: output.value, version: await contentVersion(tableDefinitionVersion(definition)),
+        totalCharacters: output.totalCharacters, truncated: output.truncated };
+    }
     case 'query_checkin_history': {
       const filter = {
         user: String(args.user || ''),
@@ -166,9 +185,65 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
       const items = await service.getCheckInHistory(filter);
       return { filter, items, totalItems: items.length };
     }
+    case 'create_item': {
+      const itemName = String(args.itemName || '').trim();
+      const itemType = String(args.itemType || '').trim().toUpperCase();
+      const categoryName = String(args.categoryName || '').trim();
+      const appName = String(args.appName || '').trim();
+      const language = String(args.language || '').trim() || 'ENG';
+      if (!itemName || !itemType || !categoryName || !appName) {
+        throw new Error('create_item requires itemName, itemType, categoryName, appName, and language.');
+      }
+      const parentUri = itemType === 'APP'
+        ? `/Applications/${categoryName}`
+        : itemType === 'APPCATEGORY'
+          ? '/Applications'
+          : ['HTMLFORMXML', 'XFDFORMXML', 'APPSS', 'APPDS', 'APPCS'].includes(itemType)
+            ? `/Applications/${categoryName}/${appName}`
+            : itemType === 'SS'
+              ? `/ServerScripts/${categoryName}`
+              : itemType === 'DS'
+                ? `/DataSources/${categoryName}`
+                : itemType === 'CS'
+                  ? `/ClientScripts/${categoryName}`
+                  : `/${categoryName}`;
+      const created = await service.addItem(parentUri, itemName, itemType, language);
+      if (!created) throw new Error(`Could not create ${itemType} '${itemName}' under ${parentUri}.`);
+      return { menuRegistration: itemType === 'HTMLFORMXML' ? 'After runtime validation, ask the user for menu group, captions, parameters and roles; then use plan_menu_item.' : undefined, created: true, itemName, itemType, language, categoryName, appName, parentUri };
+    }
+    case 'create_table': {
+      const tableName = String(args.tableName || '').trim().toUpperCase();
+      const dsn = String(args.dsn || '').trim();
+      if (!tableName || !dsn) throw new Error('create_table requires tableName and dsn.');
+      const result = await service.createTable(tableName, dsn);
+      if (!result.success) throw new Error(result.error || `Could not create table '${tableName}'.`);
+      return { created: true, tableName, dsn, result: result.data };
+    }
+    case 'edit_table': {
+      const tableXml = String(args.tableXml || '');
+      if (!uri() || !tableXml.trim()) throw new Error('edit_table requires uri and a complete tableXml document.');
+      const result = await saveTableWithGate({ source: 'agent', action: 'save', uri: uri(), approved: true,
+        tableXml, expectedVersion: String(args.expectedVersion || '') });
+      return { uri: uri(), ...result };
+    }
+    case 'checkout_table': {
+      const result = await checkoutItemWithGate({ source: 'agent', action: 'checkout', uri: uri(), approved: true });
+      if (!result.success) throw new Error(result.message || 'Table checkout failed.');
+      return { uri: uri(), ...result };
+    }
+    case 'checkin_table': {
+      const result = await checkInItemWithGate({ source: 'agent', action: 'checkin', uri: uri(), reason: String(args.reason), approved: true });
+      if (!result.success) throw new Error(result.message || 'Table check-in failed.');
+      return { uri: uri(), ...result };
+    }
     case 'checkout_item': {
       const result = await checkoutItemWithGate({ source: 'agent', action: 'checkout', uri: uri(), language: args.language ? String(args.language) : undefined, approved: true });
       if (!result.success) throw new Error(result.message || 'Checkout failed.');
+      if (/\/HTMLForms\//i.test(uri()) && args.language) {
+        const actual = (await service.getCheckedOutItems()).find((item) => item.uri === uri());
+        if (!actual || (actual.language && actual.language !== String(args.language))) throw new Error(`CheckOut returned success but the actual checkout language is ${actual?.language || 'unverified'}, not ${String(args.language)}. Existing checkout was retained.`);
+        return { uri: uri(), ...result, checkoutLanguage: actual.language || null, checkoutLanguageVerified: Boolean(actual.language) };
+      }
       return { uri: uri(), ...result };
     }
     case 'save_item': {
@@ -184,19 +259,35 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
       const resourceUri = normalizeFormResourcesUri(uri());
       const language = String(args.language || '').trim();
       const resourceXml = String(args.resourceXml || '');
-      const desired = parseFormResources(resourceXml);
       const current = parseFormResources(await service.getItemCode(resourceUri, language));
+      const desired = parseFormResources(toProgrammaticFormResources(resourceXml, current.xml));
       const currentVersion = await formResourceVersion(current.xml);
       if (args.expectedVersion && String(args.expectedVersion) !== currentVersion) {
         throw new Error('Form Resources changed after they were read. Read the selected language again before saving.');
       }
+      const binding = await prepareHtmlFormResourceBinding(resourceUri, language);
       const result = await saveItemWithGate({
         source: 'agent', action: 'save', uri: resourceUri, language, type: 'HTMLFORMRESOURCES', code: desired.xml,
         expectedRemoteContent: current.xml, approved: true, verifyReadBack: sameFormResources
       });
       const saved = parseFormResources(await service.getItemCode(resourceUri, language));
+      const bindingResult = await saveHtmlFormResourceBinding(binding);
       publishRemoteChange(request, resourceUri, language, current.xml, saved.xml);
-      return { uri: resourceUri, language, ...result, version: await formResourceVersion(saved.xml), totalItems: saved.resources.length };
+      if (binding?.changed) publishRemoteChange(request, binding.uri, language, binding.before, binding.xml);
+      return {
+        uri: resourceUri,
+        language,
+        ...result,
+        version: await formResourceVersion(saved.xml),
+        totalItems: saved.resources.length,
+        ...bindingResult,
+        formDiagnostics: await inspectHtmlFormResources(resourceUri, language),
+        runtimeVerified: false,
+        workingCopyUpdated: true,
+        designerReloadRequired: true,
+        runtimeSyncRequiresCheckIn: true,
+        nextStep: 'Close and reopen the already-open HTML Form Designer tab to reload its cached Resources grid. Check In only after validation to synchronize runtime resources.'
+      };
     }
     case 'set_form_resource': {
       const resourceUri = normalizeFormResourcesUri(uri());
@@ -207,15 +298,25 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
         throw new Error('Form Resources changed after they were read. Read the selected language again before updating a value.');
       }
       const updated = setFormResourceValue(current.xml, String(args.resourceId || ''), String(args.resourceValue ?? ''));
+      const binding = await prepareHtmlFormResourceBinding(resourceUri, language);
       const result = await saveItemWithGate({
         source: 'agent', action: 'save', uri: resourceUri, language, type: 'HTMLFORMRESOURCES', code: updated.xml,
         expectedRemoteContent: current.xml, approved: true, verifyReadBack: sameFormResources
       });
       const saved = parseFormResources(await service.getItemCode(resourceUri, language));
+      const bindingResult = await saveHtmlFormResourceBinding(binding);
       publishRemoteChange(request, resourceUri, language, current.xml, saved.xml);
+      if (binding?.changed) publishRemoteChange(request, binding.uri, language, binding.before, binding.xml);
       return {
         uri: resourceUri, language, resourceId: String(args.resourceId), created: updated.created, ...result,
-        version: await formResourceVersion(saved.xml), totalItems: saved.resources.length
+        version: await formResourceVersion(saved.xml), totalItems: saved.resources.length,
+        ...bindingResult,
+        formDiagnostics: await inspectHtmlFormResources(resourceUri, language),
+        runtimeVerified: false,
+        workingCopyUpdated: true,
+        designerReloadRequired: true,
+        runtimeSyncRequiresCheckIn: true,
+        nextStep: 'Close and reopen the already-open HTML Form Designer tab to reload its cached Resources grid. Check In only after validation to synchronize runtime resources.'
       };
     }
     case 'checkin_item': {
@@ -228,14 +329,17 @@ async function executeMcpTool(request: McpRequest): Promise<unknown> {
       return { uri: uri(), undone: true };
     }
     case 'execute_server_script': {
-      const result = await executeServerScriptWithGate({ source: 'agent', action: 'execute-script', uri: uri(), parameters: Array.isArray(args.parameters) ? args.parameters : [], approved: true });
+      const options = executionArguments(args, false);
+      const result = await executeServerScriptWithGate({ source: 'agent', action: 'execute-script', uri: uri(), ...options, approved: true });
       if (!result.success) throw new Error(result.error || 'Server script execution failed.');
-      return { uri: uri(), ...result };
+      return { uri: uri(), ...boundedExecutionResult(result, options.maxCharacters) };
     }
     case 'execute_data_source': {
-      const result = await executeDataSourceWithGate({ source: 'agent', action: 'execute-data-source', uri: uri(), approved: true });
+      const options = executionArguments(args, true);
+      const result = await executeDataSourceWithGate({ source: 'agent', action: 'execute-data-source', uri: uri(), ...options, approved: true });
       if (!result.success) throw new Error(result.error || 'Data source execution failed.');
-      return { uri: uri(), ...result };
+      // Avoid duplicating unbounded rows alongside the same output payload.
+      return { uri: uri(), ...boundedExecutionResult(result, options.maxCharacters), outputType: options.outputType, totalRows: result.totalRows ?? result.rowCount };
     }
     default:
       throw new Error(`Unsupported STARLIMS MCP tool: ${request.tool}`);

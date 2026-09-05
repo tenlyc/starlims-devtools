@@ -1,16 +1,20 @@
+import type { ExecutionOptions } from './iEnterpriseService';
+import { prepareTableCaptionXml } from './tableDefinitionReadBack';
+import { checkinTargetUri, pendingCheckoutIds, assertCheckinAccepted } from './checkinVerification';
 /**
  * STARLIMS Enterprise Service Implementation
  * Handles all communication with STARLIMS REST API
  */
 
 // Using native browser fetch
-import { IEnterpriseService, ServerConfig, SessionInfo, EnterpriseItem, CheckOutResult, CheckInResult, ScriptResult, DataSourceResult, SearchResult, QueryResult, ItemHistoryEntry, ItemLabelEntry, ItemVersionCode, SCMItem, LanguageOption } from './iEnterpriseService';
+import { IEnterpriseService, ServerConfig, SessionInfo, EnterpriseItem, CheckOutResult, CheckInResult, ScriptResult, DataSourceResult, SearchResult, QueryResult, ItemHistoryEntry, ItemLabelEntry, ItemVersionCode, SCMItem, LanguageOption, TableMutationResult } from './iEnterpriseService';
 import { normalizeDataSourceOutput } from './dataSourceResult';
 import { cleanUrl, isJson, getErrorMessage } from './miscUtils';
 import { isBridgeRunning, launchXFDForm, launchHTMLForm } from './bridge';
 import { useOutputLogStore } from './outputLogStore';
 import { decodeFormResourcePayload } from './formResources';
 import type { FormPreviewConfig, FormPreviewMode } from '../types/formPreview';
+import { resolveFormPreviewLanguage } from './formPreviewLanguage';
 
 export function isEnterpriseItemCheckedOut(item: Record<string, unknown>): boolean {
   const flag = item.isCheckedOut ?? item.checkedOut;
@@ -491,7 +495,8 @@ export class EnterpriseService implements IEnterpriseService {
             if (isApplicationItem && (scriptLanguage === 'HTML' || scriptLanguage === 'XFD')) {
               const formName = childNameMatch[1];
               const formRoot = `/Applications/${appCategory}/${parentName}/${scriptLanguage === 'HTML' ? 'HTMLForms' : 'XFDForms'}`;
-              const formLanguage = languageMatch?.[1] || this.sessionInfo?.langid || 'ENG';
+              // GetPendingCheckins may omit LANGID; session language is not checkout evidence.
+              const formLanguage = languageMatch?.[1] || undefined;
               const formParts = scriptLanguage === 'HTML'
                 ? [
                     { suffix: 'XML', label: 'XML', type: 'HTMLFORMXML', language: formLanguage },
@@ -611,17 +616,26 @@ export class EnterpriseService implements IEnterpriseService {
    */
   async checkIn(uri: string, reason?: string, language?: string): Promise<CheckInResult> {
     try {
+      const targetUri = checkinTargetUri(uri);
       const lang = language || this.sessionInfo?.langid || 'ENG';
-      const data = await this.apiRequest<any>(`CheckIn?URI=${encodeURIComponent(uri)}&UserLang=${lang}&Reason=${encodeURIComponent(reason || '')}`, {
-        method: 'GET'
-      });
-
-      if (data?.success === true) {
-        this.checkedOutDocuments.delete(uri);
-        return { success: true };
-      }
-
-      return { success: false, message: data?.message || 'Check in failed' };
+      const { items } = await this.search(targetUri.slice(targetUri.lastIndexOf('/') + 1), undefined, true);
+      const guid = items.find((item) => checkinTargetUri(item.uri || item.id).toLowerCase() === targetUri.toLowerCase())?.guid
+        || (/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(targetUri) ? targetUri : undefined);
+      if (!guid) throw new Error('Cannot resolve the exact check-in target GUID. No check-in was submitted.');
+      const status = async () => {
+        const response = await this.apiRequest<{ success?: boolean; data?: unknown }>('GetCheckedOutItems');
+        if (response?.success !== true) throw new Error('Checkout status request failed.');
+        return pendingCheckoutIds(response.data);
+      };
+      const hasTarget = (ids: string[]) => ids.includes(guid.toLowerCase()) || ids.includes(targetUri.toLowerCase());
+      if (!hasTarget(await status())) throw new Error('The target is not checked out by the current user. No check-in was submitted.');
+      const response = await this.apiRequest<{ success?: boolean; data?: unknown; message?: string; error?: string }>(`CheckIn?URI=${encodeURIComponent(targetUri)}&UserLang=${encodeURIComponent(lang)}&Reason=${encodeURIComponent(reason || '')}`, { method: 'GET' });
+      if (!response) throw new Error('Check-in response is unavailable.');
+      assertCheckinAccepted(response);
+      if (hasTarget(await status())) throw new Error('CheckIn returned success but the target is still checked out. Check-in was not verified; inspect the backend result before retrying.');
+      this.checkedOutDocuments.delete(uri);
+      this.checkedOutDocuments.delete(targetUri);
+      return { success: true, checkedIn: true, verified: true, verification: 'checkout_released', targetUri, guid };
     } catch (error) {
       console.error('Failed to check in:', getErrorMessage(error));
       return { success: false, message: getErrorMessage(error) };
@@ -1280,7 +1294,7 @@ export class EnterpriseService implements IEnterpriseService {
    * Get all checked out items
    * @param allUsers - if true, get all users' checkouts; if false, only current user's
    */
-  async getCheckedOutItems(allUsers = false): Promise<EnterpriseItem[]> {
+  async getCheckedOutItems(allUsers = false, strict = false): Promise<EnterpriseItem[]> {
     try {
       const endpoint = allUsers ? 'GetCheckedOutItems?allUsers=true' : 'GetCheckedOutItems';
       const data = await this.apiRequest<any>(endpoint);
@@ -1289,15 +1303,19 @@ export class EnterpriseService implements IEnterpriseService {
 
       // Check if data is XML (GetCheckedOutItems returns XML)
       if (data?.data && typeof data.data === 'string' && data.data.includes('<DataSet>')) {
+        if (strict) pendingCheckoutIds(data.data);
         return this.parseCheckedOutItemsXml(data.data);
       }
 
       if (data && Array.isArray(data.data)) {
+        if (strict) pendingCheckoutIds(data.data);
         return this.parseEnterpriseItems(data.data);
       }
+      if (strict) throw new Error('Checkout status is unavailable; no checkout was performed.');
       return [];
     } catch (error) {
       console.error('Failed to get checked out items:', getErrorMessage(error));
+      if (strict) throw error;
       return [];
     }
   }
@@ -1511,7 +1529,7 @@ export class EnterpriseService implements IEnterpriseService {
       });
 
       if (!data) return null;
-      const value = data?.success === true ? data.data : data;
+      const value = typeof data === 'string' ? data : data?.success === true ? data.data : undefined;
       if (typeof value === 'string' && value.trim()) return value.trim();
       const guid = value?.guid || value?.GUID || data?.guid || data?.GUID;
       if (typeof guid === 'string' && guid.trim()) return guid.trim();
@@ -1525,19 +1543,21 @@ export class EnterpriseService implements IEnterpriseService {
   /**
    * Run a script
    */
-  async runScript(uri: string, parameters: unknown[] = []): Promise<ScriptResult> {
+  async runScript(uri: string, parameters: unknown[] = [], options: ExecutionOptions = {}): Promise<ScriptResult> {
     const startTime = Date.now();
 
     try {
       const data = await this.apiRequest<any>('RunScript', {
         method: 'POST',
-        body: JSON.stringify({ URI: uri, Parameters: parameters })
+        body: JSON.stringify({ URI: uri, Parameters: parameters, EntryPoint: options.entryPoint, OutputType: options.outputType, MaxRows: options.maxRows })
       });
 
       return {
         success: data?.success === true,
-        output: data?.data || '',
-        error: data?.error,
+        output: data?.data ?? '',
+        error: data?.success === true ? undefined : String(data?.error || data?.message || data?.data || 'Invalid or unsuccessful RunScript response.'),
+        totalRows: data?.totalRows,
+        rowsTruncated: data?.rowsTruncated,
         executionTime: Date.now() - startTime
       };
     } catch (error) {
@@ -1552,8 +1572,8 @@ export class EnterpriseService implements IEnterpriseService {
   /**
    * Run a data source
    */
-  async runDataSource(uri: string): Promise<DataSourceResult> {
-    const result = await this.runScript(uri);
+  async runDataSource(uri: string, parameters: unknown[] = [], options: ExecutionOptions = {}): Promise<DataSourceResult> {
+    const result = await this.runScript(uri, parameters, options);
     const table = normalizeDataSourceOutput(result.output);
     return {
       ...result,
@@ -1678,7 +1698,7 @@ export class EnterpriseService implements IEnterpriseService {
     if (!formGuid) return null;
 
     const serverUrl = cleanUrl(this.config.url);
-    const langid = language || this.sessionInfo.langid || 'ENG';
+    const langid = resolveFormPreviewLanguage(language, this.sessionInfo.langid);
     const formName = uri.split('/').filter(Boolean).pop()?.replace(/\.(?:xml|js)$/i, '') || formGuid;
     const formDesignerGuid = '1D09BB79-2D28-4594-8B03-26306F5C8AEC';
     const url = mode === 'design'
@@ -1855,7 +1875,7 @@ export class EnterpriseService implements IEnterpriseService {
   /**
    * Add new item
    */
-  async addItem(parentUri: string, itemName: string, itemType: string): Promise<boolean> {
+  async addItem(parentUri: string, itemName: string, itemType: string, language?: string): Promise<boolean> {
     try {
       const data = await this.apiRequest<any>('Add', {
         method: 'POST',
@@ -1863,7 +1883,7 @@ export class EnterpriseService implements IEnterpriseService {
           parentUri,
           itemName,
           itemType,
-          this.sessionInfo?.langid || 'ENG'
+          language || this.sessionInfo?.langid || 'ENG'
         ))
       });
 
@@ -2032,6 +2052,46 @@ export class EnterpriseService implements IEnterpriseService {
     } catch (error) {
       console.error('Failed to get table definition:', getErrorMessage(error));
       return null;
+    }
+  }
+
+  /** Read the complete editable table DTO XML used by the MCP table tools. */
+  async getTableDefinitionXml(uri: string): Promise<string> {
+    const data = await this.apiRequest<string | { success?: boolean; data?: string }>(`TableGetById?URI=${encodeURIComponent(uri)}`, {
+      method: 'GET'
+    });
+    const value = typeof data === 'string' ? data : data?.success === true ? data.data : undefined;
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new Error(`STARLIMS returned no editable table definition for '${uri}'.`);
+    }
+    return value;
+  }
+
+  /** Create a database or dictionary table through the shared SCM_API. */
+  async createTable(tableName: string, dsn: string): Promise<TableMutationResult> {
+    try {
+      const data = await this.apiRequest<{ success?: boolean; data?: { success?: boolean; message?: string } }>('TableAdd', {
+        method: 'POST',
+        body: JSON.stringify({ TableName: tableName, Dsn: dsn })
+      });
+      const success = data?.success === true && data?.data?.success !== false;
+      return { success, data: data?.data ?? data, ...(success ? {} : { error: data?.data?.message || 'Table creation failed.' }) };
+    } catch (error) {
+      return { success: false, error: getErrorMessage(error) };
+    }
+  }
+
+  /** Save a complete table DTO XML through the shared SCM_API. */
+  async saveTableDefinition(uri: string, tableXml: string): Promise<TableMutationResult> {
+    try {
+      const data = await this.apiRequest<{ success?: boolean; data?: unknown }>('TableSave', {
+        method: 'POST',
+        body: JSON.stringify({ URI: uri, TableXml: prepareTableCaptionXml(tableXml) })
+      });
+      const success = data?.success === true;
+      return { success, data: data?.data ?? data, ...(success ? {} : { error: typeof data?.data === 'string' ? data.data : 'Table definition save failed.' }) };
+    } catch (error) {
+      return { success: false, error: getErrorMessage(error) };
     }
   }
 

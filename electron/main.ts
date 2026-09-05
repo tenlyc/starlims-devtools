@@ -1,3 +1,4 @@
+import { VISUAL_MCP_TOOL_INFO } from './visualMcpTools';
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu, net, nativeTheme, safeStorage, webContents } from 'electron';
 import { delimiter, join } from 'path';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
@@ -220,6 +221,7 @@ const sharedMcpTools = (): SharedMcpToolInfo[] => [
     schemaVersion: tool.schemaVersion,
     profiles: [...tool.profiles]
   })),
+  ...VISUAL_MCP_TOOL_INFO,
   ...DEVTOOLS_LOCAL_MCP_TOOLS.map((tool) => ({
     id: tool.id, title: tool.title, description: tool.description,
     origin: tool.origin, repository: tool.repository, risk: tool.risk,

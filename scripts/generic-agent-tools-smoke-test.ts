@@ -16,6 +16,9 @@ assert.ok(names('read-only').includes('get_editor_diagnostics'));
 assert.ok(names('read-only').includes('get_devtools_output'));
 assert.ok(!names('read-only').includes('checkout_item'));
 assert.ok(!names('read-only').includes('save_item'));
+assert.ok(!names('read-only').includes('create_item'));
+assert.ok(!names('read-only').includes('create_table'));
+assert.ok(!names('read-only').includes('edit_table'));
 
 const capabilities = genericAgentCapabilities() as {
   adapter: string;
@@ -34,6 +37,9 @@ for (const policy of ['ask-writes', 'auto-safe', 'full-access'] as const) {
   assert.ok(names(policy).includes('set_form_resource'));
   assert.ok(names(policy).includes('checkin_item'));
   assert.ok(names(policy).includes('execute_data_source'));
+  assert.ok(names(policy).includes('create_item'));
+  assert.ok(names(policy).includes('create_table'));
+  assert.ok(names(policy).includes('edit_table'));
 }
 
 assert.equal(permissionPolicyForMode('plan', 'full-access'), 'read-only');
@@ -42,6 +48,10 @@ assert.equal(requiresMcpApproval('save_item', 'ask-writes'), true);
 assert.equal(requiresMcpApproval('save_item', 'auto-safe'), false);
 assert.equal(requiresMcpApproval('set_form_resource', 'ask-writes'), true);
 assert.equal(requiresMcpApproval('set_form_resource', 'auto-safe'), false);
+assert.equal(requiresMcpApproval('create_item', 'ask-writes'), true);
+assert.equal(requiresMcpApproval('create_item', 'auto-safe'), false);
+assert.equal(requiresMcpApproval('create_table', 'auto-safe'), true);
+assert.equal(requiresMcpApproval('edit_table', 'auto-safe'), true);
 assert.equal(requiresMcpApproval('checkin_item', 'auto-safe'), true);
 assert.equal(requiresMcpApproval('execute_data_source', 'full-access'), false);
 

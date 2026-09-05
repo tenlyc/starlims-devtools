@@ -1,0 +1,88 @@
+/********************************************************************************
+DevTools-owned HTML menu integration. Does not modify Console designer scripts.
+Create only, existing group, SettingsDB transaction, parameterized values.
+********************************************************************************/;
+:RETURN "Use ResolveForm or CreateItem entry point";
+
+:PROCEDURE ResolveForm;
+:PARAMETERS categoryName, appName, formName;
+:DECLARE layerId;
+layerId := GetSystemLayerId();
+:RETURN SqlExecute("select a.APPID, f.FORMID
+ from LIMSAPPLICATIONS a
+ join LIMSAPPCATEGORIES c on c.CATEGORYID=a.CATEGORYID
+ join LIMSXFDFORMS f on f.APPID=a.APPID
+ where c.DISPLAYTEXT=?categoryName? and a.APPNAME=?appName? and f.FORMNAME=?formName? and f.FORMTYPE='HTML'
+ and (f.LAYERID=?layerId? or (f.LAYERID=(select max(ff.LAYERID) from LIMSXFDFORMS ff
+ where ff.APPID=f.APPID and ff.FORMNAME=f.FORMNAME and ff.FORMTYPE=f.FORMTYPE and ff.LAYERID<?layerId?)
+ and not exists(select 1 from LIMSXFDFORMS ff where ff.APPID=f.APPID and ff.FORMNAME=f.FORMNAME and ff.FORMTYPE=f.FORMTYPE and ff.LAYERID=?layerId?)))",
+ "DICTIONARY");
+:ENDPROC;
+
+:PROCEDURE CreateItem;
+:PARAMETERS groupName, itemName, categoryName, appName, formName, appId, formId, sorter, captions, roleIds, parameterScript;
+:DECLARE ok, activeTransaction, existing, forms, i, n, imageUrl, commandName, roleId, langId, caption, itemGuid, allowed;
+activeTransaction := .F.;
+:TRY;
+ :IF Empty(groupName) .or. Empty(itemName) .or. Len(groupName)>32 .or. Len(itemName)>32 .or. Empty(captions) .or. Empty(roleIds) .or. sorter<1;
+  :RETURN "ERROR: invalid menu arguments";
+ :ENDIF;
+ forms := DoProc("ResolveForm", {categoryName,appName,formName});
+ :IF Len(forms) != 1;
+  :RETURN "ERROR: form resolution is ambiguous";
+ :ENDIF;
+ :IF Upper(forms[1,1]) != Upper(appId) .or. Upper(forms[1,2]) != Upper(formId);
+  :RETURN "ERROR: form mapping changed";
+ :ENDIF;
+ :FOR i:=1 :TO Len(roleIds);
+  roleId := roleIds[i];
+  :IF roleId=="*" .or. roleId=="@@" .or. Empty(roleId);
+   :RETURN "ERROR: special role is not supported";
+  :ENDIF;
+  allowed := SqlExecute("select TREEAUTH from ROLES where TREEAUTH=?roleId?", "DATABASE");
+  :IF Len(allowed)!=1;
+   :RETURN "ERROR: role does not exist or is ambiguous";
+  :ENDIF;
+ :NEXT;
+ :FOR i:=1 :TO Len(captions);
+  langId:=captions[i,1];
+  caption:=captions[i,2];
+  allowed:=SqlExecute("select LANGID from LIMSLANGUAGES where LANGID=?langId?", "SettingsDB");
+  :IF Len(allowed)!=1 .or. Empty(caption) .or. Len(caption)>200;
+   :RETURN "ERROR: invalid caption language or value";
+  :ENDIF;
+ :NEXT;
+ BeginLIMSTransaction("SettingsDB");
+ activeTransaction:=.T.;
+ /* Lock the existing group for this short create transaction (SQL Server backend).;
+ existing:=SqlExecute("select GROUPNAME from CONSOLEGROUPS with (UPDLOCK,HOLDLOCK) where GROUPNAME=?groupName? and DESTINATIONTYPE='C' and GROUPTYPE='HTML'", "SettingsDB");
+ :IF Len(existing)!=1;
+  RaiseError("Menu group changed", "SCM_API.MenuManagement.CreateItem", 20001);
+ :ENDIF;
+ existing:=SqlExecute("select ITEMNAME from CONSOLEITEMS where GROUPNAME=?groupName? and DESTINATIONTYPE='C' and GROUPTYPE='HTML' and (ITEMNAME=?itemName? or SORTER>=?sorter?)", "SettingsDB");
+ :IF !Empty(existing);
+  RaiseError("Menu name or append position conflicts", "SCM_API.MenuManagement.CreateItem", 20002);
+ :ENDIF;
+ imageUrl:="RUNTIME_SUPPORT.GetImageById.lims?ImageId=63E05135-F350-3044-B2AB-644D587CD090";
+ commandName:=appName+"."+formName;
+ itemGuid:=CreateGuid();
+ ok:=RunSQL("insert into CONSOLEITEMS (CONSOLEITEMID,GROUPNAME,ITEMNAME,IMAGEURL,SORTER,DESTINATIONWINDOW,ISDYNAMIC,COMMANDTYPE,DESTINATIONTYPE,GROUPTYPE,COMMANDNAME,PARENTID,ITEMID,COMMANDPARAMETERS) values (?,?,?,?,?,'A',0,'A','C','HTML',?,?,?,?)", "SettingsDB", {itemGuid,groupName,itemName,imageUrl,sorter,commandName,appId,formId,parameterScript});
+ :IF !ok; RaiseError("Cannot create menu", "SCM_API.MenuManagement.CreateItem", 20003); :ENDIF;
+ ok:=RunSQL("insert into CONSOLEITEMCAPTIONS (DESTINATIONTYPE,GROUPNAME,ITEMNAME,LANGID,CAPTION,GROUPTYPE) select 'C',?,?,LANGID,?,'HTML' from LIMSLANGUAGES", "SettingsDB", {groupName,itemName,itemName});
+ :IF !ok; RaiseError("Cannot create captions", "SCM_API.MenuManagement.CreateItem", 20004); :ENDIF;
+ :FOR i:=1 :TO Len(captions);
+  ok:=RunSQL("update CONSOLEITEMCAPTIONS set CAPTION=? where GROUPNAME=? and ITEMNAME=? and LANGID=? and DESTINATIONTYPE='C' and GROUPTYPE='HTML'", "SettingsDB", {captions[i,2],groupName,itemName,captions[i,1]});
+  :IF !ok; RaiseError("Cannot save caption", "SCM_API.MenuManagement.CreateItem", 20005); :ENDIF;
+ :NEXT;
+ :FOR i:=1 :TO Len(roleIds);
+  ok:=RunSQL("insert into CONSOLEITEMROLES (GROUPNAME,ITEMNAME,ROLEID,DESTINATIONTYPE,GROUPTYPE,ISMANDATORY) values (?,?,?,'C','HTML','N')", "SettingsDB", {groupName,itemName,roleIds[i]});
+  :IF !ok; RaiseError("Cannot save role", "SCM_API.MenuManagement.CreateItem", 20006); :ENDIF;
+ :NEXT;
+ EndLIMSTransaction("SettingsDB", .T.);
+ activeTransaction:=.F.;
+ :RETURN .T.;
+:CATCH;
+ :IF activeTransaction; EndLIMSTransaction("SettingsDB", .F.); :ENDIF;
+ :RETURN "ERROR: menu transaction failed: "+GetLastSSLError():FullDescription;
+:ENDTRY;
+:ENDPROC;

@@ -7,10 +7,18 @@ const STATE_CHANGING_TOOLS = new Set([
   'save_item',
   'save_form_resources',
   'set_form_resource',
+  'apply_menu_item',
   'checkin_item',
   'undo_checkout',
   'execute_server_script',
-  'execute_data_source'
+  'open_form_preview',
+  'refresh_form_preview',
+  'execute_data_source',
+  'create_item',
+  'checkout_table',
+  'checkin_table',
+  'create_table',
+  'edit_table'
 ]);
 
 export function permissionPolicyForMode(mode: ConversationMode, preferred: AgentToolPermissionPolicy = 'ask-writes'): AgentToolPermissionPolicy {
@@ -22,10 +30,16 @@ export function isStateChangingMcpTool(name: string): boolean {
 }
 
 const POTENTIALLY_UNSAFE_TOOLS = new Set([
+  'apply_menu_item',
   'checkin_item',
   'undo_checkout',
   'execute_server_script',
-  'execute_data_source'
+  'open_form_preview',
+  'refresh_form_preview',
+  'execute_data_source',
+  'checkin_table',
+  'create_table',
+  'edit_table'
 ]);
 
 export function requiresMcpApproval(name: string, policy: AgentToolPermissionPolicy): boolean {

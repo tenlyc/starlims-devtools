@@ -139,7 +139,7 @@ export function StatusBar() {
           onClick={toggleLanguage}
           title={t('common.language')}
         >
-          {language === 'zh' ? 'EN' : '中文'}
+          {language === 'zh' ? 'English' : '中文'}
         </button>
 
         <span className="text-slate-400 dark:text-slate-600">|</span>

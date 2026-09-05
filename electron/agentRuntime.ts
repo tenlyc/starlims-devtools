@@ -44,7 +44,7 @@ export function normalizeCodexModels(result: unknown): AgentModelOption[] {
 export function isReadOnlyAgentToolBlocked(toolName: string): boolean {
   const normalizedTool = toolName.split('__').pop() || toolName;
   return ['Bash', 'Edit', 'Write', 'NotebookEdit'].includes(toolName)
-    || ['checkout_item', 'save_item', 'checkin_item', 'undo_checkout', 'execute_server_script', 'execute_data_source'].includes(normalizedTool);
+    || ['apply_menu_item', 'checkout_item', 'save_item', 'checkin_item', 'undo_checkout', 'execute_server_script', 'execute_data_source', 'create_item'].includes(normalizedTool);
 }
 
 function isPotentiallyUnsafeAgentTool(toolName: string): boolean {

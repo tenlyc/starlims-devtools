@@ -1,3 +1,4 @@
+import { createDevtoolsProtocolServer } from './devtoolsProtocolServer';
 /*
  * STARLIMS MCP bridge for the Electron application.
  * The transport and tool naming follow MrDoe/starlimsvscode's MCP design.
@@ -11,8 +12,8 @@ import { localhostHostValidation } from '@modelcontextprotocol/sdk/server/middle
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { createStarlimsMcpServer, type StarlimsMcpAdapter } from '@tenlyc/starlims-mcp';
-import { DEVTOOLS_MCP_CAPABILITIES, DEVTOOLS_MCP_INSTRUCTIONS, registerDevtoolsLocalMcpTools } from './mcpCapabilities';
+import { type StarlimsMcpAdapter } from '@tenlyc/starlims-mcp';
+import { DEVTOOLS_MCP_CAPABILITIES, DEVTOOLS_MCP_INSTRUCTIONS } from './mcpCapabilities';
 
 // Electron 28's main process does not always expose Web Crypto as a global.
 // The MCP SDK uses globalThis.crypto during protocol initialization.
@@ -144,11 +145,11 @@ export class StarlimsMcpHttpServer {
       capabilities: DEVTOOLS_MCP_CAPABILITIES,
       invoke: (tool, arguments_) => this.callRenderer(tool, arguments_),
       backendComponents: () => [{
-        name: 'SCM_API', version, source: 'MrDoe/starlimsvscode + tenlyc/starlims-mcp', commit: '92b9014244eb09a56ed589db5155c3b7914b70a2'
+        name: 'SCM_API', source: 'MrDoe/starlimsvscode + tenlyc/starlims-mcp', commit: '92b9014244eb09a56ed589db5155c3b7914b70a2'
       }]
     };
 
-    const server = createStarlimsMcpServer({
+    const server = createDevtoolsProtocolServer({
       serverName: 'starlims-devtools',
       version,
       profile: 'devtools',
@@ -156,7 +157,6 @@ export class StarlimsMcpHttpServer {
       instructions: DEVTOOLS_MCP_INSTRUCTIONS,
       onError: (tool, error) => this.log(`STARLIMS MCP tool '${tool}' failed.`, error)
     });
-    registerDevtoolsLocalMcpTools(server, this.callRenderer, (tool, error) => this.log(`STARLIMS MCP tool '${tool}' failed.`, error));
     return server;
   }
 

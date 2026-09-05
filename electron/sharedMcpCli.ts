@@ -1,3 +1,4 @@
+import { createDevtoolsProtocolServer } from './devtoolsProtocolServer';
 import { randomUUID } from 'crypto';
 import type { Server as HttpServer } from 'http';
 import express, { type Request, type Response } from 'express';
@@ -10,7 +11,7 @@ import {
   createStderrLogger,
   type StarlimsMcpAdapter
 } from '@tenlyc/starlims-mcp';
-import { DEVTOOLS_MCP_CAPABILITIES, DEVTOOLS_MCP_INSTRUCTIONS, registerDevtoolsLocalMcpTools } from './mcpCapabilities';
+import { DEVTOOLS_MCP_CAPABILITIES, DEVTOOLS_MCP_INSTRUCTIONS } from './mcpCapabilities';
 import { MCP_JSON_BODY_LIMIT } from './mcpServer';
 
 const bridgeUrl = String(process.env.STARLIMS_DEVTOOLS_BRIDGE_URL || '');
@@ -86,16 +87,15 @@ async function main(): Promise<void> {
       return payload.result;
     },
     backendComponents: () => [{
-      name: 'SCM_API', version, source: 'MrDoe/starlimsvscode + tenlyc/starlims-mcp', commit: '92b9014244eb09a56ed589db5155c3b7914b70a2'
+      name: 'SCM_API', source: 'MrDoe/starlimsvscode + tenlyc/starlims-mcp', commit: '92b9014244eb09a56ed589db5155c3b7914b70a2'
     }]
   };
   const createServer = () => {
-    const server = createStarlimsMcpServer({
+    const server = createDevtoolsProtocolServer({
       serverName: 'starlims-devtools', version, profile: 'devtools', adapter,
       instructions: DEVTOOLS_MCP_INSTRUCTIONS,
       onError: (tool, error) => logger.error(`STARLIMS MCP tool '${tool}' failed.`, error)
     });
-    registerDevtoolsLocalMcpTools(server, adapter.invoke, (tool, error) => logger.error(`STARLIMS MCP tool '${tool}' failed.`, error));
     return server;
   };
   const handle = await startSharedHttpTransport(createServer);
