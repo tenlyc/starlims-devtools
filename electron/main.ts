@@ -1,4 +1,3 @@
-import { VISUAL_MCP_TOOL_INFO } from './visualMcpTools';
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu, net, nativeTheme, safeStorage, webContents } from 'electron';
 import { delimiter, join } from 'path';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
@@ -9,7 +8,7 @@ import log from 'electron-log';
 import { StarlimsMcpHttpServer } from './mcpServer';
 import { SharedMcpRuntime } from './sharedMcpRuntime';
 import { SharedMcpPackageRuntime } from './sharedMcpPackageRuntime';
-import { DEVTOOLS_LOCAL_MCP_TOOLS, DEVTOOLS_MCP_CAPABILITIES, SHARED_MCP_PACKAGE, SHARED_MCP_VERSION } from './mcpCapabilities';
+import { DEVTOOLS_MCP_CAPABILITIES, SHARED_MCP_PACKAGE, SHARED_MCP_VERSION } from './mcpCapabilities';
 import { getProfileTools } from '@tenlyc/starlims-mcp';
 import { AgentRuntimeManager } from './agentRuntime';
 import { withLocalMcpNoProxy } from './localMcpEnv';
@@ -221,12 +220,7 @@ const sharedMcpTools = (): SharedMcpToolInfo[] => [
     schemaVersion: tool.schemaVersion,
     profiles: [...tool.profiles]
   })),
-  ...VISUAL_MCP_TOOL_INFO,
-  ...DEVTOOLS_LOCAL_MCP_TOOLS.map((tool) => ({
-    id: tool.id, title: tool.title, description: tool.description,
-    origin: tool.origin, repository: tool.repository, risk: tool.risk,
-    capability: tool.capability, schemaVersion: tool.schemaVersion, profiles: [...tool.profiles]
-  }))
+
 ];
 
 const sharedMcpDetails = (): SharedMcpDetails => ({

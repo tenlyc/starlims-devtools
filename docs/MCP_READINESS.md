@@ -2,6 +2,10 @@
 
 2026-09-05：当前对外服务注册 37 个工具，基础开发可用，但尚未覆盖 AI 自主完成复杂 STARLIMS 开发与验收的全过程。接口数量不能代替执行契约和运行验证。
 
+## 2026-09-06 共享归属调整
+
+37 个 DevTools MCP 接口的定义、Schema、注册、工作流说明已统一迁入 starlims-mcp；DevTools 只实现执行 Adapter。SCM_API 源码及 SDP 发布资产也由共享仓库维护。当前依赖使用带 SHA-256 和来源提交的本地 0.5.2 候选包，远端发布待授权；下文较早验收记录保留其原始日期和范围。
+
 ## 菜单接口
 
 新增 get_menu_configuration、plan_menu_item、apply_menu_item，接入 DevTools 各 MCP 运行方式和 AI 工作流。写入采用独立 SCM_API.MenuManagement，不修改 Console 原生方法。Demo 下测试菜单已通过新 MCP 创建，并在 Chrome 的 Lims_Admin 角色下点击打开中文页面。范围与验证见 [菜单 MCP](MENU_MCP_RESEARCH.md)。

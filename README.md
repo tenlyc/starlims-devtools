@@ -63,17 +63,17 @@ STARLIMS DevTools 把企业树、Monaco 编辑器、SSL 语言服务、源码管
 | 上下文引用 | 使用 `@` 引用当前、已打开、已签出或搜索到的脚本；依赖事实按 token 预算注入，避免拼接整个工作区。 |
 | Agent 工作区 | 按服务器与用户隔离的本地 Git 工作区，可自定义根目录；远端基线与 AI 修改分开保存并提供逐文件 Diff。 |
 | 截图与问题反馈 | 可粘贴或选择截图传给支持视觉的 Agent；Agent 可按需读取 Problems、Output、STARLIMS Log，并调用内置 `starlims-lsp` 检查完整 SSL 源码。 |
-| 本地 MCP | DevTools 当前固定使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp) v0.5.1，并自动启动其独立子进程，地址为 `http://127.0.0.1:3102/mcp`；协议进程通过一次性本地令牌桥接当前登录会话和应用内审批，异常时自动回退到内置兼容服务。 |
+| 本地 MCP | DevTools 当前固定使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp) v0.5.2 本地固定候选包（发布待授权），并自动启动其独立子进程，地址为 `http://127.0.0.1:3102/mcp`；协议进程通过一次性本地令牌桥接当前登录会话和应用内审批，异常时自动回退到内置兼容服务。 |
 | 外部 MCP | 在 AI 能力中心配置 HTTP、SSE 或 stdio 服务；敏感请求头和环境变量独立存入本机密钥存储。 |
 | 多 Agent 工作流 | 规划、实现、审查、测试角色支持任务依赖与安全并行；结果由用户确认后交给主 Agent 执行。 |
 
 Codex、通用 Agent 与外部 AI 客户端可复用同一 STARLIMS MCP。桌面应用不捆绑第三方模型运行时或 Claude Agent SDK；Claude Code、Cursor、ChatGPT Desktop 等如需使用，应作为独立客户端连接 MCP。
 
-连接后可调用 `get_capabilities` 查看当前工具来源、风险、Schema 版本、Profile 和后端组件。工具归属只分为 `starlimsvscode` 与 `starlims-mcp`，DevTools 只作为宿主 Profile/Adapter。STARLIMS 侧统一使用一个 `SCM_API.*` 命名空间和一个 `SCM_API.sdp`；构建时会把固定的上游基础脚本与本项目的 `Mcp*` 扩展合并，避免用户维护多套 SDP。完整边界见 [`docs/MCP_ARCHITECTURE.md`](docs/MCP_ARCHITECTURE.md)。
+连接后可调用 `get_capabilities` 查看当前工具来源、风险、Schema 版本、Profile 和后端组件。工具归属只分为 `starlimsvscode` 与 `starlims-mcp`，DevTools 只作为宿主 Profile/Adapter。STARLIMS 侧统一使用一个 `SCM_API.*` 命名空间和一个 `SCM_API.sdp`；该服务包由 starlims-mcp 的 `scm/server` 统一构建，DevTools 校验并同步同一发布文件，避免用户维护多套 SDP。完整边界见 [`docs/MCP_ARCHITECTURE.md`](docs/MCP_ARCHITECTURE.md)。
 
 ### STARLIMS 后端包
 
-构建项目时执行 `npm run build:scm-api`，生成并随程序提供唯一的 `SCM_API.sdp`。它包含：
+构建项目时执行 `npm run build:scm-api`，从固定的 starlims-mcp 包校验、同步唯一的 `SCM_API.sdp`，不再独立生成。它包含：
 
 - `MrDoe/starlimsvscode` 的 `SCM_API` 基础包内容；
 - `tenlyc/starlims-mcp` 归属、当前由 DevTools Adapter 使用的 `McpGetSCMUsers`、`McpGetCheckInHistory`、`McpExportPackage` 与 `McpImportPackage`；
@@ -213,7 +213,7 @@ npm run upstream:update:lsp -- v0.22.0
 electron/                 Electron 主进程、Agent/MCP/LSP/工作区运行时
 src/components/           React 工作台、编辑器、侧边栏、AI 与 SCM 界面
 src/services/             STARLIMS API、语言能力、权限、写入门禁与索引
-src/scm_api/              需要部署到 STARLIMS 的后端脚本
+src/scm_api/              从 starlims-mcp 同步的后端兼容镜像（勿直接修改）
 resources/starlims-lsp/   构建时准备的已校验语言服务资源
 scripts/                  smoke tests、打包准备与上游维护工具
 upstreams/                上游版本锁、能力映射和兼容记录

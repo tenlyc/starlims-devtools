@@ -8,11 +8,13 @@ The Server communicates with the product permission layer through a loopback-onl
 
 ## Repository responsibilities
 
+DevTools currently exposes 37 tools including host-specific menu, preview, execution and table-editing capabilities. The standalone starlims-mcp HTTP adapter implements a smaller subset. Installing SCM_API does not enable all desktop tools in standalone mode. Other AI applications can connect to the DevTools MCP endpoint, or run standalone MCP against a compatible SCM_API deployment without launching the desktop app. starlims-mcp owns and releases the complete server SDP; DevTools distributes the identical artifact.
+
 | Repository | Responsibility | Out of scope |
 | --- | --- | --- |
 | `MrDoe/starlimsvscode` | Upstream `SCM_API`, VS Code implementation, and compatibility reference | DevTools product runtime |
-| `tenlyc/starlims-mcp` | MCP contracts, origin/risk metadata, Profiles, capability negotiation, shared backend extensions, and verified MCP/SCM snapshots | Credentials, server selection, and product UI |
-| `tenlyc/starlims-devtools` | Electron/React product, Agents, workspaces, approvals, and quality gates | Replacing the upstream `SCM_API` contract |
+| `tenlyc/starlims-mcp` | All MCP contracts, schemas, registration, workflows, capability catalog, maintained SCM_API sources and distribution, and verified historical snapshots | Credentials, server selection, and product UI |
+| `tenlyc/starlims-devtools` | Electron/React product, Agents, workspaces, approvals, and quality gates | Independent tool definitions or maintained SCM_API sources |
 
 ## Tool origin and host support
 
@@ -34,11 +36,11 @@ An archived version therefore remains recoverable and auditable if an upstream r
 ## One SCM_API deployment package
 
 - STARLIMS receives one `SCM_API.*` namespace and one `SCM_API.sdp` package.
-- Upstream scripts retain their names; first-party additions use the `Mcp*` prefix to avoid future collisions.
-- `npm run build:scm-api` builds the combined package and updates both the application resource and `release/SCM_API.sdp`.
+- Upstream scripts retain their names; first-party additions normally use the `Mcp*` prefix (menus use `MenuManagement`) to avoid future collisions.
+- In starlims-mcp, `npm run build:scm-api` builds `scm/distribution/SCM_API.sdp` from `scm/server`. In DevTools, the command verifies the shared checksum and copies the same artifact into the application and release directory. `src/scm_api` is a generated compatibility mirror; edit shared sources instead.
 - Current first-party backend scripts are `McpGetSCMUsers`, `McpGetCheckInHistory`, `McpExportPackage`, and `McpImportPackage`. They are owned by `tenlyc/starlims-mcp` and hosted by the DevTools Adapter.
 
-Provenance is preserved through MCP metadata, lock files, and audit documents rather than separate deployment packages. A new backend endpoint must use an `Mcp*` name, update the manifest/content, and rebuild the same `SCM_API.sdp`.
+Provenance is preserved through MCP metadata, lock files, and audit documents rather than separate deployment packages. A new backend endpoint normally uses an `Mcp*` name (menus use `MenuManagement`), update the manifest/content, and rebuild the same `SCM_API.sdp`.
 
 ## Upgrade flow
 
@@ -55,3 +57,9 @@ The MCP page lists only tools that the active DevTools Adapter really supports, 
 The Upstream Components page can check official `tenlyc/starlims-mcp` GitHub Releases and install an independent Server manually. A Release must contain both `starlims-mcp-devtools-server.cjs` and its `.sha256` file. DevTools verifies SHA-256 before executing remote JavaScript and stores versions separately. A bad digest, modified cache, failed startup, or failed health check causes an automatic rollback to the bundled Server or built-in compatibility Server.
 
 Updating the Server never replaces DevTools credentials, approvals, write gates, or the STARLIMS backend SDP automatically.
+
+## Integration contract
+
+The MCP settings UI, Generic Agent, child server and in-process fallback derive tools from the shared profile and registrar. DevTools adds no private tools. Menu schemas, preview contracts and workflow instructions are imported from the shared package. Execution stays in the Adapter to access desktop sessions, editors, previews and permission gates.
+
+See the [generated tool reference](https://github.com/tenlyc/starlims-mcp/blob/main/docs/TOOLS.md).

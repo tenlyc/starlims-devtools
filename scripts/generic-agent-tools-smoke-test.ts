@@ -26,7 +26,7 @@ const capabilities = genericAgentCapabilities() as {
   tools: Array<{ id: string; risk: string; provenance: { repository: string } }>;
 };
 assert.equal(capabilities.adapter, 'starlims-devtools-bridge');
-assert.equal(capabilities.sharedPackage, '@tenlyc/starlims-mcp@0.5.1');
+assert.equal(capabilities.sharedPackage, '@tenlyc/starlims-mcp@0.5.2');
 assert.ok(capabilities.tools.some((tool) => tool.id === 'get_form_resources' && tool.risk === 'read'));
 assert.ok(capabilities.tools.every((tool) => tool.provenance.repository.startsWith('https://github.com/')));
 

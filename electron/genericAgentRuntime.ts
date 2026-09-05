@@ -1,5 +1,5 @@
 import { isGenericCacheableRead } from '../src/services/genericToolContext';
-import { VISUAL_GENERIC_TOOLS, VISUAL_MCP_TOOL_INFO } from './visualMcpTools';
+import { VISUAL_GENERIC_TOOLS } from './visualMcpTools';
 import { net } from 'electron';
 import { randomUUID } from 'crypto';
 import { getProfileTools } from '@tenlyc/starlims-mcp';
@@ -7,7 +7,7 @@ import * as z from 'zod/v4';
 import type { AgentApprovalDecision, AgentEvent, AgentImageAttachment, AgentStartResult, AgentToolPermissionPolicy, GenericAgentConfig } from '../src/types/agent';
 import type { RendererToolCall } from './mcpServer';
 import type { ExternalMcpManager } from './externalMcpManager';
-import { DEVTOOLS_LOCAL_MCP_TOOLS, DEVTOOLS_MCP_CAPABILITIES, SHARED_MCP_PACKAGE, SHARED_MCP_VERSION } from './mcpCapabilities';
+import { DEVTOOLS_MCP_CAPABILITIES, SHARED_MCP_PACKAGE, SHARED_MCP_VERSION } from './mcpCapabilities';
 import { MCP_EFFICIENCY_INSTRUCTIONS, mcpReadCacheKey } from '../src/services/mcpEfficiency';
 
 type Emit = (event: AgentEvent) => void;
@@ -47,11 +47,6 @@ const BUILTIN_TOOLS: GenericBuiltinTool[] = DEVTOOLS_PROFILE_TOOLS.map((tool) =>
     readOnly: tool.risk === 'read'
   };
 });
-for (const tool of DEVTOOLS_LOCAL_MCP_TOOLS) {
-  const { $schema: _schema, ...parameters } = z.toJSONSchema(tool.inputSchema) as Record<string, unknown>;
-  BUILTIN_TOOLS.push({ name: tool.id, description: tool.description, parameters, readOnly: tool.risk === 'read' });
-}
-BUILTIN_TOOLS.push(...VISUAL_GENERIC_TOOLS);
 BUILTIN_TOOLS.unshift({
   name: 'get_capabilities',
   description: 'Describe the active STARLIMS tools, provenance, risk levels, adapter capabilities, and backend components.',
@@ -70,7 +65,7 @@ export function genericAgentCapabilities(): Record<string, unknown> {
     tools: [...DEVTOOLS_PROFILE_TOOLS.map(({ id, title, origin, provenance, risk, capability, schemaVersion, profiles }) => ({
       id, title, origin, provenance,
       risk, capability, schemaVersion, profiles
-    })), ...DEVTOOLS_LOCAL_MCP_TOOLS.map(({ inputSchema: _inputSchema, ...tool }) => tool), ...VISUAL_MCP_TOOL_INFO],
+    }))],
     backend: [{ name: 'SCM_API', source: 'MrDoe/starlimsvscode + tenlyc/starlims-mcp', commit: '92b9014244eb09a56ed589db5155c3b7914b70a2' }]
   };
 }

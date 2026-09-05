@@ -1037,13 +1037,9 @@ export function EditorPanel() {
 
     try {
       const enterpriseService = getEnterpriseService();
-      const embeddedGuid = activeFile.type === 'HTMLFORMXML'
-        ? activeFile.content.match(/<Guid>\s*([^<]+?)\s*<\/Guid>/i)?.[1]?.trim()
-        : undefined;
-      // Checked-out/tree GUIDs identify the SCM item and are not guaranteed to be
-      // the FormId consumed by starthtml.lims. The root Form XML GUID is the
-      // authoritative runtime identifier whenever it is available.
-      const runtimeFormGuid = embeddedGuid || activeFile.guid;
+      // Native forms can have an internal XML Guid different from their enterprise
+      // FormId. Use tree metadata; the service resolves the URI if it is missing.
+      const runtimeFormGuid = activeFile.guid;
       const config = await enterpriseService.getHTMLFormPreviewConfig(
         activeFile.uri,
         runtimeFormGuid,

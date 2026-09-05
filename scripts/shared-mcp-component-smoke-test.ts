@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { getProfileTools } from '@tenlyc/starlims-mcp';
@@ -15,10 +16,13 @@ assert.equal(componentLock.schemaVersion, 1);
 assert.equal(component.version, installedPackage.version);
 assert.equal(component.tag, `v${installedPackage.version}`);
 assert.match(component.commit, /^[0-9a-f]{40}$/);
-assert.equal(
-  applicationPackage.dependencies['@tenlyc/starlims-mcp'],
-  `https://github.com/tenlyc/starlims-mcp/archive/refs/tags/${component.tag}.tar.gz`
-);
+if (component.artifact) {
+  assert.equal(applicationPackage.dependencies['@tenlyc/starlims-mcp'], `file:${component.artifact}`);
+  assert.equal(createHash('sha256').update(readFileSync(component.artifact)).digest('hex'), component.sha256);
+} else {
+  assert.equal(applicationPackage.dependencies['@tenlyc/starlims-mcp'],
+    `https://github.com/tenlyc/starlims-mcp/archive/refs/tags/${component.tag}.tar.gz`);
+}
 assert.equal(typeof commonJsCore.createStarlimsMcpServer, 'function');
 
 const devtoolsTools = getProfileTools('devtools');

@@ -1,51 +1,20 @@
-import { copyFile, mkdtemp, mkdir, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { copyFile, cp, mkdir, readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const root = resolve(import.meta.dirname, '..');
-const source = join(root, 'src', 'scm_api');
-const target = join(source, 'SCM_API.sdp');
-const releaseTarget = join(root, 'release', 'SCM_API.sdp');
-const temporaryRoot = await mkdtemp(join(tmpdir(), 'starlims-scm-api-'));
-const temporaryPackage = join(temporaryRoot, 'SCM_API.sdp');
-const packageEntries = [
-  'Applications',
-  'Client Scripts',
-  'Global Resources',
-  'Images',
-  'SCM Images',
-  'Server Scripts',
-  'Tables',
-  'content.txt',
-  'manifest.xml'
-];
-
-function run(command, args, cwd) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { cwd, stdio: 'inherit', windowsHide: true });
-    child.once('error', reject);
-    child.once('exit', (code) => code === 0 ? resolvePromise() : reject(new Error(`${command} exited with code ${code}.`)));
-  });
+const sharedRoot = resolve(dirname(fileURLToPath(import.meta.resolve('@tenlyc/starlims-mcp'))), '..');
+const distribution = join(sharedRoot, 'scm', 'distribution');
+const artifact = join(distribution, 'SCM_API.sdp');
+const manifest = JSON.parse(await readFile(join(distribution, 'manifest.json'), 'utf8'));
+const bytes = await readFile(artifact);
+if (createHash('sha256').update(bytes).digest('hex') !== manifest.sha256) throw new Error('Shared SCM_API package checksum mismatch.');
+// Compatibility source mirror for the existing editor/audit paths. Edit shared
+// starlims-mcp/scm/server instead; DevTools never builds an independent SDP.
+await cp(join(sharedRoot, 'scm', 'server'), join(root, 'src', 'scm_api'), { recursive: true });
+for (const directory of [join(root, 'src', 'scm_api'), join(root, 'release')]) {
+  await mkdir(directory, { recursive: true });
+  await copyFile(artifact, join(directory, 'SCM_API.sdp'));
 }
-
-try {
-  if (process.platform === 'win32') {
-    const paths = packageEntries.map((entry) => `'${join(source, entry).replaceAll("'", "''")}'`).join(',');
-    await run('powershell.exe', ['-NoProfile', '-Command', `Compress-Archive -LiteralPath ${paths} -DestinationPath '${temporaryPackage.replaceAll("'", "''")}' -Force`], root);
-  } else {
-    // Exclude host-specific extra fields and directory records. Directory
-    // mtimes change when the generated SDP is replaced and otherwise make an
-    // unchanged source tree produce a different archive on every build.
-    await run('zip', ['-q', '-X', '-D', '-r', temporaryPackage, ...packageEntries], source);
-  }
-  // The Windows hosted runner keeps the repository and OS temp directory on
-  // different drives. copyFile works across volumes; rename fails with EXDEV.
-  await copyFile(temporaryPackage, target);
-  await mkdir(dirname(releaseTarget), { recursive: true });
-  await copyFile(target, releaseTarget);
-  console.log(`Built unified ${target}`);
-  console.log(`Copied release artifact to ${releaseTarget}`);
-} finally {
-  await rm(temporaryRoot, { recursive: true, force: true });
-}
+console.log(`Synced verified SCM_API.sdp from starlims-mcp (${manifest.sha256}).`);

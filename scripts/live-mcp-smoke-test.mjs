@@ -18,6 +18,9 @@ try {
   assert.equal(capabilities.isError, undefined);
   const document = capabilities.structuredContent;
   assert.equal(document.profile, 'devtools');
+  const listedNames = tools.tools.map(tool => tool.name).sort();
+  assert.equal(new Set(listedNames).size, listedNames.length, 'Duplicate tool registrations');
+  assert.deepEqual(listedNames, ['get_capabilities', ...document.tools.map(tool => tool.id)].sort(), 'tools/list and capabilities must match');
   assert.equal(document.adapter, 'starlims-devtools-bridge');
   assert.equal(document.version, packageVersion);
   assert.ok(document.tools.every((tool) => tool.origin === 'starlimsvscode' || tool.origin === 'starlims-mcp'));

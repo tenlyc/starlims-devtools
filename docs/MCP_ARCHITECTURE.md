@@ -13,11 +13,13 @@ STARLIMS 密码不会传入子进程。共享进程启动或健康检查失败�
 
 ## 仓库职责
 
+当前 DevTools 对外提供 37 个工具，包含宿主专有的菜单、预览、执行和表编辑能力。独立 starlims-mcp HTTP Adapter 只提供它实际实现的子集，不会因为部署 SCM_API 就自动获得全部 37 个工具。其他 AI 应用可直接连接 DevTools 的 MCP 地址使用宿主能力；也可独立启动 starlims-mcp，但仍需在 STARLIMS 服务器部署兼容 SCM_API。后者不需要运行 DevTools 桌面程序，完整服务器安装包由 starlims-mcp 发布，DevTools 随应用分发相同文件。
+
 | 仓库 | 职责 | 不负责 |
 | --- | --- | --- |
 | `MrDoe/starlimsvscode` | 上游 `SCM_API`、VS Code 扩展实现和兼容行为参考 | DevTools 产品运行时 |
-| `tenlyc/starlims-mcp` | MCP 工具契约、来源/风险元数据、Profile、能力握手、公共后端扩展，以及经过校验的 MCP/SCM 历史快照 | 登录凭据、服务器选择和产品 UI |
-| `tenlyc/starlims-devtools` | Electron/React 产品、Agent、工作区、审批和质量门禁 | 覆盖上游 `SCM_API` |
+| `tenlyc/starlims-mcp` | 全部 MCP 定义、Schema、注册、工作流、能力目录、SCM_API 源码及部署包，以及经过校验的历史快照 | 登录凭据、服务器选择和产品 UI |
+| `tenlyc/starlims-devtools` | Electron/React 产品、Agent、工作区、审批和质量门禁 | 独立维护工具定义或 SCM_API 源码 |
 
 ## 工具来源
 
@@ -51,14 +53,14 @@ STARLIMS 工具复用。Vendor 快照保持不可变；新能力进入共享契�
 ## 单一 SCM_API 部署包
 
 - STARLIMS 侧只部署 `SCM_API.*` 命名空间和一个 `SCM_API.sdp`。
-- 上游脚本保持原名称；自有扩展使用 `Mcp*` 前缀避免与后续上游新增脚本冲突。
-- `npm run build:scm-api` 从 `src/scm_api` 构建合并包，同时更新应用内资源和
-  `release/SCM_API.sdp`。
+- 上游脚本保持原名称；自有扩展通常使用 `Mcp*` 前缀，本轮独立菜单脚本为 `SCM_API.MenuManagement`，不修改原生 Console 方法。
+- starlims-mcp 的 `npm run build:scm-api` 从 `scm/server` 构建 `scm/distribution/SCM_API.sdp`。
+- DevTools 的同名命令校验共享包 SHA-256，再同步应用资源和 `release/SCM_API.sdp`；`src/scm_api` 仅为生成的兼容镜像，不在此修改。
 - 当前自有脚本为 `McpGetSCMUsers`、`McpGetCheckInHistory`、`McpExportPackage` 和
   `McpImportPackage`，代码归属 `tenlyc/starlims-mcp`，宿主实现仍在 DevTools Adapter。
 
 来源通过 MCP `origin`/`provenance`、锁文件和审计文档区分，而不是通过多个 SDP
-区分。新增后端接口时使用 `Mcp*` 名称、更新同一个 manifest/content，并重新构建
+区分。新增后端接口通常使用 `Mcp*` 名称（菜单为 `MenuManagement`）、更新同一个 manifest/content，并重新构建
 `SCM_API.sdp`。
 
 ## 更新流程
@@ -85,3 +87,9 @@ AI 能力中心的 MCP 页面只展示当前 DevTools Adapter 实际支持的接
 失败时拒绝安装；缓存文件被篡改、所选 Server 无法启动或健康检查失败时，自动退回随
 程序提供的版本或内置兼容 Server。更新 Server 不会替换 DevTools 的登录、审批和写入
 门禁，也不会自动更新 STARLIMS 后端 SDP。
+
+## 集成约束
+
+所有工具从共享 `getProfileTools` 派生。DevTools 的 MCP 页面、通用 Agent、独立子进程和进程内回退使用同一目录与注册器，不追加私有工具。菜单 Schema、预览工具与工作流说明也从共享包导入。执行函数留在 Adapter，以访问桌面会话、编辑器、预览和权限门禁。
+
+完整接口表由共享源码生成：[starlims-mcp/docs/TOOLS.md](https://github.com/tenlyc/starlims-mcp/blob/main/docs/TOOLS.md)。

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { getProfileTools } from '@tenlyc/starlims-mcp';
+import { DEVTOOLS_MCP_CAPABILITIES } from '../electron/mcpCapabilities';
 import { readFileSync } from 'node:fs';
 import { resolveFormPreviewLanguage } from '../src/services/formPreviewLanguage';
 
@@ -9,10 +11,10 @@ assert.equal(resolveFormPreviewLanguage(' chs ', 'ENG'), 'CHS');
 assert.equal(resolveFormPreviewLanguage(undefined, 'CHS'), 'CHS');
 assert.equal(resolveFormPreviewLanguage('XML', undefined), 'ENG');
 
-const panel = readFileSync('src/components/Editor/FormPreviewPanel.tsx', 'utf8');
+// Git on Windows may check out CRLF; source extraction must not depend on EOL style.
+const panel = readFileSync('src/components/Editor/FormPreviewPanel.tsx', 'utf8').replace(/\r\n/g, '\n');
 const service = readFileSync('src/services/formPreviewService.ts', 'utf8');
 const editor = readFileSync('src/components/Editor/EditorPanel.tsx', 'utf8');
-const capabilities = readFileSync('electron/mcpCapabilities.ts', 'utf8');
 const genericRuntime = readFileSync('electron/genericAgentRuntime.ts', 'utf8');
 const main = readFileSync('electron/main.ts', 'utf8');
 const enterprise = readFileSync('src/services/enterpriseService.ts', 'utf8');
@@ -38,8 +40,8 @@ assert.match(editor, /FORM_PREVIEW_TYPE \? <FormPreviewPanel/, 'The editor does 
 assert.match(main, /data:image\/png;base64,/, 'Screenshot IPC must validate PNG data URLs');
 assert.match(enterprise, /GetItemGUID\?URI=/, 'Form preview GUID lookup must call the SCM_API.GetItemGUID script shipped in the unified SDP');
 assert.doesNotMatch(enterprise, /`GetGUID\?URI=/, 'The nonexistent SCM_API.GetGUID endpoint must not be used');
-assert.match(editor, /<Guid>\\s\*\(\[\^<\]\+\?\)/, 'HTML Form XML should reuse its embedded GUID without an unnecessary server lookup');
-assert.match(editor, /const runtimeFormGuid = embeddedGuid \|\| activeFile\.guid/, 'HTML Form preview must prefer the runtime GUID embedded in the Form XML over the SCM item GUID');
+assert.doesNotMatch(editor, /const runtimeFormGuid = embeddedGuid/, 'XML internal GUID must not override the enterprise runtime identity');
+assert.match(editor, /const runtimeFormGuid = activeFile\.guid/, 'Preview uses enterprise metadata, or resolves the URI when missing');
 assert.match(editor, /getHTMLFormPreviewConfig\(\s*activeFile\.uri,\s*runtimeFormGuid/, 'Resolved runtime FormId must be passed to all integrated preview modes');
 assert.match(editor, /activeFile\.type === 'HTMLFORMXML' \? activeFile\.content/, 'The integrated preview must receive the current unsaved Form XML');
 assert.match(panel, /cache error:\\s\*no cache item id provided/i, 'Runtime cache failures must switch to the local XML layout preview');
@@ -56,8 +58,10 @@ for (const tool of [
   'inspect_form_element', 'get_preview_console_errors', 'get_preview_load_errors'
 ]) {
   assert.ok(service.includes(`'${tool}'`), `Renderer bridge is missing ${tool}`);
-  assert.ok(capabilities.includes('...VISUAL_MCP_CAPABILITIES'), 'Visual capabilities must be advertised');
-  assert.ok(genericRuntime.includes('BUILTIN_TOOLS.push(...VISUAL_GENERIC_TOOLS)'), 'Generic Agent must expose visual tools');
+  const contract = getProfileTools('devtools').find(entry => entry.id === tool);
+  assert.ok(contract, `Shared profile is missing ${tool}`);
+  assert.ok(DEVTOOLS_MCP_CAPABILITIES.includes(contract.capability), `${tool} capability must be advertised`);
+  assert.ok(genericRuntime.includes('DEVTOOLS_PROFILE_TOOLS.map'), 'Generic Agent must use the shared profile');
 }
 
 console.log('HTML Form preview infrastructure smoke test passed (MCP and runtime editor toolbar enabled).');

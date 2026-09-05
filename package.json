@@ -60,7 +60,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@monaco-editor/react": "^4.6.0",
-    "@tenlyc/starlims-mcp": "https://github.com/tenlyc/starlims-mcp/archive/refs/tags/v0.5.1.tar.gz",
+    "@tenlyc/starlims-mcp": "file:components/packages/tenlyc-starlims-mcp-0.5.2.tgz",
     "@vscode/webview-ui-toolkit": "^1.4.0",
     "dompurify": "^3.4.14",
     "electron-log": "^5.0.0",
