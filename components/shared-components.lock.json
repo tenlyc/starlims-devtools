@@ -7,10 +7,7 @@
       "version": "0.5.2",
       "tag": "v0.5.2",
       "commit": "c610d25a874532ccab6579d9b369e6aaf8550534",
-      "role": "shared MCP contracts and host-neutral runtime",
-      "artifact": "components/packages/tenlyc-starlims-mcp-0.5.2.tgz",
-      "sha256": "f3034331ed0f20e4b04963e2c20398db1fe13f266a55fc99c82fee2d8849fdab",
-      "publicationStatus": "local-candidate"
+      "role": "shared MCP contracts and host-neutral runtime"
     }
   }
 }

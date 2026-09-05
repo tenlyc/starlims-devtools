@@ -6,7 +6,7 @@ DevTools 使用 starlims-mcp 的 devtools Profile：36 个业务工具加 get_ca
 
 SCM_API 的维护源码在 starlims-mcp/scm/server，部署包在 scm/distribution。DevTools 构建只校验并复制共享 SDP，src/scm_api 为兼容镜像。238 个源文件与 SDP 解包内容逐文件一致，包 SHA-256 已核验。
 
-当前使用共享源码提交 c610d25a874532ccab6579d9b369e6aaf8550534 的 0.5.2 本地 npm 候选包。归档及来源摘要在 components/shared-components.lock.json；独立仓库推送及发布仍待授权，未假定远端标签存在。
+共享源码提交 c610d25a874532ccab6579d9b369e6aaf8550534 已发布为 v0.5.2，GitHub CI 与发布工作流通过，提供独立 Server、SDP 和校验文件。DevTools beta.6 已切换到该固定远端标签，来源提交记录于 components/shared-components.lock.json，下载完整性记录于 package-lock.json。
 
 ## 验证
 
@@ -30,4 +30,4 @@ SCM_API 的维护源码在 starlims-mcp/scm/server，部署包在 scm/distributi
 
 - 独立 HTTP Adapter 尚未实现全部桌面执行能力；共享契约集中不等于所有工具独立运行可用。
 - 预览仍返回 4 条系统控制台日志：bridge 时区提示、photograph 与二维码脚本 MIME 错误、系统 starlims-all.js 的对象日志；未宣称零错误。
-- 当前是本地候选构建；beta.5 的旧 GitHub Windows 工作流失败，新发布尚未完成。独立共享包获准发布后，再将依赖切换到固定远端标签并发布后续 DevTools 测试版。
+- beta.5 的旧 GitHub Windows 工作流失败；beta.6 修复 CRLF 测试问题并使用已发布共享依赖，发布由 macOS/Windows 打包门禁控制。

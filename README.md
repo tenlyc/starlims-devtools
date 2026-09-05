@@ -63,7 +63,7 @@ STARLIMS DevTools 把企业树、Monaco 编辑器、SSL 语言服务、源码管
 | 上下文引用 | 使用 `@` 引用当前、已打开、已签出或搜索到的脚本；依赖事实按 token 预算注入，避免拼接整个工作区。 |
 | Agent 工作区 | 按服务器与用户隔离的本地 Git 工作区，可自定义根目录；远端基线与 AI 修改分开保存并提供逐文件 Diff。 |
 | 截图与问题反馈 | 可粘贴或选择截图传给支持视觉的 Agent；Agent 可按需读取 Problems、Output、STARLIMS Log，并调用内置 `starlims-lsp` 检查完整 SSL 源码。 |
-| 本地 MCP | DevTools 当前固定使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp) v0.5.2 本地固定候选包（发布待授权），并自动启动其独立子进程，地址为 `http://127.0.0.1:3102/mcp`；协议进程通过一次性本地令牌桥接当前登录会话和应用内审批，异常时自动回退到内置兼容服务。 |
+| 本地 MCP | DevTools 当前固定使用 [`tenlyc/starlims-mcp`](https://github.com/tenlyc/starlims-mcp) v0.5.2 固定发布标签，并自动启动其独立子进程，地址为 `http://127.0.0.1:3102/mcp`；协议进程通过一次性本地令牌桥接当前登录会话和应用内审批，异常时自动回退到内置兼容服务。 |
 | 外部 MCP | 在 AI 能力中心配置 HTTP、SSE 或 stdio 服务；敏感请求头和环境变量独立存入本机密钥存储。 |
 | 多 Agent 工作流 | 规划、实现、审查、测试角色支持任务依赖与安全并行；结果由用户确认后交给主 Agent 执行。 |
 

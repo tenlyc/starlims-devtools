@@ -4,7 +4,7 @@
 
 ## 2026-09-06 共享归属调整
 
-37 个 DevTools MCP 接口的定义、Schema、注册、工作流说明已统一迁入 starlims-mcp；DevTools 只实现执行 Adapter。SCM_API 源码及 SDP 发布资产也由共享仓库维护。当前依赖使用带 SHA-256 和来源提交的本地 0.5.2 候选包，远端发布待授权；下文较早验收记录保留其原始日期和范围。
+37 个 DevTools MCP 接口的定义、Schema、注册、工作流说明已统一迁入 starlims-mcp；DevTools 只实现执行 Adapter。SCM_API 源码及 SDP 发布资产也由共享仓库维护。共享包 v0.5.2 已发布，DevTools beta.6 固定引用该标签，并记录来源提交与 npm integrity；下文较早验收记录保留其原始日期和范围。
 
 ## 菜单接口
 
